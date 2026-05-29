@@ -8,8 +8,11 @@
   }
 
   var THREE = window.THREE;
-  var ARENA_W = 42;
-  var ARENA_D = 30;
+  var CITY_W = 42;
+  var CITY_D = 30;
+  var OUTSKIRT_MARGIN = 5.5;
+  var ARENA_W = CITY_W + OUTSKIRT_MARGIN * 2;
+  var ARENA_D = CITY_D + OUTSKIRT_MARGIN * 2;
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
 
@@ -271,13 +274,18 @@
     buildGraveyard(11.5, 6.8);
 
     for (var f = 0; f < 16; f++) {
-      addFenceSegment(-ARENA_W / 2 - 0.5 + f * 2.8, -ARENA_D / 2 - 0.7, false);
-      addFenceSegment(-ARENA_W / 2 - 0.5 + f * 2.8, ARENA_D / 2 + 0.7, false);
+      var fenceX = -CITY_W / 2 - 0.5 + f * 2.8;
+      if (Math.abs(fenceX) < 5.2) continue;
+      addFenceSegment(fenceX, -CITY_D / 2 - 0.7, false);
+      addFenceSegment(fenceX, CITY_D / 2 + 0.7, false);
     }
     for (var s = 0; s < 9; s++) {
-      addFenceSegment(-ARENA_W / 2 - 0.9, -ARENA_D / 2 + 2 + s * 2.8, true);
-      addFenceSegment(ARENA_W / 2 + 0.9, -ARENA_D / 2 + 2 + s * 2.8, true);
+      var fenceZ = -CITY_D / 2 + 2 + s * 2.8;
+      if (Math.abs(fenceZ) < 3.7) continue;
+      addFenceSegment(-CITY_W / 2 - 0.9, fenceZ, true);
+      addFenceSegment(CITY_W / 2 + 0.9, fenceZ, true);
     }
+    addGatePosts();
 
     var cactusSpots = [
       [-19, -2], [-17, 13], [-8, -13], [7, -12], [18, 1],
@@ -301,6 +309,57 @@
       if (Math.abs(rx) < 7 && Math.abs(rz) < 5) continue;
       buildRock(rx, rz, rand(0.45, 1.1));
     }
+
+    buildOutskirts();
+  }
+
+  function buildOutskirts() {
+    var outskirtCacti = [
+      [-25.1, -16.9], [-24.6, 2.2], [-23.4, 18.1], [-11.2, -18.6],
+      [8.4, -19.1], [24.8, -15.6], [25.4, 4.6], [22.7, 18.4],
+      [5.8, 18.8], [-7.9, 19.0],
+    ];
+    outskirtCacti.forEach(function (p, idx) {
+      buildCactus(p[0], p[1], 0.62 + (idx % 4) * 0.13);
+    });
+
+    var outskirtBarrels = [
+      [-24.2, -7.9], [-22.8, 10.9], [23.5, -7.2], [24.2, 12.4],
+    ];
+    outskirtBarrels.forEach(function (p) {
+      buildBarrel(p[0], p[1]);
+    });
+
+    for (var i = 0; i < 32; i++) {
+      var p = randomOutskirtPoint();
+      buildRock(p.x, p.z, rand(0.38, 1.05));
+    }
+
+    for (var s = 0; s < 20; s++) {
+      var scrap = randomOutskirtPoint();
+      var plank = addBox(worldRoot, rand(0.35, 1.25), 0.06, rand(0.09, 0.22), s % 3 === 0 ? mats.sign : mats.wood, scrap.x, 0.11, scrap.z);
+      plank.rotation.y = rand(0, Math.PI);
+    }
+  }
+
+  function randomOutskirtPoint() {
+    var side = Math.floor(rng() * 4);
+    var x = 0;
+    var z = 0;
+    if (side === 0) {
+      x = rand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
+      z = rand(-ARENA_D / 2 + 1.2, -CITY_D / 2 - 1.0);
+    } else if (side === 1) {
+      x = rand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
+      z = rand(CITY_D / 2 + 1.0, ARENA_D / 2 - 1.2);
+    } else if (side === 2) {
+      x = rand(-ARENA_W / 2 + 1.2, -CITY_W / 2 - 1.0);
+      z = rand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
+    } else {
+      x = rand(CITY_W / 2 + 1.0, ARENA_W / 2 - 1.2);
+      z = rand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
+    }
+    return { x: x, z: z };
   }
 
   function buildBuilding(x, z, w, d, h, label, wallMat) {
@@ -389,6 +448,18 @@
     addBox(g, 0.18, 1.1, 0.18, mats.darkWood, 1.05, 0.55, 0);
     addBox(g, 2.35, 0.16, 0.16, mats.wood, 0, 0.45, 0);
     addBox(g, 2.35, 0.16, 0.16, mats.wood, 0, 0.86, 0);
+  }
+
+  function addGatePosts() {
+    [
+      [-5.25, -CITY_D / 2 - 0.7], [5.25, -CITY_D / 2 - 0.7],
+      [-5.25, CITY_D / 2 + 0.7], [5.25, CITY_D / 2 + 0.7],
+      [-CITY_W / 2 - 0.9, -3.95], [-CITY_W / 2 - 0.9, 3.95],
+      [CITY_W / 2 + 0.9, -3.95], [CITY_W / 2 + 0.9, 3.95],
+    ].forEach(function (p) {
+      addBox(worldRoot, 0.28, 1.45, 0.28, mats.darkWood, p[0], 0.72, p[1]);
+      addBox(worldRoot, 0.52, 0.14, 0.52, mats.sign, p[0], 1.52, p[1]);
+    });
   }
 
   function buildCactus(x, z, scale) {
@@ -644,6 +715,11 @@
       hitPulse: 0,
       walkPhase: rand(0, Math.PI * 2),
       moveAmount: 0,
+      stuckTimer: 0,
+      steerX: 0,
+      steerZ: 1,
+      avoidSide: rng() < 0.5 ? -1 : 1,
+      navGoal: null,
     };
   }
 
@@ -965,9 +1041,14 @@
 
       var moveX = 0;
       var moveZ = 0;
+      var faceX = nx;
+      var faceZ = nz;
       if (dist > e.radius + p.radius + 0.18) {
-        moveX = nx * e.speed;
-        moveZ = nz * e.speed;
+        var steer = chooseZombieDirection(e, p, nx, nz, dist, dt);
+        moveX = steer.x * e.speed;
+        moveZ = steer.z * e.speed;
+        faceX = steer.x;
+        faceZ = steer.z;
       } else if (e.attackCooldown <= 0) {
         damagePlayer(e.damage);
         e.attackCooldown = e.type === "runner" ? 0.8 : 1.05;
@@ -976,14 +1057,181 @@
       e.z += (moveZ + sepZ * 4.2) * dt;
       resolveMoverPosition(e, e.radius, 3.2);
       var moved = Math.hypot(e.x - oldX, e.z - oldZ);
+      updateZombieStuckState(e, moved, dist, dt);
       e.moveAmount += (clamp(moved / Math.max(0.001, e.speed * dt), 0, 1) - e.moveAmount) * Math.min(1, dt * 10);
       e.walkPhase += dt * (4.6 + e.speed * 1.1) * e.moveAmount;
 
       e.group.position.set(e.x, 0, e.z);
-      e.group.rotation.y = Math.atan2(nx, nz);
+      e.group.rotation.y = Math.atan2(faceX, faceZ);
       e.group.scale.setScalar(1 + e.hitPulse * 0.08);
       updateZombieVisual(e);
       updateEnemyHealthBar(e);
+    }
+  }
+
+  function chooseZombieDirection(enemy, player, nx, nz, dist, dt) {
+    var target = getZombieNavigationTarget(enemy, player, dist);
+    var tx = target.x - enemy.x;
+    var tz = target.z - enemy.z;
+    var targetDist = Math.hypot(tx, tz);
+    var wantX = nx;
+    var wantZ = nz;
+    if (targetDist > 0.001) {
+      wantX = tx / targetDist;
+      wantZ = tz / targetDist;
+    }
+
+    var chosen = chooseClearZombieDirection(enemy, wantX, wantZ, dt);
+    var blend = Math.min(1, dt * (enemy.stuckTimer > 0.12 ? 18 : 9));
+    enemy.steerX += (chosen.x - enemy.steerX) * blend;
+    enemy.steerZ += (chosen.z - enemy.steerZ) * blend;
+    var len = Math.hypot(enemy.steerX, enemy.steerZ);
+    if (len < 0.001) {
+      enemy.steerX = chosen.x;
+      enemy.steerZ = chosen.z;
+      len = 1;
+    }
+    return { x: enemy.steerX / len, z: enemy.steerZ / len };
+  }
+
+  function getZombieNavigationTarget(enemy, player, dist) {
+    if (dist < 2.2) {
+      enemy.navGoal = null;
+      return player;
+    }
+
+    if (enemy.navGoal) {
+      var goalDist = Math.hypot(enemy.navGoal.x - enemy.x, enemy.navGoal.z - enemy.z);
+      var playerVisible = !findBlockingObstacle(enemy.x, enemy.z, player.x, player.z, enemy.radius + 0.24, null);
+      if (goalDist < enemy.radius + 0.65 || state.time > enemy.navGoal.expires || (playerVisible && state.time > enemy.navGoal.holdUntil)) {
+        enemy.navGoal = null;
+      } else {
+        return enemy.navGoal;
+      }
+    }
+
+    var blocker = findBlockingObstacle(enemy.x, enemy.z, player.x, player.z, enemy.radius + 0.32, null);
+    if (!blocker) return player;
+
+    var corner = chooseObstacleCorner(enemy, blocker.rect, player.x, player.z);
+    if (!corner) return player;
+
+    enemy.navGoal = {
+      x: corner.x,
+      z: corner.z,
+      holdUntil: state.time + 0.35,
+      expires: state.time + 2.8,
+    };
+    return enemy.navGoal;
+  }
+
+  function chooseObstacleCorner(enemy, rect, targetX, targetZ) {
+    var margin = enemy.radius + rect.pad + 0.9;
+    var corners = [
+      { x: rect.x - rect.halfW - margin, z: rect.z - rect.halfD - margin },
+      { x: rect.x + rect.halfW + margin, z: rect.z - rect.halfD - margin },
+      { x: rect.x - rect.halfW - margin, z: rect.z + rect.halfD + margin },
+      { x: rect.x + rect.halfW + margin, z: rect.z + rect.halfD + margin },
+    ];
+    var best = null;
+    var bestScore = Infinity;
+    var prevX = enemy.steerX || enemy.avoidSide;
+    var prevZ = enemy.steerZ || 0;
+    var currentDistance = Math.hypot(targetX - enemy.x, targetZ - enemy.z);
+    var targetSideX = targetX >= rect.x ? 1 : -1;
+    var targetSideZ = targetZ >= rect.z ? 1 : -1;
+
+    for (var i = 0; i < corners.length; i++) {
+      var c = corners[i];
+      c.x = clamp(c.x, -ARENA_W / 2 - 3.2 + enemy.radius, ARENA_W / 2 + 3.2 - enemy.radius);
+      c.z = clamp(c.z, -ARENA_D / 2 - 3.2 + enemy.radius, ARENA_D / 2 + 3.2 - enemy.radius);
+
+      var toCorner = findBlockingObstacle(enemy.x, enemy.z, c.x, c.z, enemy.radius + 0.1, null);
+      var toTarget = findBlockingObstacle(c.x, c.z, targetX, targetZ, enemy.radius + 0.18, null);
+      var dx = c.x - enemy.x;
+      var dz = c.z - enemy.z;
+      var d1 = Math.hypot(dx, dz);
+      var d2 = Math.hypot(targetX - c.x, targetZ - c.z);
+      var len = Math.max(0.001, d1);
+      var continuity = (dx / len) * prevX + (dz / len) * prevZ;
+      var score = d1 + d2 - continuity * 0.7;
+      var cornerSideX = c.x >= rect.x ? 1 : -1;
+      var cornerSideZ = c.z >= rect.z ? 1 : -1;
+
+      if (cornerSideX === targetSideX) score -= 4.5;
+      if (cornerSideZ === targetSideZ) score -= 1.5;
+      if (d2 > currentDistance) score += (d2 - currentDistance) * 7;
+      if (d1 < enemy.radius + 0.9 && d2 >= currentDistance - 0.35) score += 70;
+
+      if (toCorner) score += toCorner.rect === rect ? (toCorner.t > 0.72 ? 6 : 120) : 18;
+      if (toTarget) score += 10 + toTarget.t * 5;
+
+      if (score < bestScore) {
+        bestScore = score;
+        best = c;
+      }
+    }
+
+    return best;
+  }
+
+  function chooseClearZombieDirection(enemy, wantX, wantZ, dt) {
+    var side = enemy.avoidSide || 1;
+    var offsets = [0, 0.28 * side, -0.28 * side, 0.58 * side, -0.58 * side, 0.95 * side, -0.95 * side, 1.35 * side, -1.35 * side, Math.PI * side];
+    var prevX = enemy.steerX || wantX;
+    var prevZ = enemy.steerZ || wantZ;
+    var best = { x: wantX, z: wantZ };
+    var bestScore = -Infinity;
+    var lookNear = enemy.radius + 0.35 + enemy.speed * dt;
+    var lookFar = enemy.radius + Math.min(1.8, 0.9 + enemy.speed * 0.2 + enemy.stuckTimer * 2);
+
+    for (var i = 0; i < offsets.length; i++) {
+      var dir = rotateDirection(wantX, wantZ, offsets[i]);
+      var nearX = enemy.x + dir.x * lookNear;
+      var nearZ = enemy.z + dir.z * lookNear;
+      var farX = enemy.x + dir.x * lookFar;
+      var farZ = enemy.z + dir.z * lookFar;
+      var blocked =
+        pointHitsObstacle(nearX, nearZ, enemy.radius + 0.08) ||
+        pointHitsObstacle(farX, farZ, enemy.radius + 0.08) ||
+        !pointInsideEnemyBounds(farX, farZ, enemy.radius);
+      var clearance = obstacleClearanceAt(farX, farZ, enemy.radius);
+      var wantDot = dir.x * wantX + dir.z * wantZ;
+      var prevDot = dir.x * prevX + dir.z * prevZ;
+      var score = wantDot * 3.4 + prevDot * 0.7 + clearance * 0.32;
+      if (blocked) score -= 7.5;
+      if (enemy.stuckTimer > 0.18) score += prevDot * 0.7 + Math.abs(offsets[i]) * 0.22;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = dir;
+      }
+    }
+
+    return best;
+  }
+
+  function rotateDirection(x, z, angle) {
+    var ca = Math.cos(angle);
+    var sa = Math.sin(angle);
+    return {
+      x: x * ca - z * sa,
+      z: x * sa + z * ca,
+    };
+  }
+
+  function updateZombieStuckState(enemy, moved, dist, dt) {
+    var expected = Math.max(0.001, enemy.speed * dt);
+    if (dist > enemy.radius + state.player.radius + 1.1 && moved / expected < 0.18) {
+      enemy.stuckTimer += dt;
+    } else {
+      enemy.stuckTimer = Math.max(0, enemy.stuckTimer - dt * 2.6);
+    }
+
+    if (enemy.stuckTimer > 0.55) {
+      enemy.navGoal = null;
+      enemy.avoidSide *= -1;
+      enemy.stuckTimer = 0.18;
     }
   }
 
@@ -1664,7 +1912,7 @@
     var height = Math.max(1, window.innerHeight);
     renderer.setSize(width, height, false);
     var aspect = width / height;
-    var frustum = height < 650 ? 32 : 29;
+    var frustum = height < 650 ? 34 : 31.5;
     camera.left = -frustum * aspect / 2;
     camera.right = frustum * aspect / 2;
     camera.top = frustum / 2;
@@ -1871,6 +2119,87 @@
     return dx * dx + dz * dz < minDist * minDist;
   }
 
+  function pointInsideEnemyBounds(x, z, radius) {
+    return (
+      x >= -ARENA_W / 2 - 3.2 + radius &&
+      x <= ARENA_W / 2 + 3.2 - radius &&
+      z >= -ARENA_D / 2 - 3.2 + radius &&
+      z <= ARENA_D / 2 + 3.2 - radius
+    );
+  }
+
+  function obstacleClearanceAt(x, z, radius) {
+    var best = 3;
+    for (var i = 0; i < obstacleRects.length; i++) {
+      var rect = obstacleRects[i];
+      var closestX = clamp(x, rect.x - rect.halfW, rect.x + rect.halfW);
+      var closestZ = clamp(z, rect.z - rect.halfD, rect.z + rect.halfD);
+      var dx = x - closestX;
+      var dz = z - closestZ;
+      var clearance = Math.sqrt(dx * dx + dz * dz) - (radius + rect.pad);
+      best = Math.min(best, clearance);
+    }
+    return clamp(best, -2, 3);
+  }
+
+  function findBlockingObstacle(x1, z1, x2, z2, radius, ignoreRect) {
+    var best = null;
+    var bestT = Infinity;
+    for (var i = 0; i < obstacleRects.length; i++) {
+      var rect = obstacleRects[i];
+      if (rect === ignoreRect) continue;
+      var t = segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius);
+      if (t !== null && t > 0.015 && t < bestT) {
+        bestT = t;
+        best = { rect: rect, t: t };
+      }
+    }
+    return best;
+  }
+
+  function segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius) {
+    var minX = rect.x - rect.halfW - rect.pad - radius;
+    var maxX = rect.x + rect.halfW + rect.pad + radius;
+    var minZ = rect.z - rect.halfD - rect.pad - radius;
+    var maxZ = rect.z + rect.halfD + rect.pad + radius;
+    var dx = x2 - x1;
+    var dz = z2 - z1;
+    var tMin = 0;
+    var tMax = 1;
+
+    if (Math.abs(dx) < 0.000001) {
+      if (x1 < minX || x1 > maxX) return null;
+    } else {
+      var tx1 = (minX - x1) / dx;
+      var tx2 = (maxX - x1) / dx;
+      if (tx1 > tx2) {
+        var txSwap = tx1;
+        tx1 = tx2;
+        tx2 = txSwap;
+      }
+      tMin = Math.max(tMin, tx1);
+      tMax = Math.min(tMax, tx2);
+      if (tMin > tMax) return null;
+    }
+
+    if (Math.abs(dz) < 0.000001) {
+      if (z1 < minZ || z1 > maxZ) return null;
+    } else {
+      var tz1 = (minZ - z1) / dz;
+      var tz2 = (maxZ - z1) / dz;
+      if (tz1 > tz2) {
+        var tzSwap = tz1;
+        tz1 = tz2;
+        tz2 = tzSwap;
+      }
+      tMin = Math.max(tMin, tz1);
+      tMax = Math.min(tMax, tz2);
+      if (tMin > tMax) return null;
+    }
+
+    return tMin;
+  }
+
   function material(color, roughness, metalness, emissive, emissiveIntensity) {
     return new THREE.MeshStandardMaterial({
       color: color,
@@ -1912,6 +2241,12 @@
       wave: state.wave,
       score: state.score,
       kills: state.kills,
+      map: {
+        arenaW: ARENA_W,
+        arenaD: ARENA_D,
+        cityW: CITY_W,
+        cityD: CITY_D,
+      },
       weapon: state.weapon,
       ownedWeapons: Object.keys(state.ownedWeapons).filter(function (id) {
         return state.ownedWeapons[id];
@@ -1959,6 +2294,10 @@
           x: Number(e.x.toFixed(2)),
           z: Number(e.z.toFixed(2)),
           hp: Number(e.hp.toFixed(1)),
+          stuck: Number(e.stuckTimer.toFixed(2)),
+          navigating: !!e.navGoal,
+          navX: e.navGoal ? Number(e.navGoal.x.toFixed(2)) : null,
+          navZ: e.navGoal ? Number(e.navGoal.z.toFixed(2)) : null,
         };
       }),
     });
@@ -1980,6 +2319,27 @@
       killEnemy(enemy);
       updateHud();
       return true;
+    },
+    clearEnemies: function () {
+      for (var i = state.enemies.length - 1; i >= 0; i--) {
+        dynamicRoot.remove(state.enemies[i].group);
+      }
+      state.enemies = [];
+      state.spawnLeft = 0;
+      state.spawnTimer = 0;
+      updateHud();
+      return true;
+    },
+    spawnZombieAt: function (type, x, z) {
+      var id = { walker: true, runner: true, brute: true, spitter: true }[type] ? type : "walker";
+      var zombie = makeZombie(id);
+      zombie.x = Number(x) || 0;
+      zombie.z = Number(z) || 0;
+      resolveMoverPosition(zombie, zombie.radius, 3.2);
+      zombie.group.position.set(zombie.x, 0, zombie.z);
+      state.enemies.push(zombie);
+      dynamicRoot.add(zombie.group);
+      return { type: zombie.type, x: Number(zombie.x.toFixed(2)), z: Number(zombie.z.toFixed(2)) };
     },
   };
 })();
