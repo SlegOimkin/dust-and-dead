@@ -15,6 +15,11 @@
   var ARENA_D = CITY_D + OUTSKIRT_MARGIN * 2;
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
+  var MAX_PARTICLES = 180;
+  var MAX_SMOKE_PUFFS = 80;
+  var MAX_SHOCKWAVES = 12;
+  var MAX_DECALS = 48;
+  var MAX_DEBRIS = 120;
 
   var root = document.getElementById("game-root");
   var hudHealth = document.getElementById("health-fill");
@@ -550,8 +555,8 @@
   }
 
   function clearDynamic() {
-    while (dynamicRoot.children.length) dynamicRoot.remove(dynamicRoot.children[0]);
-    while (effectRoot.children.length) effectRoot.remove(effectRoot.children[0]);
+    while (dynamicRoot.children.length) removeObject3D(dynamicRoot.children[0]);
+    while (effectRoot.children.length) removeObject3D(effectRoot.children[0]);
   }
 
   function createCowboy() {
@@ -1340,7 +1345,7 @@
     var idx = state.enemies.indexOf(enemy);
     if (idx !== -1) state.enemies.splice(idx, 1);
     createDeathDebris(enemy);
-    dynamicRoot.remove(enemy.group);
+    removeObject3D(enemy.group);
     state.score += enemy.score;
     state.kills += 1;
     addScorchMark(enemy.x, enemy.z, 0.9);
@@ -1360,7 +1365,7 @@
 
   function removeBullet(index) {
     var b = state.bullets[index];
-    effectRoot.remove(b.mesh);
+    removeObject3D(b.mesh);
     state.bullets.splice(index, 1);
   }
 
@@ -1382,8 +1387,7 @@
       var fade = clamp(p.life / p.startLife, 0, 1);
       p.mesh.scale.setScalar(Math.max(0.05, fade) * p.startScale);
       if (p.life <= 0) {
-        effectRoot.remove(p.mesh);
-        state.particles.splice(i, 1);
+        removeParticle(i);
       }
     }
   }
@@ -1396,10 +1400,7 @@
       wave.mesh.scale.setScalar(0.15 + wave.targetRadius * t);
       wave.mesh.material.opacity = wave.startOpacity * (1 - t);
       if (wave.life <= 0) {
-        effectRoot.remove(wave.mesh);
-        wave.mesh.geometry.dispose();
-        wave.mesh.material.dispose();
-        state.shockwaves.splice(i, 1);
+        removeShockwave(i);
       }
     }
 
@@ -1409,10 +1410,7 @@
       var fade = clamp(decal.life / decal.startLife, 0, 1);
       decal.mesh.material.opacity = decal.startOpacity * Math.min(1, fade * 1.4);
       if (decal.life <= 0) {
-        effectRoot.remove(decal.mesh);
-        decal.mesh.geometry.dispose();
-        decal.mesh.material.dispose();
-        state.decals.splice(d, 1);
+        removeDecal(d);
       }
     }
 
@@ -1438,10 +1436,7 @@
       puff.mesh.scale.setScalar(puff.startScale * (1 + st * 1.8));
       puff.mesh.material.opacity = puff.startOpacity * (1 - st);
       if (puff.life <= 0) {
-        effectRoot.remove(puff.mesh);
-        puff.mesh.geometry.dispose();
-        puff.mesh.material.dispose();
-        state.smokePuffs.splice(s, 1);
+        removeSmokePuff(s);
       }
     }
 
@@ -1478,12 +1473,48 @@
       var debrisFade = clamp(piece.life / piece.startLife, 0, 1);
       piece.mesh.material.opacity = piece.startOpacity * Math.min(1, debrisFade * 1.4);
       if (piece.life <= 0) {
-        effectRoot.remove(piece.mesh);
-        piece.mesh.geometry.dispose();
-        piece.mesh.material.dispose();
-        state.debris.splice(b, 1);
+        removeDebris(b);
       }
     }
+  }
+
+  function removeParticle(index) {
+    var particle = state.particles[index];
+    if (!particle) return;
+    removeObject3D(particle.mesh);
+    state.particles.splice(index, 1);
+  }
+
+  function removeShockwave(index) {
+    var wave = state.shockwaves[index];
+    if (!wave) return;
+    removeObject3D(wave.mesh);
+    state.shockwaves.splice(index, 1);
+  }
+
+  function removeDecal(index) {
+    var decal = state.decals[index];
+    if (!decal) return;
+    removeObject3D(decal.mesh);
+    state.decals.splice(index, 1);
+  }
+
+  function removeSmokePuff(index) {
+    var puff = state.smokePuffs[index];
+    if (!puff) return;
+    removeObject3D(puff.mesh);
+    state.smokePuffs.splice(index, 1);
+  }
+
+  function removeDebris(index) {
+    var piece = state.debris[index];
+    if (!piece) return;
+    removeObject3D(piece.mesh);
+    state.debris.splice(index, 1);
+  }
+
+  function trimEffects(array, maxCount, remover) {
+    while (array.length > maxCount) remover(0);
   }
 
   function updateWaveProgress(dt) {
@@ -1522,6 +1553,7 @@
       startScale: size,
       mesh: mesh,
     });
+    trimEffects(state.particles, MAX_PARTICLES, removeParticle);
   }
 
   function createAmbientDust() {
@@ -1545,6 +1577,7 @@
       };
       mesh.scale.set(rand(0.035, 0.11), rand(0.035, 0.11), rand(0.035, 0.11));
       mesh.position.set(dust.x, dust.y, dust.z);
+      mesh.userData.disposeMaterial = true;
       effectRoot.add(mesh);
       state.ambientDust.push(dust);
     }
@@ -1583,6 +1616,7 @@
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.renderOrder = 2;
+    mesh.userData.disposeMaterial = true;
     effectRoot.add(mesh);
     state.shockwaves.push({
       mesh: mesh,
@@ -1591,6 +1625,7 @@
       targetRadius: targetRadius,
       startOpacity: mat.opacity,
     });
+    trimEffects(state.shockwaves, MAX_SHOCKWAVES, removeShockwave);
   }
 
   function addScorchMark(x, z, radius) {
@@ -1604,6 +1639,7 @@
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.renderOrder = -3;
+    mesh.userData.disposeMaterial = true;
     effectRoot.add(mesh);
     state.decals.push({
       mesh: mesh,
@@ -1611,6 +1647,7 @@
       startLife: 7.5,
       startOpacity: mat.opacity,
     });
+    trimEffects(state.decals, MAX_DECALS, removeDecal);
   }
 
   function addLightFlash(x, y, z, color, intensity, distance, life) {
@@ -1634,6 +1671,7 @@
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.renderOrder = 1;
+    mesh.userData.disposeMaterial = true;
     effectRoot.add(mesh);
     state.smokePuffs.push({
       x: x,
@@ -1649,6 +1687,7 @@
       startOpacity: mat.opacity,
       mesh: mesh,
     });
+    trimEffects(state.smokePuffs, MAX_SMOKE_PUFFS, removeSmokePuff);
   }
 
   function buyOrSelectWeapon(id) {
@@ -1996,6 +2035,7 @@
       mat.transparent = true;
       mat.opacity = 1;
       var mesh = new THREE.Mesh(source.geometry.clone(), mat);
+      mesh.userData.disposeMaterial = true;
       mesh.position.copy(worldPos);
       mesh.quaternion.copy(worldQuat);
       mesh.scale.copy(source.scale);
@@ -2028,6 +2068,7 @@
         startLife: 3.2,
         startOpacity: 1,
       });
+      trimEffects(state.debris, MAX_DEBRIS, removeDebris);
     });
   }
 
@@ -2050,8 +2091,39 @@
     mesh.receiveShadow = false;
     mesh.renderOrder = -5;
     mesh.userData.noDebris = true;
+    mesh.userData.disposeMaterial = true;
     parent.add(mesh);
     return mesh;
+  }
+
+  function removeObject3D(object) {
+    if (!object) return;
+    if (object.parent) object.parent.remove(object);
+    disposeObject3D(object);
+  }
+
+  function disposeObject3D(object) {
+    object.traverse(function (child) {
+      if (child.geometry && typeof child.geometry.dispose === "function") {
+        child.geometry.dispose();
+      }
+      if (child.material && child.userData && child.userData.disposeMaterial) {
+        disposeMaterial(child.material);
+      }
+    });
+  }
+
+  function disposeMaterial(material) {
+    if (Array.isArray(material)) {
+      material.forEach(disposeMaterial);
+      return;
+    }
+    if (!material) return;
+    for (var key in material) {
+      var value = material[key];
+      if (value && value.isTexture && typeof value.dispose === "function") value.dispose();
+    }
+    if (typeof material.dispose === "function") material.dispose();
   }
 
   function addObstacle(x, z, w, d, pad) {
@@ -2322,7 +2394,7 @@
     },
     clearEnemies: function () {
       for (var i = state.enemies.length - 1; i >= 0; i--) {
-        dynamicRoot.remove(state.enemies[i].group);
+        removeObject3D(state.enemies[i].group);
       }
       state.enemies = [];
       state.spawnLeft = 0;
