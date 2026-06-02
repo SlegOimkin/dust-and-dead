@@ -123,7 +123,7 @@ canvas {
 
 .weapon-shop {
   display: grid;
-  grid-template-columns: 78px 1fr;
+  grid-template-columns: 96px 1fr;
   gap: 8px;
   align-items: stretch;
   margin-top: 10px;
@@ -149,7 +149,7 @@ canvas {
 .weapon-current b {
   overflow: hidden;
   color: #ffffff;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
