@@ -6,6 +6,8 @@ A small top-down western shooter with blocky 3D graphics. You play as a cowboy h
 
 Open `index.html` in a browser. The game is fully static and does not need a local server.
 
+For Android debug APK packaging notes, see `APK_BUILD.md`.
+
 ## Controls
 
 - `WASD` or arrow keys: move

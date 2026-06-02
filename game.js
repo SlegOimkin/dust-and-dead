@@ -20,6 +20,8 @@
   var MAX_SHOCKWAVES = 12;
   var MAX_DECALS = 48;
   var MAX_DEBRIS = 120;
+  var MOBILE_RENDER_MODE = isMobileRuntime();
+  var DYNAMIC_LIGHTS_ENABLED = true;
 
   var root = document.getElementById("game-root");
   var hudHealth = document.getElementById("health-fill");
@@ -27,6 +29,12 @@
   var hudScore = document.getElementById("score-value");
   var hudKills = document.getElementById("kills-value");
   var hudWeapon = document.getElementById("weapon-value");
+  var ammoHud = document.getElementById("ammo-hud");
+  var ammoStatus = document.getElementById("ammo-status");
+  var ammoCurrent = document.getElementById("ammo-current");
+  var ammoMax = document.getElementById("ammo-max");
+  var ammoReloadFill = document.getElementById("ammo-reload-fill");
+  var ammoWeaponIcon = document.getElementById("ammo-weapon-icon");
   var weaponButtons = Array.prototype.slice.call(document.querySelectorAll("[data-weapon]"));
   var menu = document.getElementById("menu");
   var gameOverPanel = document.getElementById("game-over");
@@ -41,13 +49,7 @@
   scene.background = new THREE.Color(0xcfa269);
   scene.fog = new THREE.Fog(0xcfa269, 36, 92);
 
-  var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.03;
+  var renderer = createGameRenderer();
   root.insertBefore(renderer.domElement, root.firstChild);
 
   var camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 180);
@@ -82,12 +84,25 @@
   var lastFrame = performance.now();
   var rng = mulberry32(7331);
   var obstacleRects = [];
+  var sharedGeometries = {};
+  var currentAmmoIcon = "";
+  var renderDiagnostics = {
+    contextLost: false,
+    contextLosses: 0,
+    recoveries: 0,
+    whiteFrames: 0,
+    recreates: 0,
+    lastReason: "",
+    nextHealthCheck: 0,
+  };
   var WEAPONS = {
     revolver: {
       id: "revolver",
       label: "Revolver",
       shortLabel: "REV",
       cost: 0,
+      magazine: 6,
+      reloadTime: 1.05,
       cooldown: 0.22,
       damage: 1,
       speed: 29,
@@ -104,6 +119,8 @@
       label: "Rifle",
       shortLabel: "RIFLE",
       cost: 300,
+      magazine: 18,
+      reloadTime: 1.55,
       cooldown: 0.14,
       damage: 2,
       speed: 43,
@@ -120,6 +137,8 @@
       label: "Launcher",
       shortLabel: "GL",
       cost: 900,
+      magazine: 3,
+      reloadTime: 2.05,
       cooldown: 0.92,
       damage: 0,
       speed: 15.5,
@@ -134,6 +153,14 @@
       shake: 0.38,
     },
   };
+  var WEAPON_ICONS = {
+    revolver:
+      '<path fill="currentColor" d="M19 19 9 10l6-5 15 12-3 6-8-4Z"/><path fill="currentColor" fill-rule="evenodd" d="M12 20h14c3-4 8-7 15-7h9c6 0 11 3 14 8h25c5 0 8 3 8 7v4H64c-3 5-8 8-15 8h-9l9 8H35c-6-4-9-8-11-12h-6c-7 0-12-5-12-11 0-3 2-5 6-5Zm29 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm3 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm-12 8h8l5 4H31c-3-2-5-4-6-7h8l-1 3Z"/><path fill="currentColor" d="M87 18h6c2 0 3 2 3 4v2H83v-3c0-2 2-3 4-3Z"/>',
+    rifle:
+      '<path fill="currentColor" d="M2 28c0-6 7-11 18-13l16 10h16v8H34l-11 10H11C4 41 0 36 0 31c0-2 1-3 2-3Z"/><path fill="currentColor" d="M46 22h41c5 0 9 3 9 7v3H46v-10Z"/><path fill="currentColor" d="M57 17h34c2 0 4 2 4 4v1H57v-5ZM31 16h21l4 6H36l-5-6Z"/><path fill="currentColor" fill-rule="evenodd" d="M35 33h18l9 11H48c-8 0-13-4-13-11Zm9 2c1 3 3 5 7 6h4l-5-6h-6Z"/><path fill="currentColor" d="M82 14h5v4h-5v-4Z"/>',
+    launcher:
+      '<path fill="currentColor" fill-rule="evenodd" d="M15 15h67c9 0 15 5 15 13s-6 13-15 13H15C7 41 2 36 2 29v-6c0-4 5-8 13-8Zm70 8a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM35 31h25v4H35v-4Z"/><path fill="currentColor" d="M0 24h15v12H7c-4 0-7-3-7-8v-4ZM25 8h34l6 5H22l3-5ZM31 41h18l9 7H40c-6 0-10-3-10-7h1ZM57 40h10v8H55c0-3 1-6 2-8ZM25 20h8v15h-8V20Z"/><path fill="currentColor" d="M64 9h6v5h-6V9Z"/>',
+  };
 
   var state = {
     mode: "menu",
@@ -141,6 +168,7 @@
     wave: 1,
     score: 0,
     kills: 0,
+    shotsFired: 0,
     spawnLeft: 0,
     spawnTimer: 0,
     spawnInterval: 1,
@@ -159,6 +187,8 @@
     debris: [],
     weapon: "revolver",
     ownedWeapons: { revolver: true, rifle: false, launcher: false },
+    ammo: {},
+    reloadTimers: {},
     pointerWorld: { x: 0, z: 6 },
   };
 
@@ -233,6 +263,46 @@
       transparent: true,
       opacity: 0.24,
       depthWrite: false,
+    });
+  }
+
+  function createGameRenderer() {
+    var instance = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: "high-performance",
+    });
+    configureRenderer(instance);
+    attachRendererRecovery(instance);
+    return instance;
+  }
+
+  function configureRenderer(instance) {
+    instance.domElement.style.background = "#cfa269";
+    instance.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    instance.shadowMap.enabled = true;
+    instance.shadowMap.type = THREE.PCFSoftShadowMap;
+    instance.outputColorSpace = THREE.SRGBColorSpace;
+    instance.toneMapping = THREE.ACESFilmicToneMapping;
+    instance.toneMappingExposure = 1.03;
+  }
+
+  function attachRendererRecovery(instance) {
+    instance.domElement.addEventListener("webglcontextlost", function (event) {
+      event.preventDefault();
+      renderDiagnostics.contextLost = true;
+      renderDiagnostics.contextLosses += 1;
+      renderDiagnostics.lastReason = "contextlost";
+      window.setTimeout(function () {
+        recoverRenderer("contextlost");
+      }, 350);
+    });
+    instance.domElement.addEventListener("webglcontextrestored", function () {
+      renderDiagnostics.contextLost = false;
+      renderDiagnostics.recoveries += 1;
+      renderDiagnostics.lastReason = "contextrestored";
+      configureRenderer(instance);
+      resize();
+      render();
     });
   }
 
@@ -507,6 +577,7 @@
     state.wave = 1;
     state.score = 0;
     state.kills = 0;
+    state.shotsFired = 0;
     state.spawnLeft = 0;
     state.spawnTimer = 0;
     state.spawnInterval = 1;
@@ -524,6 +595,7 @@
     state.debris = [];
     state.weapon = "revolver";
     state.ownedWeapons = { revolver: true, rifle: false, launcher: false };
+    initAmmoState();
     pointerDown = false;
     resetTouchControls();
 
@@ -755,6 +827,7 @@
       return;
     }
 
+    updateReloads(dt);
     updatePlayer(dt);
     updateSpawning(dt);
     updateEnemies(dt);
@@ -763,6 +836,45 @@
     updateVisualEffects(dt);
     updateWaveProgress(dt);
     updateHud();
+  }
+
+  function initAmmoState() {
+    state.ammo = {};
+    state.reloadTimers = {};
+    Object.keys(WEAPONS).forEach(function (id) {
+      state.ammo[id] = WEAPONS[id].magazine;
+      state.reloadTimers[id] = 0;
+    });
+  }
+
+  function updateReloads(dt) {
+    Object.keys(WEAPONS).forEach(function (id) {
+      if (!state.reloadTimers[id]) return;
+      state.reloadTimers[id] = Math.max(0, state.reloadTimers[id] - dt);
+      if (state.reloadTimers[id] <= 0) {
+        state.reloadTimers[id] = 0;
+        state.ammo[id] = WEAPONS[id].magazine;
+      }
+    });
+  }
+
+  function startReload(id) {
+    var weapon = WEAPONS[id];
+    if (!weapon || state.reloadTimers[id] > 0) return;
+    state.reloadTimers[id] = weapon.reloadTime;
+    if (state.player) state.player.cooldown = Math.max(state.player.cooldown, 0.08);
+  }
+
+  function getAmmoState(id) {
+    var weapon = WEAPONS[id] || WEAPONS.revolver;
+    var remaining = state.reloadTimers[weapon.id] || 0;
+    return {
+      current: state.ammo[weapon.id] == null ? weapon.magazine : state.ammo[weapon.id],
+      magazine: weapon.magazine,
+      reloading: remaining > 0,
+      reloadRemaining: remaining,
+      reloadProgress: remaining > 0 ? clamp(1 - remaining / weapon.reloadTime, 0, 1) : 0,
+    };
   }
 
   function updatePlayer(dt) {
@@ -890,6 +1002,15 @@
   function shoot() {
     var p = state.player;
     var weapon = WEAPONS[state.weapon] || WEAPONS.revolver;
+    var ammo = getAmmoState(weapon.id);
+    if (ammo.reloading) {
+      p.cooldown = Math.max(p.cooldown, 0.08);
+      return false;
+    }
+    if (ammo.current <= 0) {
+      startReload(weapon.id);
+      return false;
+    }
     var dir = new THREE.Vector3(Math.sin(p.aimAngle), 0, Math.cos(p.aimAngle)).normalize();
     var start = new THREE.Vector3(
       p.x + dir.x * weapon.muzzleDistance,
@@ -897,6 +1018,7 @@
       p.z + dir.z * weapon.muzzleDistance
     );
     var bulletMesh = createProjectileMesh(weapon, start, p.aimAngle);
+    state.shotsFired += 1;
     state.bullets.push({
       type: weapon.id,
       x: start.x,
@@ -915,6 +1037,8 @@
       trailTimer: 0,
       mesh: bulletMesh,
     });
+    state.ammo[weapon.id] = Math.max(0, ammo.current - 1);
+    if (state.ammo[weapon.id] <= 0) startReload(weapon.id);
     p.cooldown = weapon.cooldown;
     p.shootKick = weapon.id === "launcher" ? 1 : weapon.id === "rifle" ? 0.72 : 0.55;
     state.shake = Math.min(1.2, state.shake + weapon.shake);
@@ -935,6 +1059,7 @@
         weapon.id === "launcher" ? mats.explosion : mats.flash
       );
     }
+    return true;
   }
 
   function createProjectileMesh(weapon, start, angle) {
@@ -943,14 +1068,14 @@
       grenade.position.set(start.x, start.y, start.z);
       grenade.rotation.y = angle;
       effectRoot.add(grenade);
-      addBox(grenade, 0.44, 0.34, 0.52, mats.grenade, 0, 0, 0);
-      addBox(grenade, 0.5, 0.12, 0.12, mats.metal, 0, 0.02, -0.28);
-      addBox(grenade, 0.16, 0.16, 0.16, mats.explosion, 0, 0.02, 0.32);
+      addSharedBox(grenade, 0.44, 0.34, 0.52, mats.grenade, 0, 0, 0);
+      addSharedBox(grenade, 0.5, 0.12, 0.12, mats.metal, 0, 0.02, -0.28);
+      addSharedBox(grenade, 0.16, 0.16, 0.16, mats.explosion, 0, 0.02, 0.32);
       return grenade;
     }
 
     var mat = weapon.id === "rifle" ? mats.rifleTracer : mats.bullet;
-    var mesh = addBox(effectRoot, weapon.width, weapon.width, weapon.length, mat, start.x, start.y, start.z);
+    var mesh = addSharedBox(effectRoot, weapon.width, weapon.width, weapon.length, mat, start.x, start.y, start.z);
     mesh.rotation.y = angle;
     return mesh;
   }
@@ -1539,7 +1664,7 @@
   }
 
   function spawnParticle(x, y, z, vx, vy, vz, life, size, mat) {
-    var mesh = addBox(effectRoot, 1, 1, 1, mat, x, y, z);
+    var mesh = addSharedBox(effectRoot, 1, 1, 1, mat, x, y, z);
     mesh.scale.setScalar(size);
     state.particles.push({
       x: x,
@@ -1610,7 +1735,10 @@
   function addShockwave(x, z, targetRadius, life, color) {
     var mat = mats.shockwave.clone();
     mat.color.setHex(color || 0xffe0a0);
-    var mesh = new THREE.Mesh(new THREE.RingGeometry(0.76, 1, 48), mat);
+    var mesh = new THREE.Mesh(getSharedGeometry("shockwave-ring", function () {
+      return new THREE.RingGeometry(0.76, 1, 36);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.11, z);
     mesh.castShadow = false;
@@ -1631,7 +1759,10 @@
   function addScorchMark(x, z, radius) {
     var mat = mats.scorch.clone();
     mat.opacity = rand(0.16, 0.28);
-    var mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 18), mat);
+    var mesh = new THREE.Mesh(getSharedGeometry("scorch-circle", function () {
+      return new THREE.CircleGeometry(1, 14);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
     mesh.rotation.x = -Math.PI / 2;
     mesh.rotation.z = rand(0, Math.PI * 2);
     mesh.position.set(x, 0.065, z);
@@ -1665,7 +1796,8 @@
   function addSmokePuff(x, y, z, scale, life) {
     var mat = mats.smoke.clone();
     mat.opacity = rand(0.16, 0.32);
-    var mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+    var mesh = new THREE.Mesh(getSharedBoxGeometry(1, 1, 1), mat);
+    mesh.userData.disposeGeometry = false;
     mesh.position.set(x, y, z);
     mesh.scale.setScalar(scale);
     mesh.castShadow = false;
@@ -1701,6 +1833,7 @@
     }
     state.weapon = id;
     if (state.player) state.player.weapon = id;
+    if ((state.ammo[id] || 0) <= 0) startReload(id);
     setWeaponVisual(id);
     updateHud();
     return true;
@@ -1772,23 +1905,33 @@
       keys[event.code] = false;
     });
 
-    renderer.domElement.addEventListener("pointermove", function (event) {
-      updatePointerFromClient(event.clientX, event.clientY);
-    });
-    renderer.domElement.addEventListener("pointerdown", function (event) {
-      if (event.button !== 0) return;
-      updatePointerFromClient(event.clientX, event.clientY);
-      pointerDown = true;
-      if (state.mode === "menu") startGame();
-    });
+    bindCanvasInput(renderer.domElement);
     window.addEventListener("pointerup", function () {
       pointerDown = false;
     });
-    renderer.domElement.addEventListener("contextmenu", function (event) {
-      event.preventDefault();
-    });
     bindMobileControls();
     window.addEventListener("resize", resize);
+  }
+
+  function bindCanvasInput(canvas) {
+    canvas.addEventListener("pointermove", handleCanvasPointerMove);
+    canvas.addEventListener("pointerdown", handleCanvasPointerDown);
+    canvas.addEventListener("contextmenu", handleCanvasContextMenu);
+  }
+
+  function handleCanvasPointerMove(event) {
+    updatePointerFromClient(event.clientX, event.clientY);
+  }
+
+  function handleCanvasPointerDown(event) {
+    if (event.button !== 0) return;
+    updatePointerFromClient(event.clientX, event.clientY);
+    pointerDown = true;
+    if (state.mode === "menu") startGame();
+  }
+
+  function handleCanvasContextMenu(event) {
+    event.preventDefault();
   }
 
   function bindMobileControls() {
@@ -1909,6 +2052,7 @@
     hudScore.textContent = String(state.score);
     hudKills.textContent = String(state.kills);
     if (hudWeapon) hudWeapon.textContent = (WEAPONS[state.weapon] || WEAPONS.revolver).label;
+    updateAmmoHud();
     weaponButtons.forEach(function (button) {
       var id = button.getAttribute("data-weapon");
       var weapon = WEAPONS[id];
@@ -1921,7 +2065,24 @@
     });
   }
 
+  function updateAmmoHud() {
+    if (!ammoHud || !ammoCurrent || !ammoMax) return;
+    var weapon = WEAPONS[state.weapon] || WEAPONS.revolver;
+    var ammo = getAmmoState(weapon.id);
+    ammoHud.classList.toggle("is-reloading", ammo.reloading);
+    ammoHud.style.setProperty("--reload-progress", ammo.reloadProgress.toFixed(3));
+    if (ammoStatus) ammoStatus.textContent = ammo.reloading ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s" : "Ammo";
+    ammoCurrent.textContent = String(ammo.current);
+    ammoMax.textContent = String(ammo.magazine);
+    if (ammoReloadFill) ammoReloadFill.style.transform = ammo.reloading ? "scaleX(" + ammo.reloadProgress.toFixed(3) + ")" : "scaleX(0)";
+    if (ammoWeaponIcon && currentAmmoIcon !== weapon.id) {
+      ammoWeaponIcon.innerHTML = WEAPON_ICONS[weapon.id] || WEAPON_ICONS.revolver;
+      currentAmmoIcon = weapon.id;
+    }
+  }
+
   function render() {
+    if (renderDiagnostics.contextLost) return;
     var p = state.player;
     var followX = p ? p.x * 0.14 : 0;
     var followZ = p ? p.z * 0.14 : 0;
@@ -1935,7 +2096,77 @@
       cameraTarget.z + cameraBaseOffset.z + sz
     );
     camera.lookAt(cameraTarget);
-    renderer.render(scene, camera);
+    try {
+      renderer.render(scene, camera);
+      checkRendererHealth();
+    } catch (err) {
+      renderDiagnostics.lastReason = "render-error";
+      recoverRenderer("render-error");
+    }
+  }
+
+  function checkRendererHealth() {
+    if (state.time < renderDiagnostics.nextHealthCheck) return;
+    renderDiagnostics.nextHealthCheck = state.time + 1.5;
+    var gl = renderer.getContext();
+    if (!gl || (typeof gl.isContextLost === "function" && gl.isContextLost())) {
+      renderDiagnostics.contextLost = true;
+      recoverRenderer("isContextLost");
+      return;
+    }
+
+    var pixels = new Uint8Array(4 * 4 * 4);
+    try {
+      gl.readPixels(
+        Math.max(0, Math.floor(renderer.domElement.width / 2) - 2),
+        Math.max(0, Math.floor(renderer.domElement.height / 2) - 2),
+        4,
+        4,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        pixels
+      );
+    } catch (err) {
+      recoverRenderer("readPixels");
+      return;
+    }
+
+    var total = 0;
+    var low = 255;
+    var high = 0;
+    for (var i = 0; i < pixels.length; i += 4) {
+      var brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+      total += brightness;
+      low = Math.min(low, brightness);
+      high = Math.max(high, brightness);
+    }
+    var avg = total / (pixels.length / 4);
+    if (avg > 247 && high - low < 9 && state.mode === "playing") {
+      renderDiagnostics.whiteFrames += 1;
+      if (renderDiagnostics.whiteFrames >= 2) recoverRenderer("white-canvas");
+    } else {
+      renderDiagnostics.whiteFrames = 0;
+    }
+  }
+
+  function recoverRenderer(reason) {
+    renderDiagnostics.lastReason = reason;
+    renderDiagnostics.contextLost = false;
+    renderDiagnostics.whiteFrames = 0;
+    renderDiagnostics.recoveries += 1;
+    renderDiagnostics.recreates += 1;
+
+    var oldRenderer = renderer;
+    var oldCanvas = oldRenderer.domElement;
+    var newRenderer = createGameRenderer();
+    renderer = newRenderer;
+    root.insertBefore(newRenderer.domElement, oldCanvas);
+    bindCanvasInput(newRenderer.domElement);
+    if (oldCanvas.parentNode) oldCanvas.parentNode.removeChild(oldCanvas);
+    try {
+      oldRenderer.dispose();
+    } catch (err) {}
+    resize();
   }
 
   function loop(now) {
@@ -2081,6 +2312,27 @@
     return mesh;
   }
 
+  function addSharedBox(parent, w, h, d, mat, x, y, z) {
+    var mesh = new THREE.Mesh(getSharedBoxGeometry(w, h, d), mat);
+    mesh.position.set(x || 0, y || 0, z || 0);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.disposeGeometry = false;
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function getSharedBoxGeometry(w, h, d) {
+    return getSharedGeometry("box:" + w + ":" + h + ":" + d, function () {
+      return new THREE.BoxGeometry(w, h, d);
+    });
+  }
+
+  function getSharedGeometry(key, factory) {
+    if (!sharedGeometries[key]) sharedGeometries[key] = factory();
+    return sharedGeometries[key];
+  }
+
   function addContactShadow(parent, w, d, opacity) {
     var mat = mats.contactShadow.clone();
     mat.opacity = opacity;
@@ -2104,7 +2356,7 @@
 
   function disposeObject3D(object) {
     object.traverse(function (child) {
-      if (child.geometry && typeof child.geometry.dispose === "function") {
+      if (child.geometry && child.userData.disposeGeometry !== false && typeof child.geometry.dispose === "function") {
         child.geometry.dispose();
       }
       if (child.material && child.userData && child.userData.disposeMaterial) {
@@ -2286,6 +2538,12 @@
     return min + (max - min) * rng();
   }
 
+  function isMobileRuntime() {
+    var coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    var ua = navigator.userAgent || "";
+    return coarse || /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  }
+
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -2313,6 +2571,7 @@
       wave: state.wave,
       score: state.score,
       kills: state.kills,
+      shotsFired: state.shotsFired,
       map: {
         arenaW: ARENA_W,
         arenaD: ARENA_D,
@@ -2323,6 +2582,23 @@
       ownedWeapons: Object.keys(state.ownedWeapons).filter(function (id) {
         return state.ownedWeapons[id];
       }),
+      ammo: {
+        current: getAmmoState(state.weapon).current,
+        magazine: getAmmoState(state.weapon).magazine,
+        reloading: getAmmoState(state.weapon).reloading,
+        reloadRemaining: Number(getAmmoState(state.weapon).reloadRemaining.toFixed(2)),
+        reloadProgress: Number(getAmmoState(state.weapon).reloadProgress.toFixed(2)),
+        weapons: Object.keys(WEAPONS).reduce(function (acc, id) {
+          var ammo = getAmmoState(id);
+          acc[id] = {
+            current: ammo.current,
+            magazine: ammo.magazine,
+            reloading: ammo.reloading,
+            reloadRemaining: Number(ammo.reloadRemaining.toFixed(2)),
+          };
+          return acc;
+        }, {}),
+      },
       spawnLeft: state.spawnLeft,
       enemyCount: state.enemies.length,
       player: p
@@ -2351,6 +2627,15 @@
         shockwaves: state.shockwaves.length,
         decals: state.decals.length,
         debris: state.debris.length,
+      },
+      render: {
+        mobileMode: MOBILE_RENDER_MODE,
+        contextLost: renderDiagnostics.contextLost,
+        contextLosses: renderDiagnostics.contextLosses,
+        recoveries: renderDiagnostics.recoveries,
+        recreates: renderDiagnostics.recreates,
+        whiteFrames: renderDiagnostics.whiteFrames,
+        lastReason: renderDiagnostics.lastReason,
       },
       projectiles: state.bullets.slice(0, 8).map(function (b) {
         return {
@@ -2412,6 +2697,20 @@
       state.enemies.push(zombie);
       dynamicRoot.add(zombie.group);
       return { type: zombie.type, x: Number(zombie.x.toFixed(2)), z: Number(zombie.z.toFixed(2)) };
+    },
+    recoverRenderer: function () {
+      recoverRenderer("test-helper");
+      return {
+        recoveries: renderDiagnostics.recoveries,
+        recreates: renderDiagnostics.recreates,
+      };
+    },
+    forceContextLoss: function () {
+      if (renderer && typeof renderer.forceContextLoss === "function") {
+        renderer.forceContextLoss();
+        return true;
+      }
+      return false;
     },
   };
 })();
