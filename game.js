@@ -11,7 +11,7 @@
   var CITY_W = 60;
   var CITY_D = 42;
   var OUTSKIRT_MARGIN = 28;
-  var MAP_SIZE_MULTIPLIER = 2;
+  var MAP_SIZE_MULTIPLIER = 4;
   var BASE_ARENA_W = CITY_W + OUTSKIRT_MARGIN * 2;
   var BASE_ARENA_D = CITY_D + OUTSKIRT_MARGIN * 2;
   var ARENA_W = BASE_ARENA_W * MAP_SIZE_MULTIPLIER;
@@ -19,7 +19,8 @@
   var MAP_OUTSKIRT_X = (ARENA_W - CITY_W) / 2;
   var MAP_OUTSKIRT_Z = (ARENA_D - CITY_D) / 2;
   var MAP_LINEAR_SCALE = MAP_SIZE_MULTIPLIER;
-  var MICRO_SETTLEMENT_TARGET = 5;
+  var MAIN_TOWN_TARGET = Math.max(3, MAP_SIZE_MULTIPLIER);
+  var MICRO_SETTLEMENT_TARGET = Math.max(5, MAP_SIZE_MULTIPLIER * 2);
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
   var MAX_PARTICLES = 180;
@@ -101,8 +102,9 @@
   var rng = mulberry32(7331);
   var MAP_SEED = createMapSeed();
   var mapRng = mulberry32(MAP_SEED);
-  var MAIN_TOWN_CENTER = createMainTownCenter();
-  var MAIN_TOWN_LAYOUT = createMainTownLayout();
+  var MAIN_TOWNS = createMainTowns();
+  var MAIN_TOWN_CENTER = MAIN_TOWNS[0].center;
+  var MAIN_TOWN_LAYOUT = MAIN_TOWNS[0].layout;
   var PLAYER_START = createPlayerStart();
   var obstacleRects = [];
   var mapFootprints = [];
@@ -409,9 +411,7 @@
     reservePlayerStartArea();
     buildRoadNetwork();
     buildTerrainPatches();
-    buildGeneratedTown();
-    buildFenceRing();
-    buildTownSideRoads();
+    buildMainTowns();
     buildMicroSettlements();
     scatterTownProps();
     buildOutskirts();
@@ -423,8 +423,20 @@
   }
 
   function buildRoadNetwork() {
-    addRoad(ARENA_W + 7, 0.08, 7.6, 0, 0.02, MAIN_TOWN_CENTER.z, 0.28);
-    addRoad(8.2, 0.09, ARENA_D + 5, MAIN_TOWN_CENTER.x, 0.04, 0, 0.28);
+    MAIN_TOWNS.forEach(function (town) {
+      addRoad(CITY_W + 13, 0.08, 7.6, town.center.x, 0.02, town.center.z, 0.28);
+      addRoad(8.2, 0.09, CITY_D + 13, town.center.x, 0.04, town.center.z, 0.28);
+    });
+  }
+
+  function buildMainTowns() {
+    MAIN_TOWNS.forEach(function (town) {
+      withMainTown(town, function () {
+        buildGeneratedTown();
+        buildFenceRing();
+        buildTownSideRoads();
+      });
+    });
   }
 
   function buildTownSideRoads() {
@@ -575,19 +587,25 @@
   }
 
   function buildMicroSettlements() {
-    var settlements = [
-      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W / 2 + MAP_OUTSKIRT_X * 0.32), z: clampSettlementZ(MAIN_TOWN_CENTER.z - CITY_D * 0.18), name: "east" },
-      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W * 0.08), z: clampSettlementZ(MAIN_TOWN_CENTER.z + CITY_D / 2 + MAP_OUTSKIRT_Z * 0.34), name: "south" },
-      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W * 0.18), z: clampSettlementZ(MAIN_TOWN_CENTER.z - CITY_D / 2 - MAP_OUTSKIRT_Z * 0.34), name: "north" },
-      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W / 2 + MAP_OUTSKIRT_X * 0.68), z: clampSettlementZ(MAIN_TOWN_CENTER.z + mapRand(-MAP_OUTSKIRT_Z * 0.42, MAP_OUTSKIRT_Z * 0.42)), name: "far-east" },
-      { x: clampSettlementX(MAIN_TOWN_CENTER.x + mapRand(-CITY_W * 0.15, MAP_OUTSKIRT_X * 0.5)), z: clampSettlementZ(MAIN_TOWN_CENTER.z + (mapRng() < 0.5 ? -1 : 1) * (CITY_D / 2 + MAP_OUTSKIRT_Z * 0.68)), name: "far-ns" },
-    ];
+    var settlements = [];
+    MAIN_TOWNS.forEach(function (town, townIndex) {
+      var c = town.center;
+      var spreadX = Math.min(44, MAP_OUTSKIRT_X * 0.24);
+      var spreadZ = Math.min(38, MAP_OUTSKIRT_Z * 0.24);
+      settlements.push({ x: clampSettlementX(c.x + CITY_W / 2 + mapRand(8, spreadX)), z: clampSettlementZ(c.z + mapRand(-CITY_D * 0.35, CITY_D * 0.25)), name: "east-" + townIndex });
+      settlements.push({ x: clampSettlementX(c.x + mapRand(-CITY_W * 0.24, CITY_W * 0.24)), z: clampSettlementZ(c.z + CITY_D / 2 + mapRand(8, spreadZ)), name: "south-" + townIndex });
+      if (townIndex % 2 === 0) {
+        settlements.push({ x: clampSettlementX(c.x - CITY_W / 2 - mapRand(8, spreadX)), z: clampSettlementZ(c.z + mapRand(-CITY_D * 0.24, CITY_D * 0.34)), name: "west-" + townIndex });
+      } else {
+        settlements.push({ x: clampSettlementX(c.x + mapRand(-CITY_W * 0.2, CITY_W * 0.26)), z: clampSettlementZ(c.z - CITY_D / 2 - mapRand(8, spreadZ)), name: "north-" + townIndex });
+      }
+    });
     settlements.forEach(function (settlement, index) {
       buildMicroSettlement(settlement.x + mapRand(-2.2, 2.2), settlement.z + mapRand(-1.8, 1.8), index);
     });
-    for (var fallback = 0; countBuiltMicroSettlements() < MICRO_SETTLEMENT_TARGET && fallback < 42; fallback++) {
+    for (var fallback = 0; countBuiltMicroSettlements() < MICRO_SETTLEMENT_TARGET && fallback < 72; fallback++) {
       var point = findFallbackMicroSettlementPoint();
-      if (point) buildMicroSettlement(point.x, point.z, 3 + fallback);
+      if (point) buildMicroSettlement(point.x, point.z, settlements.length + fallback);
     }
   }
 
@@ -613,7 +631,7 @@
   }
 
   function clampSettlementX(x) {
-    return clamp(x, -CITY_W / 2 - 2.6 + 10, ARENA_W / 2 - 12.5);
+    return clamp(x, -ARENA_W / 2 + 12.5, ARENA_W / 2 - 12.5);
   }
 
   function clampSettlementZ(z) {
@@ -739,8 +757,9 @@
   }
 
   function microFenceSideFacesMainTown(x, z, side) {
-    var dx = MAIN_TOWN_CENTER.x - x;
-    var dz = MAIN_TOWN_CENTER.z - z;
+    var nearest = nearestMainTown(x, z);
+    var dx = nearest.center.x - x;
+    var dz = nearest.center.z - z;
     if (side === "west") return dx < 0 && Math.abs(dx) > Math.abs(dz) * 0.55;
     if (side === "east") return dx > 0 && Math.abs(dx) > Math.abs(dz) * 0.55;
     if (side === "north") return dz < 0 && Math.abs(dz) > Math.abs(dx) * 0.55;
@@ -924,8 +943,12 @@
   }
 
   function scatterTownProps() {
-    scatterProps(18, "cactus", "city");
-    scatterProps(13, "barrel", "city");
+    MAIN_TOWNS.forEach(function (town) {
+      withMainTown(town, function () {
+        scatterProps(18, "cactus", "city");
+        scatterProps(13, "barrel", "city");
+      });
+    });
     scatterProps(scaleMapCount(42), "rock", "all");
   }
 
@@ -994,9 +1017,10 @@
 
   function randomMapPoint(region) {
     if (region === "city") {
+      var town = randomMainTown();
       return {
-        x: townLocalX(mapRand(-CITY_W / 2 + 2, CITY_W / 2 - 2)),
-        z: townLocalZ(mapRand(-CITY_D / 2 + 2, CITY_D / 2 - 2)),
+        x: townLocalXFor(town, mapRand(-CITY_W / 2 + 2, CITY_W / 2 - 2)),
+        z: townLocalZFor(town, mapRand(-CITY_D / 2 + 2, CITY_D / 2 - 2)),
       };
     }
     return {
@@ -1006,23 +1030,29 @@
   }
 
   function randomOutskirtPoint() {
-    var side = Math.floor(mapRng() * 4);
-    var x = 0;
-    var z = 0;
-    if (side === 0) {
-      x = mapRand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
-      z = mapRand(-ARENA_D / 2 + 1.2, MAIN_TOWN_CENTER.z - CITY_D / 2 - 1.0);
-    } else if (side === 1) {
-      x = mapRand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
-      z = mapRand(MAIN_TOWN_CENTER.z + CITY_D / 2 + 1.0, ARENA_D / 2 - 1.2);
-    } else if (side === 2) {
-      x = mapRand(-ARENA_W / 2 + 1.2, MAIN_TOWN_CENTER.x - CITY_W / 2 - 1.0);
-      z = mapRand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
-    } else {
-      x = mapRand(MAIN_TOWN_CENTER.x + CITY_W / 2 + 1.0, ARENA_W / 2 - 1.2);
-      z = mapRand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
+    for (var attempt = 0; attempt < 28; attempt++) {
+      var town = randomMainTown();
+      var side = Math.floor(mapRng() * 4);
+      var x = town.center.x;
+      var z = town.center.z;
+      if (side === 0) {
+        x += mapRand(-CITY_W * 0.72, CITY_W * 0.72);
+        z -= CITY_D / 2 + mapRand(4.5, Math.min(58, MAP_OUTSKIRT_Z * 0.42));
+      } else if (side === 1) {
+        x += mapRand(-CITY_W * 0.72, CITY_W * 0.72);
+        z += CITY_D / 2 + mapRand(4.5, Math.min(58, MAP_OUTSKIRT_Z * 0.42));
+      } else if (side === 2) {
+        x -= CITY_W / 2 + mapRand(4.5, Math.min(66, MAP_OUTSKIRT_X * 0.42));
+        z += mapRand(-CITY_D * 0.72, CITY_D * 0.72);
+      } else {
+        x += CITY_W / 2 + mapRand(4.5, Math.min(66, MAP_OUTSKIRT_X * 0.42));
+        z += mapRand(-CITY_D * 0.72, CITY_D * 0.72);
+      }
+      x = clamp(x, -ARENA_W / 2 + 1.2, ARENA_W / 2 - 1.2);
+      z = clamp(z, -ARENA_D / 2 + 1.2, ARENA_D / 2 - 1.2);
+      if (!pointNearAnyMainTown(x, z, 1.5)) return { x: x, z: z };
     }
-    return { x: x, z: z };
+    return randomMapPoint("all");
   }
 
   function randomSettledOutskirtPoint() {
@@ -1031,7 +1061,7 @@
       if (!isWastelandPoint(p.x, p.z)) return p;
     }
     return {
-      x: mapRand(-CITY_W / 2 - 2.6 + 2.0, ARENA_W / 2 - 1.2),
+      x: mapRand(-ARENA_W / 2 + 2.0, ARENA_W / 2 - 1.2),
       z: mapRand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4),
     };
   }
@@ -1049,7 +1079,7 @@
 
   function isMapPointOpen(x, z, radius, avoidRoads) {
     if (Math.hypot(x - PLAYER_START.x, z - PLAYER_START.z) < 7.2) return false;
-    if (avoidRoads && (Math.abs(x - MAIN_TOWN_CENTER.x) < 5.2 || Math.abs(z - MAIN_TOWN_CENTER.z) < 4.6)) return false;
+    if (avoidRoads && pointNearAnyMainRoad(x, z)) return false;
     if (Math.abs(x) > ARENA_W / 2 - radius - 1 || Math.abs(z) > ARENA_D / 2 - radius - 1) return false;
     return !pointHitsMapFootprint(x, z, radius);
   }
@@ -1124,12 +1154,18 @@
     var halfW = w / 2 + (pad || 0);
     var halfD = d / 2 + (pad || 0);
     var margin = buffer || 0;
-    return (
-      x + halfW > MAIN_TOWN_CENTER.x - CITY_W / 2 - margin &&
-      x - halfW < MAIN_TOWN_CENTER.x + CITY_W / 2 + margin &&
-      z + halfD > MAIN_TOWN_CENTER.z - CITY_D / 2 - margin &&
-      z - halfD < MAIN_TOWN_CENTER.z + CITY_D / 2 + margin
-    );
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      var c = MAIN_TOWNS[i].center;
+      if (
+        x + halfW > c.x - CITY_W / 2 - margin &&
+        x - halfW < c.x + CITY_W / 2 + margin &&
+        z + halfD > c.z - CITY_D / 2 - margin &&
+        z - halfD < c.z + CITY_D / 2 + margin
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function mapAreaHitsFootprintType(x, z, w, d, pad, type) {
@@ -1200,6 +1236,25 @@
     var totalIssues = 0;
     var counts = {};
     var minGap = Infinity;
+    for (var t = 0; t < MAIN_TOWNS.length; t++) {
+      for (var u = t + 1; u < MAIN_TOWNS.length; u++) {
+        if (!isTownCenterFarEnough(MAIN_TOWNS[t].center, [MAIN_TOWNS[u]])) {
+          totalIssues += 1;
+          if (issues.length < 80) {
+            issues.push({
+              kind: "main-town-too-close",
+              a: MAIN_TOWNS[t].index,
+              b: MAIN_TOWNS[u].index,
+              ax: Number(MAIN_TOWNS[t].center.x.toFixed(2)),
+              az: Number(MAIN_TOWNS[t].center.z.toFixed(2)),
+              bx: Number(MAIN_TOWNS[u].center.x.toFixed(2)),
+              bz: Number(MAIN_TOWNS[u].center.z.toFixed(2)),
+              distance: Number(Math.hypot(MAIN_TOWNS[t].center.x - MAIN_TOWNS[u].center.x, MAIN_TOWNS[t].center.z - MAIN_TOWNS[u].center.z).toFixed(2)),
+            });
+          }
+        }
+      }
+    }
     for (var i = 0; i < mapFootprints.length; i++) {
       var a = mapFootprints[i];
       counts[a.type] = (counts[a.type] || 0) + 1;
@@ -1285,6 +1340,18 @@
       seed: MAP_SEED,
       arenaW: ARENA_W,
       arenaD: ARENA_D,
+      mainTownCount: MAIN_TOWNS.length,
+      mainTowns: MAIN_TOWNS.map(function (town) {
+        return {
+          index: town.index,
+          x: Number(town.center.x.toFixed(2)),
+          z: Number(town.center.z.toFixed(2)),
+          mirrorX: town.layout.mirrorX,
+          mirrorZ: town.layout.mirrorZ,
+          variant: town.layout.variant,
+        };
+      }),
+      mainTownMinDistance: getMainTownMinDistance(),
       footprintCount: mapFootprints.length,
       obstacleCount: obstacleRects.length,
       issueCount: totalIssues,
@@ -1304,6 +1371,17 @@
       playerSpawnClear: !pointHitsMapFootprint(PLAYER_START.x, PLAYER_START.z, 1.05, ["player-start-clear", "road-clear", "micro-road-clear"]),
       minGap: isFinite(minGap) ? Number(minGap.toFixed(3)) : null,
     };
+  }
+
+  function getMainTownMinDistance() {
+    if (MAIN_TOWNS.length < 2) return null;
+    var minDistance = Infinity;
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      for (var j = i + 1; j < MAIN_TOWNS.length; j++) {
+        minDistance = Math.min(minDistance, Math.hypot(MAIN_TOWNS[i].center.x - MAIN_TOWNS[j].center.x, MAIN_TOWNS[i].center.z - MAIN_TOWNS[j].center.z));
+      }
+    }
+    return Number(minDistance.toFixed(2));
   }
 
   function isAllowedMapFootprintContact(a, b) {
@@ -3945,13 +4023,65 @@
     return Math.max(1, Math.round(base * MAP_LINEAR_SCALE));
   }
 
-  function createMainTownCenter() {
-    var maxTownX = Math.min(ARENA_W / 2 - CITY_W / 2 - 12, MAP_OUTSKIRT_X * 0.48);
-    var townZRange = Math.min(ARENA_D / 2 - CITY_D / 2 - 12, MAP_OUTSKIRT_Z * 0.42);
+  function createMainTowns() {
+    var towns = [];
+    for (var i = 0; i < MAIN_TOWN_TARGET; i++) {
+      var best = null;
+      for (var attempt = 0; attempt < 220; attempt++) {
+        var center = createMainTownCenter();
+        var score = getTownPlacementScore(center, towns);
+        if (!best || score > best.score) best = { center: center, score: score };
+        if (isTownCenterFarEnough(center, towns)) {
+          towns.push(makeMainTown(center, towns.length));
+          break;
+        }
+      }
+    }
+    if (!towns.length) towns.push(makeMainTown({ x: 0, z: 0 }, 0));
+    return towns;
+  }
+
+  function makeMainTown(center, index) {
     return {
-      x: mapRand(0.8, maxTownX),
-      z: mapRand(-townZRange, townZRange),
+      index: index,
+      center: center,
+      layout: createMainTownLayout(),
     };
+  }
+
+  function createMainTownCenter() {
+    var safeX = CITY_W / 2 + 14;
+    var safeZ = CITY_D / 2 + 14;
+    return {
+      x: mapRand(-ARENA_W / 2 + safeX, ARENA_W / 2 - safeX),
+      z: mapRand(-ARENA_D / 2 + safeZ, ARENA_D / 2 - safeZ),
+    };
+  }
+
+  function isTownCenterFarEnough(center, towns) {
+    if (!towns.length) return true;
+    for (var i = 0; i < towns.length; i++) {
+      var other = towns[i].center;
+      var dx = Math.abs(center.x - other.x);
+      var dz = Math.abs(center.z - other.z);
+      if (dx < CITY_W + 34 && dz < CITY_D + 30) return false;
+      if (Math.hypot(dx, dz) < Math.max(112, CITY_W * 1.85)) return false;
+    }
+    return true;
+  }
+
+  function getTownPlacementScore(center, towns) {
+    if (!towns.length) return 1;
+    var minDistance = Infinity;
+    var minAabbClearance = Infinity;
+    for (var i = 0; i < towns.length; i++) {
+      var other = towns[i].center;
+      var dx = Math.abs(center.x - other.x);
+      var dz = Math.abs(center.z - other.z);
+      minDistance = Math.min(minDistance, Math.hypot(dx, dz));
+      minAabbClearance = Math.min(minAabbClearance, Math.max(dx - (CITY_W + 34), dz - (CITY_D + 30)));
+    }
+    return Math.min(minDistance / 112, 1) * 0.65 + Math.min(Math.max(minAabbClearance, 0) / 42, 1) * 0.35;
   }
 
   function createMainTownLayout() {
@@ -3962,53 +4092,96 @@
     };
   }
 
+  function randomMainTown() {
+    return MAIN_TOWNS[Math.floor(mapRng() * MAIN_TOWNS.length)] || MAIN_TOWNS[0];
+  }
+
+  function nearestMainTown(x, z) {
+    var nearest = MAIN_TOWNS[0];
+    var nearestDistance = Infinity;
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      var town = MAIN_TOWNS[i];
+      var distance = Math.hypot(x - town.center.x, z - town.center.z);
+      if (distance < nearestDistance) {
+        nearest = town;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
+  }
+
+  function withMainTown(town, fn) {
+    var previousCenter = MAIN_TOWN_CENTER;
+    var previousLayout = MAIN_TOWN_LAYOUT;
+    MAIN_TOWN_CENTER = town.center;
+    MAIN_TOWN_LAYOUT = town.layout;
+    try {
+      return fn();
+    } finally {
+      MAIN_TOWN_CENTER = previousCenter;
+      MAIN_TOWN_LAYOUT = previousLayout;
+    }
+  }
+
   function createPlayerStart() {
     var roll = mapRng();
-    if (roll < 0.32) return makePlayerStart(townLocalX(mapRand(-4.8, 4.8)), townLocalZ(mapRand(-3.8, 4.8)), "town");
+    if (roll < 0.32) {
+      var town = randomMainTown();
+      return makePlayerStart(townLocalXFor(town, mapRand(-4.8, 4.8)), townLocalZFor(town, mapRand(-3.8, 4.8)), "town");
+    }
     if (roll < 0.62) return createSettledOutskirtStart();
     if (roll < 0.84) return createOpenDesertStart();
     return createWastelandStart();
   }
 
   function createSettledOutskirtStart() {
-    var side = Math.floor(mapRng() * 3);
+    var town = randomMainTown();
+    var side = Math.floor(mapRng() * 4);
     if (side === 0) {
       return makePlayerStart(
-        clamp(MAIN_TOWN_CENTER.x + mapRand(-16, 18), -CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7),
-        clamp(MAIN_TOWN_CENTER.z - CITY_D / 2 - mapRand(5.5, 13.5), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+        clamp(town.center.x + mapRand(-16, 18), -ARENA_W / 2 + 7, ARENA_W / 2 - 7),
+        clamp(town.center.z - CITY_D / 2 - mapRand(5.5, 13.5), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
         "settled-outskirts"
       );
     }
     if (side === 1) {
       return makePlayerStart(
-        clamp(MAIN_TOWN_CENTER.x + mapRand(-16, 18), -CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7),
-        clamp(MAIN_TOWN_CENTER.z + CITY_D / 2 + mapRand(5.5, 13.5), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+        clamp(town.center.x + mapRand(-16, 18), -ARENA_W / 2 + 7, ARENA_W / 2 - 7),
+        clamp(town.center.z + CITY_D / 2 + mapRand(5.5, 13.5), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+        "settled-outskirts"
+      );
+    }
+    if (side === 2) {
+      return makePlayerStart(
+        clamp(town.center.x - CITY_W / 2 - mapRand(5.5, 15.5), -ARENA_W / 2 + 7, ARENA_W / 2 - 7),
+        clamp(town.center.z + mapRand(-18, 18), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
         "settled-outskirts"
       );
     }
     return makePlayerStart(
-      clamp(MAIN_TOWN_CENTER.x + CITY_W / 2 + mapRand(5.5, 15.5), -CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7),
-      clamp(MAIN_TOWN_CENTER.z + mapRand(-18, 18), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+      clamp(town.center.x + CITY_W / 2 + mapRand(5.5, 15.5), -ARENA_W / 2 + 7, ARENA_W / 2 - 7),
+      clamp(town.center.z + mapRand(-18, 18), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
       "settled-outskirts"
     );
   }
 
   function createOpenDesertStart() {
     for (var attempt = 0; attempt < 36; attempt++) {
-      var x = mapRand(-CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7);
+      var x = mapRand(-ARENA_W / 2 + 7, ARENA_W / 2 - 7);
       var z = mapRand(-ARENA_D / 2 + 7, ARENA_D / 2 - 7);
-      if (Math.abs(x - MAIN_TOWN_CENTER.x) < CITY_W / 2 + 5 && Math.abs(z - MAIN_TOWN_CENTER.z) < CITY_D / 2 + 5) continue;
+      if (pointNearAnyMainTown(x, z, 5)) continue;
       return makePlayerStart(x, z, "open-desert");
     }
     return createSettledOutskirtStart();
   }
 
   function createWastelandStart() {
-    return makePlayerStart(
-      mapRand(-ARENA_W / 2 + 7, -CITY_W / 2 - 6.5),
-      mapRand(-ARENA_D / 2 + 7, ARENA_D / 2 - 7),
-      "wasteland"
-    );
+    for (var attempt = 0; attempt < 24; attempt++) {
+      var x = mapRand(-ARENA_W / 2 + 7, -CITY_W / 2 - 6.5);
+      var z = mapRand(-ARENA_D / 2 + 7, ARENA_D / 2 - 7);
+      if (!pointNearAnyMainTown(x, z, 4)) return makePlayerStart(x, z, "wasteland");
+    }
+    return createOpenDesertStart();
   }
 
   function makePlayerStart(x, z, zone) {
@@ -4025,6 +4198,34 @@
 
   function townLocalZ(z) {
     return MAIN_TOWN_CENTER.z + (MAIN_TOWN_LAYOUT.mirrorZ ? -z : z);
+  }
+
+  function townLocalXFor(town, x) {
+    return town.center.x + (town.layout.mirrorX ? -x : x);
+  }
+
+  function townLocalZFor(town, z) {
+    return town.center.z + (town.layout.mirrorZ ? -z : z);
+  }
+
+  function pointNearAnyMainTown(x, z, extra) {
+    var margin = extra || 0;
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      var c = MAIN_TOWNS[i].center;
+      if (Math.abs(x - c.x) < CITY_W / 2 + margin && Math.abs(z - c.z) < CITY_D / 2 + margin) return true;
+    }
+    return false;
+  }
+
+  function pointNearAnyMainRoad(x, z) {
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      var c = MAIN_TOWNS[i].center;
+      var inTownX = Math.abs(x - c.x) < CITY_W / 2 + 6;
+      var inTownZ = Math.abs(z - c.z) < CITY_D / 2 + 6;
+      if (inTownX && Math.abs(z - c.z) < 4.6) return true;
+      if (inTownZ && Math.abs(x - c.x) < 5.2) return true;
+    }
+    return false;
   }
 
   function isMobileRuntime() {
@@ -4073,6 +4274,8 @@
         outskirtMarginX: MAP_OUTSKIRT_X,
         outskirtMarginZ: MAP_OUTSKIRT_Z,
         microSettlementTarget: MICRO_SETTLEMENT_TARGET,
+        mainTownTarget: MAIN_TOWN_TARGET,
+        mainTownCount: MAIN_TOWNS.length,
         mainTown: {
           x: Number(MAIN_TOWN_CENTER.x.toFixed(2)),
           z: Number(MAIN_TOWN_CENTER.z.toFixed(2)),
@@ -4080,6 +4283,17 @@
           mirrorZ: MAIN_TOWN_LAYOUT.mirrorZ,
           variant: MAIN_TOWN_LAYOUT.variant,
         },
+        mainTowns: MAIN_TOWNS.map(function (town) {
+          return {
+            index: town.index,
+            x: Number(town.center.x.toFixed(2)),
+            z: Number(town.center.z.toFixed(2)),
+            mirrorX: town.layout.mirrorX,
+            mirrorZ: town.layout.mirrorZ,
+            variant: town.layout.variant,
+          };
+        }),
+        mainTownMinDistance: getMainTownMinDistance(),
         playerStart: {
           x: Number(PLAYER_START.x.toFixed(2)),
           z: Number(PLAYER_START.z.toFixed(2)),

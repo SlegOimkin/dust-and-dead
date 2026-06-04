@@ -7,7 +7,7 @@ A small top-down western shooter with blocky 3D graphics. You play as a cowboy h
 - Revolver, Winchester, and grenade launcher with separate ammo pools.
 - Finite ammo with reloads and arcade-style cartridge HUD animations.
 - Ammo crates spawn during combat and refill only weapons you already own.
-- Large procedural desert map with a main town, detached micro-settlements, wasteland, roads, fences, and varied western buildings.
+- Large procedural desert map with multiple towns, detached micro-settlements, wasteland, roads, fences, and varied western buildings.
 - Touch controls and forced landscape-friendly layout for mobile.
 
 ## Run
