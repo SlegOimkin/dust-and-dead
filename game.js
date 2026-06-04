@@ -20,6 +20,8 @@
   var MAX_SHOCKWAVES = 12;
   var MAX_DECALS = 48;
   var MAX_DEBRIS = 120;
+  var MAX_AMMO_CRATES = 4;
+  var AMMO_CRATE_PICKUP_RADIUS = 1.35;
   var MOBILE_RENDER_MODE = isMobileRuntime();
   var DYNAMIC_LIGHTS_ENABLED = true;
 
@@ -35,6 +37,7 @@
   var ammoMax = document.getElementById("ammo-max");
   var ammoReloadFill = document.getElementById("ammo-reload-fill");
   var ammoWeaponIcon = document.getElementById("ammo-weapon-icon");
+  var ammoCartridgeRack = document.getElementById("ammo-cartridge-rack");
   var weaponButtons = Array.prototype.slice.call(document.querySelectorAll("[data-weapon]"));
   var menu = document.getElementById("menu");
   var gameOverPanel = document.getElementById("game-over");
@@ -86,6 +89,11 @@
   var obstacleRects = [];
   var sharedGeometries = {};
   var currentAmmoIcon = "";
+  var ammoVisualState = {
+    weapon: "",
+    magazine: 0,
+    current: null,
+  };
   var renderDiagnostics = {
     contextLost: false,
     contextLosses: 0,
@@ -102,6 +110,7 @@
       shortLabel: "REV",
       cost: 0,
       magazine: 6,
+      reserveStart: 30,
       reloadTime: 1.05,
       cooldown: 0.22,
       damage: 1,
@@ -120,6 +129,7 @@
       shortLabel: "WIN",
       cost: 300,
       magazine: 18,
+      reserveStart: 54,
       reloadTime: 1.55,
       cooldown: 0.14,
       damage: 2,
@@ -138,6 +148,7 @@
       shortLabel: "GL",
       cost: 900,
       magazine: 3,
+      reserveStart: 12,
       reloadTime: 2.05,
       cooldown: 0.92,
       damage: 0,
@@ -210,7 +221,10 @@
     weapon: "revolver",
     ownedWeapons: { revolver: true, rifle: false, launcher: false },
     ammo: {},
+    ammoReserve: {},
     reloadTimers: {},
+    ammoCrates: [],
+    ammoCrateTimer: 0,
     pointerWorld: { x: 0, z: 6 },
   };
 
@@ -236,6 +250,19 @@
     mats.cactusDark = material(0x22633e, 0.9, 0.01);
     mats.rock = material(0x8f8174, 0.92, 0.01);
     mats.barrel = material(0x8a4125, 0.75, 0.02);
+    mats.ammoCrate = material(0x5a381f, 0.8, 0.04);
+    mats.ammoCrateLight = material(0xb17837, 0.72, 0.04);
+    mats.ammoCrateBand = material(0x2a2017, 0.48, 0.45);
+    mats.ammoRound = material(0xe0ad4d, 0.42, 0.16, 0xffbd45, 0.12);
+    mats.ammoRing = new THREE.MeshBasicMaterial({
+      color: 0xffdc7a,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
     mats.metal = material(0x353333, 0.35, 0.75);
     mats.black = material(0x151515, 0.55, 0.25);
     mats.playerHat = material(0x6c351a, 0.78, 0.04);
@@ -615,9 +642,12 @@
     state.smokePuffs = [];
     state.ambientDust = [];
     state.debris = [];
+    state.ammoCrates = [];
+    state.ammoCrateTimer = state.mode === "playing" ? rand(7, 11) : 0;
     state.weapon = "revolver";
     state.ownedWeapons = { revolver: true, rifle: false, launcher: false };
     initAmmoState();
+    resetAmmoVisualState();
     pointerDown = false;
     resetTouchControls();
 
@@ -851,6 +881,7 @@
 
     updateReloads(dt);
     updatePlayer(dt);
+    updateAmmoCrates(dt);
     updateSpawning(dt);
     updateEnemies(dt);
     updateBullets(dt);
@@ -862,11 +893,92 @@
 
   function initAmmoState() {
     state.ammo = {};
+    state.ammoReserve = {};
     state.reloadTimers = {};
     Object.keys(WEAPONS).forEach(function (id) {
       state.ammo[id] = WEAPONS[id].magazine;
+      state.ammoReserve[id] = Math.max(0, (WEAPONS[id].reserveStart || 0) - WEAPONS[id].magazine);
       state.reloadTimers[id] = 0;
     });
+  }
+
+  function resetAmmoVisualState() {
+    currentAmmoIcon = "";
+    ammoVisualState.weapon = "";
+    ammoVisualState.magazine = 0;
+    ammoVisualState.current = null;
+    if (ammoCartridgeRack) ammoCartridgeRack.innerHTML = "";
+  }
+
+  function buildAmmoRack(weapon, current) {
+    if (!ammoCartridgeRack) return;
+    ammoCartridgeRack.innerHTML = "";
+    ammoCartridgeRack.dataset.weapon = weapon.id;
+    ammoCartridgeRack.dataset.magazine = String(weapon.magazine);
+    for (var i = 0; i < weapon.magazine; i++) {
+      var round = document.createElement("span");
+      round.className = "ammo-round";
+      round.dataset.index = String(i);
+      var live = document.createElement("span");
+      live.className = "ammo-round-live";
+      round.appendChild(live);
+      if (i >= current) round.classList.add("is-spent");
+      ammoCartridgeRack.appendChild(round);
+    }
+    ammoVisualState.weapon = weapon.id;
+    ammoVisualState.magazine = weapon.magazine;
+    ammoVisualState.current = current;
+  }
+
+  function syncAmmoRack(weapon, ammo) {
+    if (!ammoCartridgeRack) return;
+    var current = Math.round(clamp(ammo.current, 0, weapon.magazine));
+    var needsRebuild = ammoVisualState.weapon !== weapon.id || ammoVisualState.magazine !== weapon.magazine || ammoCartridgeRack.children.length !== weapon.magazine;
+    if (needsRebuild) {
+      buildAmmoRack(weapon, current);
+      return;
+    }
+
+    var previous = ammoVisualState.current == null ? current : ammoVisualState.current;
+    var slots = Array.prototype.slice.call(ammoCartridgeRack.children);
+    slots.forEach(function (slot, index) {
+      slot.classList.toggle("is-spent", index >= current);
+    });
+
+    if (current < previous) {
+      for (var i = current; i < previous; i++) triggerAmmoDrop(slots[i], i);
+    } else if (current > previous) {
+      for (var j = previous; j < current; j++) triggerAmmoRefill(slots[j], j);
+    }
+    ammoVisualState.current = current;
+  }
+
+  function triggerAmmoDrop(slot, index) {
+    if (!slot) return;
+    slot.classList.remove("is-refilling");
+    slot.classList.remove("is-dropping");
+    var side = index % 2 === 0 ? -1 : 1;
+    slot.style.setProperty("--fall-x", side * (1 + (index % 3)) + "px");
+    slot.style.setProperty("--pop-y", -(16 + (index % 3) * 3) + "px");
+    slot.style.setProperty("--fall-y", 42 + (index % 4) * 4 + "px");
+    slot.style.setProperty("--fall-rot", side * (22 + (index % 4) * 7) + "deg");
+    void slot.offsetWidth;
+    slot.classList.add("is-dropping");
+    window.setTimeout(function () {
+      if (slot.isConnected) slot.classList.remove("is-dropping");
+    }, 840);
+  }
+
+  function triggerAmmoRefill(slot, index) {
+    if (!slot) return;
+    slot.classList.remove("is-dropping");
+    slot.classList.remove("is-refilling");
+    slot.style.setProperty("--round-delay", Math.min(180, index * 18) + "ms");
+    void slot.offsetWidth;
+    slot.classList.add("is-refilling");
+    window.setTimeout(function () {
+      if (slot.isConnected) slot.classList.remove("is-refilling");
+    }, 420);
   }
 
   function updateReloads(dt) {
@@ -875,7 +987,13 @@
       state.reloadTimers[id] = Math.max(0, state.reloadTimers[id] - dt);
       if (state.reloadTimers[id] <= 0) {
         state.reloadTimers[id] = 0;
-        state.ammo[id] = WEAPONS[id].magazine;
+        var weapon = WEAPONS[id];
+        var current = clamp(state.ammo[id] || 0, 0, weapon.magazine);
+        var needed = Math.max(0, weapon.magazine - current);
+        var reserve = Math.max(0, state.ammoReserve[id] || 0);
+        var loaded = Math.min(needed, reserve);
+        state.ammo[id] = current + loaded;
+        state.ammoReserve[id] = reserve - loaded;
       }
     });
   }
@@ -883,6 +1001,9 @@
   function startReload(id) {
     var weapon = WEAPONS[id];
     if (!weapon || state.reloadTimers[id] > 0) return;
+    var current = clamp(state.ammo[id] || 0, 0, weapon.magazine);
+    if (current >= weapon.magazine) return;
+    if ((state.ammoReserve[id] || 0) <= 0) return;
     state.reloadTimers[id] = weapon.reloadTime;
     if (state.player) state.player.cooldown = Math.max(state.player.cooldown, 0.08);
   }
@@ -893,6 +1014,8 @@
     return {
       current: state.ammo[weapon.id] == null ? weapon.magazine : state.ammo[weapon.id],
       magazine: weapon.magazine,
+      reserve: Math.max(0, state.ammoReserve[weapon.id] || 0),
+      total: (state.ammo[weapon.id] == null ? weapon.magazine : state.ammo[weapon.id]) + Math.max(0, state.ammoReserve[weapon.id] || 0),
       reloading: remaining > 0,
       reloadRemaining: remaining,
       reloadProgress: remaining > 0 ? clamp(1 - remaining / weapon.reloadTime, 0, 1) : 0,
@@ -933,6 +1056,156 @@
     p.group.position.set(p.x, 0, p.z);
 
     if ((pointerDown || touchFire.active) && p.cooldown <= 0) shoot();
+  }
+
+  function updateAmmoCrates(dt) {
+    state.ammoCrateTimer = Math.max(0, state.ammoCrateTimer - dt);
+    if (state.ammoCrateTimer <= 0) {
+      if (state.ammoCrates.length < MAX_AMMO_CRATES) spawnAmmoCrate();
+      state.ammoCrateTimer = rand(16, 25);
+    }
+
+    for (var i = state.ammoCrates.length - 1; i >= 0; i--) {
+      var crate = state.ammoCrates[i];
+      crate.age += dt;
+      if (crate.body) {
+        crate.body.position.y = Math.sin(crate.age * 3.1) * 0.06;
+        crate.body.rotation.y = Math.sin(crate.age * 1.7) * 0.08;
+      }
+      if (crate.ring) {
+        crate.ring.rotation.z += dt * 0.85;
+        var ringPulse = 1 + Math.sin(crate.age * 3.8) * 0.055;
+        crate.ring.scale.set(ringPulse, ringPulse, ringPulse);
+        if (crate.ring.material) crate.ring.material.opacity = 0.46 + Math.sin(crate.age * 4.2) * 0.12;
+      }
+      if (state.player && Math.hypot(state.player.x - crate.x, state.player.z - crate.z) <= AMMO_CRATE_PICKUP_RADIUS) {
+        collectAmmoCrate(i);
+      }
+    }
+  }
+
+  function spawnAmmoCrate() {
+    var pos = findAmmoCrateSpawnPosition();
+    if (!pos) return false;
+    return spawnAmmoCrateAt(pos.x, pos.z);
+  }
+
+  function spawnAmmoCrateAt(x, z) {
+    var crate = createAmmoCrate(x, z);
+    state.ammoCrates.push(crate);
+    dynamicRoot.add(crate.group);
+    addShockwave(x, z, 1.65, 0.34, 0xffd36b);
+    return crate;
+  }
+
+  function findAmmoCrateSpawnPosition() {
+    for (var attempt = 0; attempt < 80; attempt++) {
+      var x = rand(-ARENA_W / 2 + 3.2, ARENA_W / 2 - 3.2);
+      var z = rand(-ARENA_D / 2 + 3.2, ARENA_D / 2 - 3.2);
+      if (pointHitsObstacle(x, z, 1.15)) continue;
+      if (state.player && Math.hypot(state.player.x - x, state.player.z - z) < 6) continue;
+      var blockedByEnemy = false;
+      for (var i = 0; i < state.enemies.length; i++) {
+        if (Math.hypot(state.enemies[i].x - x, state.enemies[i].z - z) < 2.8) {
+          blockedByEnemy = true;
+          break;
+        }
+      }
+      if (!blockedByEnemy) return { x: x, z: z };
+    }
+    return null;
+  }
+
+  function createAmmoCrate(x, z) {
+    var group = new THREE.Group();
+    group.name = "ammo crate";
+    group.position.set(x, 0, z);
+
+    var ringMat = mats.ammoRing.clone();
+    var ring = new THREE.Mesh(getSharedGeometry("ammo-crate-selection-ring", function () {
+      return new THREE.RingGeometry(1.78, 1.98, 72);
+    }), ringMat);
+    ring.userData.disposeGeometry = false;
+    ring.userData.disposeMaterial = true;
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.16;
+    ring.castShadow = false;
+    ring.receiveShadow = false;
+    ring.renderOrder = 12;
+    group.add(ring);
+
+    var body = new THREE.Group();
+    body.rotation.y = rand(-0.26, 0.26);
+    group.add(body);
+    addContactShadow(body, 1.85, 1.35, 0.24);
+    addSharedBox(body, 1.52, 0.18, 1.12, mats.ammoCrate, 0, 0.2, 0);
+    addSharedBox(body, 1.52, 0.5, 0.13, mats.ammoCrate, 0, 0.48, -0.5);
+    addSharedBox(body, 1.52, 0.5, 0.13, mats.ammoCrate, 0, 0.48, 0.5);
+    addSharedBox(body, 0.13, 0.5, 1.12, mats.ammoCrate, -0.7, 0.48, 0);
+    addSharedBox(body, 0.13, 0.5, 1.12, mats.ammoCrate, 0.7, 0.48, 0);
+    addSharedBox(body, 1.3, 0.08, 0.9, mats.black, 0, 0.5, 0);
+    addSharedBox(body, 1.55, 0.08, 0.12, mats.ammoCrateBand, 0, 0.72, -0.5);
+    addSharedBox(body, 1.55, 0.08, 0.12, mats.ammoCrateBand, 0, 0.72, 0.5);
+    addSharedBox(body, 0.12, 0.58, 1.16, mats.ammoCrateBand, -0.72, 0.48, 0);
+    addSharedBox(body, 0.12, 0.58, 1.16, mats.ammoCrateBand, 0.72, 0.48, 0);
+
+    var lid = addSharedBox(body, 1.55, 0.13, 1.02, mats.ammoCrateLight, 0, 0.76, -0.82);
+    lid.rotation.x = -0.82;
+    addSharedBox(body, 1.43, 0.08, 0.12, mats.ammoCrateBand, 0, 0.57, -1.17).rotation.x = -0.82;
+    addSharedBox(body, 0.18, 0.08, 0.26, mats.black, 0, 0.86, -1.12).rotation.x = -0.82;
+
+    addSharedBox(body, 1.14, 0.06, 0.04, mats.ammoCrateBand, 0, 0.62, -0.11);
+    addSharedBox(body, 1.14, 0.06, 0.04, mats.ammoCrateBand, 0, 0.62, 0.13);
+    for (var row = 0; row < 3; row++) {
+      for (var i = 0; i < 4; i++) {
+        var px = -0.45 + i * 0.3;
+        var pz = -0.25 + row * 0.24;
+        addSharedBox(body, 0.06, 0.08, 0.11, mats.black, px - 0.13, 0.68, pz);
+        addSharedBox(body, 0.22, 0.1, 0.11, mats.ammoRound, px, 0.69, pz);
+        addSharedBox(body, 0.08, 0.1, 0.09, mats.rifleTracer, px + 0.15, 0.7, pz);
+      }
+    }
+
+    return {
+      x: x,
+      z: z,
+      age: 0,
+      group: group,
+      body: body,
+      ring: ring,
+    };
+  }
+
+  function collectAmmoCrate(index) {
+    var crate = state.ammoCrates[index];
+    if (!crate) return false;
+    var amounts = getAmmoPickupAmounts();
+    Object.keys(amounts).forEach(function (id) {
+      state.ammoReserve[id] = Math.max(0, state.ammoReserve[id] || 0) + amounts[id];
+    });
+    if (state.weapon && (state.ammo[state.weapon] || 0) <= 0) startReload(state.weapon);
+    addAmmoPickupBurst(crate.x, crate.z);
+    removeObject3D(crate.group);
+    state.ammoCrates.splice(index, 1);
+    updateHud();
+    return true;
+  }
+
+  function getAmmoPickupAmounts() {
+    return Object.keys(WEAPONS).reduce(function (acc, id) {
+      if (state.ownedWeapons[id]) acc[id] = WEAPONS[id].reserveStart || 0;
+      return acc;
+    }, {});
+  }
+
+  function addAmmoPickupBurst(x, z) {
+    addShockwave(x, z, 2.15, 0.38, 0xffd66d);
+    addLightFlash(x, 1.05, z, 0xffd66d, 1.8, 5, 0.18);
+    for (var i = 0; i < 18; i++) {
+      var angle = rand(0, Math.PI * 2);
+      var speed = rand(1.6, 4.6);
+      spawnParticle(x, rand(0.55, 1.5), z, Math.cos(angle) * speed, rand(1.2, 4.2), Math.sin(angle) * speed, rand(0.22, 0.48), rand(0.06, 0.15), i % 4 === 0 ? mats.rifleTracer : mats.ammoRound);
+    }
   }
 
   function updateAim() {
@@ -1031,6 +1304,7 @@
     }
     if (ammo.current <= 0) {
       startReload(weapon.id);
+      if ((state.ammoReserve[weapon.id] || 0) <= 0) p.cooldown = Math.max(p.cooldown, 0.16);
       return false;
     }
     var dir = new THREE.Vector3(Math.sin(p.aimAngle), 0, Math.cos(p.aimAngle)).normalize();
@@ -2093,9 +2367,17 @@
     var ammo = getAmmoState(weapon.id);
     ammoHud.classList.toggle("is-reloading", ammo.reloading);
     ammoHud.style.setProperty("--reload-progress", ammo.reloadProgress.toFixed(3));
-    if (ammoStatus) ammoStatus.textContent = ammo.reloading ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s" : "Ammo";
+    if (ammoStatus) {
+      ammoStatus.textContent = ammo.reloading
+        ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s"
+        : ammo.total <= 0
+          ? "Empty"
+          : "LEFT " + ammo.total;
+    }
     ammoCurrent.textContent = String(ammo.current);
     ammoMax.textContent = String(ammo.magazine);
+    ammoHud.setAttribute("aria-label", weapon.label + " ammo " + ammo.current + " of " + ammo.magazine + ", total " + ammo.total + ", reserve " + ammo.reserve);
+    syncAmmoRack(weapon, ammo);
     if (ammoReloadFill) ammoReloadFill.style.transform = ammo.reloading ? "scaleX(" + ammo.reloadProgress.toFixed(3) + ")" : "scaleX(0)";
     if (ammoWeaponIcon && currentAmmoIcon !== weapon.id) {
       ammoWeaponIcon.innerHTML = WEAPON_ICONS[weapon.id] || WEAPON_ICONS.revolver;
@@ -2607,6 +2889,8 @@
       ammo: {
         current: getAmmoState(state.weapon).current,
         magazine: getAmmoState(state.weapon).magazine,
+        reserve: getAmmoState(state.weapon).reserve,
+        total: getAmmoState(state.weapon).total,
         reloading: getAmmoState(state.weapon).reloading,
         reloadRemaining: Number(getAmmoState(state.weapon).reloadRemaining.toFixed(2)),
         reloadProgress: Number(getAmmoState(state.weapon).reloadProgress.toFixed(2)),
@@ -2615,6 +2899,8 @@
           acc[id] = {
             current: ammo.current,
             magazine: ammo.magazine,
+            reserve: ammo.reserve,
+            total: ammo.total,
             reloading: ammo.reloading,
             reloadRemaining: Number(ammo.reloadRemaining.toFixed(2)),
           };
@@ -2622,6 +2908,12 @@
         }, {}),
       },
       spawnLeft: state.spawnLeft,
+      ammoCrates: state.ammoCrates.map(function (crate) {
+        return {
+          x: Number(crate.x.toFixed(2)),
+          z: Number(crate.z.toFixed(2)),
+        };
+      }),
       enemyCount: state.enemies.length,
       player: p
         ? {
@@ -2708,6 +3000,25 @@
       state.spawnTimer = 0;
       updateHud();
       return true;
+    },
+    clearAmmoCrates: function () {
+      for (var i = state.ammoCrates.length - 1; i >= 0; i--) {
+        removeObject3D(state.ammoCrates[i].group);
+      }
+      state.ammoCrates = [];
+      return true;
+    },
+    spawnAmmoCrateAt: function (x, z) {
+      var crate = spawnAmmoCrateAt(Number(x) || 0, Number(z) || 0);
+      return { x: Number(crate.x.toFixed(2)), z: Number(crate.z.toFixed(2)) };
+    },
+    setAmmo: function (id, current, reserve) {
+      var weapon = WEAPONS[id] || WEAPONS.revolver;
+      state.ammo[weapon.id] = clamp(Number(current) || 0, 0, weapon.magazine);
+      state.ammoReserve[weapon.id] = Math.max(0, Number(reserve) || 0);
+      state.reloadTimers[weapon.id] = 0;
+      updateHud();
+      return getAmmoState(weapon.id);
     },
     spawnZombieAt: function (type, x, z) {
       var id = { walker: true, runner: true, brute: true, spitter: true }[type] ? type : "walker";
