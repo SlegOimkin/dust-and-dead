@@ -8,11 +8,18 @@
   }
 
   var THREE = window.THREE;
-  var CITY_W = 42;
-  var CITY_D = 30;
-  var OUTSKIRT_MARGIN = 5.5;
-  var ARENA_W = CITY_W + OUTSKIRT_MARGIN * 2;
-  var ARENA_D = CITY_D + OUTSKIRT_MARGIN * 2;
+  var CITY_W = 60;
+  var CITY_D = 42;
+  var OUTSKIRT_MARGIN = 28;
+  var MAP_SIZE_MULTIPLIER = 2;
+  var BASE_ARENA_W = CITY_W + OUTSKIRT_MARGIN * 2;
+  var BASE_ARENA_D = CITY_D + OUTSKIRT_MARGIN * 2;
+  var ARENA_W = BASE_ARENA_W * MAP_SIZE_MULTIPLIER;
+  var ARENA_D = BASE_ARENA_D * MAP_SIZE_MULTIPLIER;
+  var MAP_OUTSKIRT_X = (ARENA_W - CITY_W) / 2;
+  var MAP_OUTSKIRT_Z = (ARENA_D - CITY_D) / 2;
+  var MAP_LINEAR_SCALE = MAP_SIZE_MULTIPLIER;
+  var MICRO_SETTLEMENT_TARGET = 5;
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
   var MAX_PARTICLES = 180;
@@ -22,6 +29,12 @@
   var MAX_DEBRIS = 120;
   var MAX_AMMO_CRATES = 4;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
+  var MIN_PLAYER_PASSAGE = 2.0;
+  var MAIN_TOWN_MICRO_BUFFER = 10.5;
+  var MICRO_FENCE_ROAD_CLEARANCE = 2.2;
+  var ENEMY_BOUNDS_EXTRA = 8.4;
+  var ZOMBIE_SPAWN_VIEW_MARGIN_MIN = 4.2;
+  var ZOMBIE_SPAWN_VIEW_MARGIN_MAX = 6.0;
   var MOBILE_RENDER_MODE = isMobileRuntime();
   var DYNAMIC_LIGHTS_ENABLED = true;
 
@@ -50,7 +63,7 @@
 
   var scene = new THREE.Scene();
   scene.background = new THREE.Color(0xcfa269);
-  scene.fog = new THREE.Fog(0xcfa269, 36, 92);
+  scene.fog = new THREE.Fog(0xcfa269, 42, 125);
 
   var renderer = createGameRenderer();
   root.insertBefore(renderer.domElement, root.firstChild);
@@ -86,8 +99,23 @@
   var lastMobileAim = { x: 0, z: -1 };
   var lastFrame = performance.now();
   var rng = mulberry32(7331);
+  var MAP_SEED = createMapSeed();
+  var mapRng = mulberry32(MAP_SEED);
+  var MAIN_TOWN_CENTER = createMainTownCenter();
+  var MAIN_TOWN_LAYOUT = createMainTownLayout();
+  var PLAYER_START = createPlayerStart();
   var obstacleRects = [];
+  var mapFootprints = [];
+  var microSettlementStats = [];
+  var nextMapFootprintId = 1;
   var sharedGeometries = {};
+  var cameraGroundBounds = { minX: -14, maxX: 14, minZ: -18, maxZ: 18 };
+  var cameraMapBounds = {
+    minX: -ARENA_W / 2 - 2.5,
+    maxX: ARENA_W / 2 + 2.5,
+    minZ: -ARENA_D / 2 - 2.5,
+    maxZ: ARENA_D / 2 + 2.5,
+  };
   var currentAmmoIcon = "";
   var ammoVisualState = {
     weapon: "",
@@ -363,10 +391,10 @@
     sun.position.set(-18, 42, 26);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -34;
-    sun.shadow.camera.right = 34;
-    sun.shadow.camera.top = 28;
-    sun.shadow.camera.bottom = -28;
+    sun.shadow.camera.left = -ARENA_W / 2 - 10;
+    sun.shadow.camera.right = ARENA_W / 2 + 10;
+    sun.shadow.camera.top = ARENA_D / 2 + 10;
+    sun.shadow.camera.bottom = -ARENA_D / 2 - 10;
     sun.shadow.camera.near = 8;
     sun.shadow.camera.far = 88;
     scene.add(sun);
@@ -378,125 +406,992 @@
 
   function buildEnvironment() {
     addBox(worldRoot, ARENA_W + 12, 0.32, ARENA_D + 10, mats.sand, 0, -0.18, 0);
-    addBox(worldRoot, ARENA_W + 7, 0.08, 6.8, mats.road, 0, 0.02, 0);
-    addBox(worldRoot, 7.5, 0.09, ARENA_D + 5, mats.road, 0, 0.04, 0);
+    reservePlayerStartArea();
+    buildRoadNetwork();
+    buildTerrainPatches();
+    buildGeneratedTown();
+    buildFenceRing();
+    buildTownSideRoads();
+    buildMicroSettlements();
+    scatterTownProps();
+    buildOutskirts();
+    buildWasteland();
+  }
 
-    for (var i = 0; i < 70; i++) {
+  function reservePlayerStartArea() {
+    registerMapFootprint("player-start-clear", PLAYER_START.x, PLAYER_START.z, 5.4, 5.4, 0.15, false);
+  }
+
+  function buildRoadNetwork() {
+    addRoad(ARENA_W + 7, 0.08, 7.6, 0, 0.02, MAIN_TOWN_CENTER.z, 0.28);
+    addRoad(8.2, 0.09, ARENA_D + 5, MAIN_TOWN_CENTER.x, 0.04, 0, 0.28);
+  }
+
+  function buildTownSideRoads() {
+    [-CITY_D * 0.31, CITY_D * 0.31].forEach(function (z) {
+      addRoadIfLargeClear(CITY_W * mapRand(0.34, 0.48), 0.055, mapRand(2.0, 2.8), MAIN_TOWN_CENTER.x + mapRand(-3, 3), 0.035, townLocalZ(z + mapRand(-1.2, 1.2)), 0.22);
+    });
+    [-CITY_W * 0.32, CITY_W * 0.32].forEach(function (x) {
+      addRoadIfLargeClear(mapRand(2.0, 2.7), 0.055, CITY_D * mapRand(0.32, 0.46), townLocalX(x + mapRand(-1.1, 1.1)), 0.035, MAIN_TOWN_CENTER.z + mapRand(-2.2, 2.2), 0.22);
+    });
+  }
+
+  function addRoad(w, h, d, x, y, z, pad, type) {
+    var road = addBox(worldRoot, w, h, d, mats.road, x, y, z);
+    registerMapFootprint(type || "road-clear", x, z, w, d, pad || 0.2, false);
+    return road;
+  }
+
+  function addRoadIfLargeClear(w, h, d, x, y, z, pad, type) {
+    if (mapAreaHitsLargePassageFootprints(x, z, w, d, pad || 0.2)) return null;
+    return addRoad(w, h, d, x, y, z, pad, type);
+  }
+
+  function buildTerrainPatches() {
+    var count = Math.round((BASE_ARENA_W * BASE_ARENA_D) / 48 * MAP_LINEAR_SCALE);
+    for (var i = 0; i < count; i++) {
       var patchMat = i % 3 === 0 ? mats.sandDark : mats.sand;
-      var px = rand(-ARENA_W / 2 - 4, ARENA_W / 2 + 4);
-      var pz = rand(-ARENA_D / 2 - 3, ARENA_D / 2 + 3);
-      var pw = rand(0.5, 1.8);
-      var pd = rand(0.15, 0.55);
+      var px = mapRand(-ARENA_W / 2 - 4, ARENA_W / 2 + 4);
+      var pz = mapRand(-ARENA_D / 2 - 3, ARENA_D / 2 + 3);
+      var pw = mapRand(0.5, 2.1);
+      var pd = mapRand(0.15, 0.62);
       var patch = addBox(worldRoot, pw, 0.035, pd, patchMat, px, 0.08, pz);
-      patch.rotation.y = rand(0, Math.PI);
+      patch.rotation.y = mapRand(0, Math.PI);
+    }
+  }
+
+  function buildGeneratedTown() {
+    var leftFront = -CITY_W * 0.32 + mapRand(-2.2, 1.6);
+    var rightFront = CITY_W * 0.3 + mapRand(-1.6, 2.1);
+    buildBuilding(townLocalX(leftFront), townLocalZ(-CITY_D * 0.28 + mapRand(-1.0, 1.0)), mapRand(8.0, 9.6), mapRand(5.0, 5.8), mapRand(4.0, 4.6), "SALOON", mats.wood);
+    buildBuilding(townLocalX(rightFront), townLocalZ(-CITY_D * 0.29 + mapRand(-1.0, 1.0)), mapRand(6.8, 8.0), mapRand(4.6, 5.4), mapRand(3.6, 4.2), "SHERIFF", material(0x906043, 0.82, 0.02));
+    var stableSlots = [
+      [-CITY_W * 0.31, CITY_D * 0.28],
+      [-CITY_W * 0.38, CITY_D * 0.1],
+      [-CITY_W * 0.18, CITY_D * 0.39],
+      [CITY_W * 0.28, CITY_D * 0.34],
+    ];
+    for (var stableAttempt = 0; stableAttempt < 10; stableAttempt++) {
+      var stableSlot = stableSlots[stableAttempt % stableSlots.length];
+      var stableX = townLocalX(stableSlot[0] + mapRand(-2, 2));
+      var stableZ = townLocalZ(stableSlot[1] + mapRand(-1.2, 1.2));
+      if (mainTownLargeAreaClear(stableX, stableZ + 0.25, 9.7, 6.9, 0.5) && tryBuildStable(stableX, stableZ)) break;
+    }
+    for (var towerAttempt = 0; towerAttempt < 8; towerAttempt++) {
+      var towerX = townLocalX(CITY_W * 0.32 + mapRand(-2, 2));
+      var towerZ = townLocalZ(CITY_D * 0.27 + mapRand(-1.2, 1.2));
+      if (mainTownLargeAreaClear(towerX, towerZ, 3.25, 3.25, 0.5) && tryBuildWaterTower(towerX, towerZ)) break;
+    }
+    var graveyardSlots = [
+      [CITY_W * 0.14, CITY_D * 0.22],
+      [CITY_W * 0.02, CITY_D * 0.31],
+      [CITY_W * 0.25, CITY_D * 0.36],
+      [-CITY_W * 0.02, CITY_D * 0.21],
+    ];
+    for (var graveAttempt = 0; graveAttempt < 12; graveAttempt++) {
+      var graveSlot = graveyardSlots[graveAttempt % graveyardSlots.length];
+      var graveX = townLocalX(graveSlot[0] + mapRand(-1.6, 1.6));
+      var graveZ = townLocalZ(graveSlot[1] + mapRand(-1.3, 1.3));
+      if (mainTownLargeAreaClear(graveX, graveZ + 0.1, 4.95, 4.25, 0.5) && tryBuildGraveyard(graveX, graveZ)) break;
     }
 
-    buildBuilding(-15.4, -8.3, 8.9, 5.2, 4.3, "SALOON", mats.wood);
-    buildBuilding(14.8, -8.6, 7.2, 4.8, 3.8, "SHERIFF", material(0x906043, 0.82, 0.02));
-    buildStable(-15.7, 8.5);
-    buildWaterTower(16.4, 8.4);
-    buildGraveyard(11.5, 6.8);
+    var extraLabels = ["BANK", "HOTEL", "STORE", "DEPOT", "SMITH", "JAIL"];
+    var slots = getTownBuildingSlots();
+    for (var i = 0; i < slots.length; i++) {
+      if (mapRng() < 0.36) continue;
+      var w = mapRand(5.2, 7.8);
+      var d = mapRand(3.8, 5.4);
+      var localX = slots[i][0] + mapRand(-1.6, 1.6);
+      var localZ = slots[i][1] + mapRand(-1.2, 1.2);
+      var x = townLocalX(localX);
+      var z = townLocalZ(localZ);
+      if (Math.abs(localX) < 7.2 || Math.abs(localZ) < 5.4) continue;
+      if (!cityBuildingAreaClear(x, z, w, d)) continue;
+      if (!canPlaceLargeMapObject(x, z + 0.35, w + 1.8, d + 2.6, 0.35)) continue;
+      buildBuilding(x, z, w, d, mapRand(3.2, 4.3), extraLabels[i % extraLabels.length], i % 2 ? mats.wood : material(0x7f5639, 0.84, 0.02));
+    }
+  }
 
-    for (var f = 0; f < 16; f++) {
+  function cityBuildingAreaClear(x, z, w, d) {
+    return mainTownLargeAreaClear(x, z, w + 1.4, d + 2.25, 0.55);
+  }
+
+  function mainTownLargeAreaClear(x, z, w, d, pad) {
+    var halfW = (w + 1.4) / 2 + 0.55;
+    var halfD = (d + 2.25) / 2 + 0.55;
+    if (arguments.length > 4) {
+      halfW = w / 2 + (pad || 0);
+      halfD = d / 2 + (pad || 0);
+    }
+    return Math.abs(x - MAIN_TOWN_CENTER.x) + halfW < CITY_W / 2 - 2.35 && Math.abs(z - MAIN_TOWN_CENTER.z) + halfD < CITY_D / 2 - 2.35;
+  }
+
+  function getTownBuildingSlots() {
+    var sets = [
+      [
+        [-CITY_W * 0.42, -CITY_D * 0.06], [-CITY_W * 0.18, -CITY_D * 0.36],
+        [CITY_W * 0.08, -CITY_D * 0.38], [CITY_W * 0.43, -CITY_D * 0.05],
+        [-CITY_W * 0.43, CITY_D * 0.1], [-CITY_W * 0.08, CITY_D * 0.38],
+        [CITY_W * 0.12, CITY_D * 0.36], [CITY_W * 0.42, CITY_D * 0.11],
+      ],
+      [
+        [-CITY_W * 0.38, -CITY_D * 0.28], [-CITY_W * 0.12, -CITY_D * 0.42],
+        [CITY_W * 0.18, -CITY_D * 0.32], [CITY_W * 0.39, -CITY_D * 0.14],
+        [-CITY_W * 0.34, CITY_D * 0.18], [-CITY_W * 0.2, CITY_D * 0.43],
+        [CITY_W * 0.08, CITY_D * 0.28], [CITY_W * 0.36, CITY_D * 0.34],
+      ],
+      [
+        [-CITY_W * 0.45, -CITY_D * 0.18], [-CITY_W * 0.28, CITY_D * 0.03],
+        [-CITY_W * 0.06, -CITY_D * 0.39], [CITY_W * 0.24, -CITY_D * 0.3],
+        [CITY_W * 0.43, CITY_D * 0.02], [-CITY_W * 0.12, CITY_D * 0.34],
+        [CITY_W * 0.16, CITY_D * 0.42], [CITY_W * 0.39, CITY_D * 0.24],
+      ],
+      [
+        [-CITY_W * 0.4, -CITY_D * 0.34], [-CITY_W * 0.42, CITY_D * 0.04],
+        [-CITY_W * 0.22, CITY_D * 0.28], [CITY_W * 0.0, -CITY_D * 0.42],
+        [CITY_W * 0.18, -CITY_D * 0.24], [CITY_W * 0.33, CITY_D * 0.08],
+        [CITY_W * 0.05, CITY_D * 0.38], [CITY_W * 0.44, CITY_D * 0.34],
+      ],
+    ];
+    return sets[MAIN_TOWN_LAYOUT.variant % sets.length];
+  }
+
+  function buildFenceRing() {
+    var fenceCountX = Math.floor(CITY_W / 2.8);
+    for (var f = 0; f <= fenceCountX; f++) {
       var fenceX = -CITY_W / 2 - 0.5 + f * 2.8;
-      if (Math.abs(fenceX) < 5.2) continue;
-      addFenceSegment(fenceX, -CITY_D / 2 - 0.7, false);
-      addFenceSegment(fenceX, CITY_D / 2 + 0.7, false);
+      if (Math.abs(fenceX) < 6.2) continue;
+      addFenceSegment(townLocalX(fenceX), townLocalZ(-CITY_D / 2 - 0.7), false);
+      addFenceSegment(townLocalX(fenceX), townLocalZ(CITY_D / 2 + 0.7), false);
     }
-    for (var s = 0; s < 9; s++) {
+    var fenceCountZ = Math.floor(CITY_D / 2.8);
+    for (var s = 0; s <= fenceCountZ; s++) {
       var fenceZ = -CITY_D / 2 + 2 + s * 2.8;
-      if (Math.abs(fenceZ) < 3.7) continue;
-      addFenceSegment(-CITY_W / 2 - 0.9, fenceZ, true);
-      addFenceSegment(CITY_W / 2 + 0.9, fenceZ, true);
+      if (Math.abs(fenceZ) < 4.6) continue;
+      addFenceSegment(townLocalX(-CITY_W / 2 - 0.9), townLocalZ(fenceZ), true);
+      addFenceSegment(townLocalX(CITY_W / 2 + 0.9), townLocalZ(fenceZ), true);
     }
     addGatePosts();
+  }
 
-    var cactusSpots = [
-      [-19, -2], [-17, 13], [-8, -13], [7, -12], [18, 1],
-      [20, 13], [4, 12], [-2, -10], [-20, 5], [12, -2],
+  function buildMicroSettlements() {
+    var settlements = [
+      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W / 2 + MAP_OUTSKIRT_X * 0.32), z: clampSettlementZ(MAIN_TOWN_CENTER.z - CITY_D * 0.18), name: "east" },
+      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W * 0.08), z: clampSettlementZ(MAIN_TOWN_CENTER.z + CITY_D / 2 + MAP_OUTSKIRT_Z * 0.34), name: "south" },
+      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W * 0.18), z: clampSettlementZ(MAIN_TOWN_CENTER.z - CITY_D / 2 - MAP_OUTSKIRT_Z * 0.34), name: "north" },
+      { x: clampSettlementX(MAIN_TOWN_CENTER.x + CITY_W / 2 + MAP_OUTSKIRT_X * 0.68), z: clampSettlementZ(MAIN_TOWN_CENTER.z + mapRand(-MAP_OUTSKIRT_Z * 0.42, MAP_OUTSKIRT_Z * 0.42)), name: "far-east" },
+      { x: clampSettlementX(MAIN_TOWN_CENTER.x + mapRand(-CITY_W * 0.15, MAP_OUTSKIRT_X * 0.5)), z: clampSettlementZ(MAIN_TOWN_CENTER.z + (mapRng() < 0.5 ? -1 : 1) * (CITY_D / 2 + MAP_OUTSKIRT_Z * 0.68)), name: "far-ns" },
     ];
-    cactusSpots.forEach(function (p, idx) {
-      buildCactus(p[0], p[1], 0.75 + (idx % 3) * 0.18);
+    settlements.forEach(function (settlement, index) {
+      buildMicroSettlement(settlement.x + mapRand(-2.2, 2.2), settlement.z + mapRand(-1.8, 1.8), index);
     });
+    for (var fallback = 0; countBuiltMicroSettlements() < MICRO_SETTLEMENT_TARGET && fallback < 42; fallback++) {
+      var point = findFallbackMicroSettlementPoint();
+      if (point) buildMicroSettlement(point.x, point.z, 3 + fallback);
+    }
+  }
 
-    var barrelSpots = [
-      [-10.8, -5.4], [-12.2, -4.9], [-17.6, -4.8], [11.4, -5.5],
-      [16.4, -5.7], [-12.5, 5.7], [18.2, 5.3], [6.4, 9.2],
-    ];
-    barrelSpots.forEach(function (p) {
-      buildBarrel(p[0], p[1]);
-    });
+  function countBuiltMicroSettlements() {
+    var count = 0;
+    for (var i = 0; i < microSettlementStats.length; i++) {
+      if (!microSettlementStats[i].skipped && microSettlementStats[i].buildingCount >= 2) count += 1;
+    }
+    return count;
+  }
 
-    for (var r = 0; r < 26; r++) {
-      var rx = rand(-ARENA_W / 2 - 2, ARENA_W / 2 + 2);
-      var rz = rand(-ARENA_D / 2 - 1, ARENA_D / 2 + 1);
-      if (Math.abs(rx) < 7 && Math.abs(rz) < 5) continue;
-      buildRock(rx, rz, rand(0.45, 1.1));
+  function findFallbackMicroSettlementPoint() {
+    for (var attempt = 0; attempt < 96; attempt++) {
+      var p = randomSettledOutskirtPoint();
+      if (isWastelandPoint(p.x, p.z)) continue;
+      if (mapAreaTouchesMainTownMicroBuffer(p.x, p.z, 21, 18, 0.8, MAIN_TOWN_MICRO_BUFFER)) continue;
+      if (!mapAreaWithinBounds(p.x, p.z, 19, 17, 0.8)) continue;
+      if (Math.hypot(p.x - PLAYER_START.x, p.z - PLAYER_START.z) < 10) continue;
+      if (mapAreaHitsFootprints(p.x, p.z, 8, 7, 0.4)) continue;
+      return p;
+    }
+    return null;
+  }
+
+  function clampSettlementX(x) {
+    return clamp(x, -CITY_W / 2 - 2.6 + 10, ARENA_W / 2 - 12.5);
+  }
+
+  function clampSettlementZ(z) {
+    return clamp(z, -ARENA_D / 2 + 12.5, ARENA_D / 2 - 12.5);
+  }
+
+  function buildMicroSettlement(cx, zc, index) {
+    var plan = findMicroSettlementPlan(cx, zc, index);
+    if (!plan || plan.buildings.length < 2) {
+      microSettlementStats.push({
+        index: index,
+        x: cx,
+        z: zc,
+        buildingCount: 0,
+        roadCount: 0,
+        fenceCount: 0,
+        styleVariants: [],
+        skipped: true,
+      });
+      return;
     }
 
-    buildOutskirts();
+    cx = plan.x;
+    zc = plan.z;
+    var placed = plan.buildings;
+    for (var i = 0; i < placed.length; i++) {
+      var building = placed[i];
+      buildBuilding(
+        building.x,
+        building.z,
+        building.w,
+        building.d,
+        building.h,
+        building.label,
+        building.wallMat,
+        building.style
+      );
+    }
+    var roadCount = buildMicroSettlementRoads(cx, zc, placed);
+    if (mapRng() < 0.65) {
+      var towerX = cx + mapRand(-5.5, 5.5);
+      var towerZ = zc + mapRand(4.8, 6.6);
+      if (!isWastelandPoint(towerX, towerZ) && isMapPointOpen(towerX, towerZ, 2.2, true)) tryBuildWaterTower(towerX, towerZ);
+    }
+    for (var b = 0; b < 3; b++) {
+      var bx = cx + mapRand(-6.2, 6.2);
+      var bz = zc + mapRand(-5.5, 5.5);
+      if (isMapPointOpen(bx, bz, 1.1, true)) buildBarrel(bx, bz);
+    }
+    var fenceCount = buildMicroSettlementFences(cx, zc, placed);
+    microSettlementStats.push({
+      index: index,
+      x: cx,
+      z: zc,
+      buildingCount: placed.length,
+      roadCount: roadCount,
+      fenceCount: fenceCount,
+      styleVariants: placed.map(function (building) {
+        return building.style ? building.style.variant : "plain";
+      }),
+      skipped: false,
+    });
+  }
+
+  function buildMicroSettlementFences(cx, zc, buildings) {
+    if (buildings.length < 3) return 0;
+    var box = getMicroSettlementFootprintBox(buildings);
+    var candidates = createMicroFenceCandidates(cx, zc, box);
+    var maxFences = buildings.length >= 4 ? 2 : 1;
+    var placed = 0;
+    for (var i = 0; i < candidates.length && placed < maxFences; i++) {
+      var c = candidates[i];
+      if (addMicroFenceSegmentIfOpen(c.x, c.z, c.vertical, cx, zc)) placed += 1;
+    }
+    return placed;
+  }
+
+  function getMicroSettlementFootprintBox(buildings) {
+    var minX = Infinity;
+    var maxX = -Infinity;
+    var minZ = Infinity;
+    var maxZ = -Infinity;
+    for (var i = 0; i < buildings.length; i++) {
+      var b = buildings[i];
+      minX = Math.min(minX, b.footprintX - b.footprintW / 2 - b.footprintPad);
+      maxX = Math.max(maxX, b.footprintX + b.footprintW / 2 + b.footprintPad);
+      minZ = Math.min(minZ, b.footprintZ - b.footprintD / 2 - b.footprintPad);
+      maxZ = Math.max(maxZ, b.footprintZ + b.footprintD / 2 + b.footprintPad);
+    }
+    return {
+      minX: minX,
+      maxX: maxX,
+      minZ: minZ,
+      maxZ: maxZ,
+      centerX: (minX + maxX) / 2,
+      centerZ: (minZ + maxZ) / 2,
+    };
+  }
+
+  function createMicroFenceCandidates(cx, zc, box) {
+    var candidates = [
+      { side: "west", vertical: true, x: box.minX - mapRand(2.4, 3.6), z: safeMapRand(box.minZ + 1.6, box.maxZ - 1.6) },
+      { side: "east", vertical: true, x: box.maxX + mapRand(2.4, 3.6), z: safeMapRand(box.minZ + 1.6, box.maxZ - 1.6) },
+      { side: "north", vertical: false, x: safeMapRand(box.minX + 1.8, box.maxX - 1.8), z: box.minZ - mapRand(2.4, 3.6) },
+      { side: "south", vertical: false, x: safeMapRand(box.minX + 1.8, box.maxX - 1.8), z: box.maxZ + mapRand(2.4, 3.6) },
+    ];
+    var filtered = [];
+    for (var i = 0; i < candidates.length; i++) {
+      if (!microFenceSideFacesMainTown(box.centerX, box.centerZ, candidates[i].side)) filtered.push(candidates[i]);
+    }
+    for (var j = filtered.length - 1; j > 0; j--) {
+      var swap = Math.floor(mapRng() * (j + 1));
+      var tmp = filtered[j];
+      filtered[j] = filtered[swap];
+      filtered[swap] = tmp;
+    }
+    return filtered;
+  }
+
+  function safeMapRand(min, max) {
+    if (max < min) return (min + max) / 2;
+    return mapRand(min, max);
+  }
+
+  function microFenceSideFacesMainTown(x, z, side) {
+    var dx = MAIN_TOWN_CENTER.x - x;
+    var dz = MAIN_TOWN_CENTER.z - z;
+    if (side === "west") return dx < 0 && Math.abs(dx) > Math.abs(dz) * 0.55;
+    if (side === "east") return dx > 0 && Math.abs(dx) > Math.abs(dz) * 0.55;
+    if (side === "north") return dz < 0 && Math.abs(dz) > Math.abs(dx) * 0.55;
+    if (side === "south") return dz > 0 && Math.abs(dz) > Math.abs(dx) * 0.55;
+    return false;
+  }
+
+  function findMicroSettlementPlan(cx, zc, index) {
+    var best = null;
+    for (var attempt = 0; attempt < 12; attempt++) {
+      var planCx = attempt === 0 ? cx : clampSettlementX(cx + mapRand(-5.8, 5.8));
+      var planZc = attempt === 0 ? zc : clampSettlementZ(zc + mapRand(-5.4, 5.4));
+      var plan = createMicroSettlementPlan(planCx, planZc, index);
+      if (!best || plan.buildings.length > best.buildings.length) best = plan;
+      if (plan.buildings.length >= 3 || (attempt > 3 && plan.buildings.length >= 2)) break;
+    }
+    return best;
+  }
+
+  function createMicroSettlementPlan(cx, zc, index) {
+    var labels = ["TRADER", "STORE", "INN", "BARN", "POST", "DEPOT"];
+    var offsets = getMicroSettlementOffsets(index);
+    var buildings = [];
+    for (var i = 0; i < offsets.length; i++) {
+      if (i > 1 && mapRng() < 0.28) continue;
+      var building = findMicroBuildingPlan(cx, zc, offsets[i], labels[(index + i) % labels.length], i, buildings);
+      if (building) buildings.push(building);
+    }
+    return { x: cx, z: zc, buildings: buildings };
+  }
+
+  function getMicroSettlementOffsets(index) {
+    return [
+      [-7.5, -5.8], [7.3, -5.5], [-6.9, 6.2], [7.6, 5.9],
+    ];
+  }
+
+  function findMicroBuildingPlan(cx, zc, offset, label, slotIndex, planned) {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      var jitter = attempt < 4 ? 1 : 1.7;
+      var w = mapRand(4.3, 6.0);
+      var d = mapRand(3.0, 4.4);
+      var x = cx + offset[0] + mapRand(-0.75 * jitter, 0.75 * jitter);
+      var z = zc + offset[1] + mapRand(-0.65 * jitter, 0.65 * jitter);
+      if (isWastelandPoint(x, z)) continue;
+      if (mapAreaTouchesMainTownMicroBuffer(x, z + 0.35, w + 1.7, d + 2.4, 0.4, MAIN_TOWN_MICRO_BUFFER)) continue;
+      if (!canPlaceLargeMapObject(x, z + 0.35, w + 1.7, d + 2.4, 0.4)) continue;
+      if (microPlanAreaTooCloseToBuildings(planned, x, z + 0.35, w + 1.7, d + 2.4, 0.4, MIN_PLAYER_PASSAGE)) continue;
+      var style = createMicroBuildingStyle(label, slotIndex, planned.length);
+      return {
+        x: x,
+        z: z,
+        w: w,
+        d: d,
+        h: mapRand(2.8, 3.7),
+        label: label,
+        wallMat: style.wallMat,
+        style: style,
+        footprintX: x,
+        footprintZ: z + 0.35,
+        footprintW: w + 1.7,
+        footprintD: d + 2.4,
+        footprintPad: 0.4,
+      };
+    }
+    return null;
+  }
+
+  function createMicroBuildingStyle(label, slotIndex, plannedCount) {
+    var variants = ["lean-to", "false-front", "awning", "workshop", "storefront"];
+    var variant = variants[(labelHash(label) + slotIndex * 2 + plannedCount) % variants.length];
+    var wallMats = [
+      mats.wood,
+      material(0x855b3c, 0.84, 0.02),
+      material(0x9a6844, 0.86, 0.02),
+      material(0x6f513b, 0.88, 0.02),
+      material(0xa05b37, 0.82, 0.02),
+    ];
+    var roofMats = [
+      mats.roof,
+      material(0x4d2c20, 0.84, 0.03),
+      material(0x6a3a26, 0.8, 0.03),
+      material(0x3f3026, 0.82, 0.04),
+    ];
+    var signMats = [
+      mats.sign,
+      material(0xc8833e, 0.76, 0.02),
+      material(0xe0ad62, 0.72, 0.02),
+    ];
+    return {
+      variant: variant,
+      wallMat: wallMats[(slotIndex + Math.floor(mapRng() * wallMats.length)) % wallMats.length],
+      roofMat: roofMats[Math.floor(mapRng() * roofMats.length)],
+      signMat: signMats[Math.floor(mapRng() * signMats.length)],
+      side: mapRng() < 0.5 ? -1 : 1,
+      roofOverhangW: mapRand(0.55, 1.15),
+      roofOverhangD: mapRand(0.55, 1.05),
+      roofHeight: mapRand(0.42, 0.72),
+      signScale: mapRand(0.58, 0.88),
+      porchDepth: variant === "storefront" ? mapRand(1.25, 1.55) : mapRand(0.72, 1.15),
+      postCount: variant === "storefront" ? 5 : 3 + Math.floor(mapRng() * 3),
+      hasLeanTo: variant === "lean-to" || label === "BARN",
+      hasAwning: variant === "awning" || label === "TRADER",
+      hasFalseFront: variant === "false-front" || label === "HOTEL",
+      hasCrates: variant === "workshop" || mapRng() < 0.45,
+      hasChimney: mapRng() < 0.6,
+      hasRoofVent: mapRng() < 0.55,
+    };
+  }
+
+  function labelHash(label) {
+    var hash = 0;
+    for (var i = 0; i < label.length; i++) hash += label.charCodeAt(i) * (i + 1);
+    return hash;
+  }
+
+  function microPlanAreaTooCloseToBuildings(planned, x, z, w, d, pad, clearance) {
+    var halfW = w / 2 + (pad || 0) + clearance;
+    var halfD = d / 2 + (pad || 0) + clearance;
+    for (var i = 0; i < planned.length; i++) {
+      var rect = planned[i];
+      if (
+        Math.abs(x - rect.footprintX) < halfW + rect.footprintW / 2 + rect.footprintPad &&
+        Math.abs(z - rect.footprintZ) < halfD + rect.footprintD / 2 + rect.footprintPad
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function buildMicroSettlementRoads(cx, zc, buildings) {
+    if (buildings.length < 2) return 0;
+    var roads = 0;
+    var hasWest = false;
+    var hasEast = false;
+    var hasNorth = false;
+    var hasSouth = false;
+    var minX = Infinity;
+    var maxX = -Infinity;
+    var minZ = Infinity;
+    var maxZ = -Infinity;
+    var avgX = 0;
+    var avgZ = 0;
+    for (var i = 0; i < buildings.length; i++) {
+      var b = buildings[i];
+      hasWest = hasWest || b.x < cx - 2.2;
+      hasEast = hasEast || b.x > cx + 2.2;
+      hasNorth = hasNorth || b.z < zc - 2.2;
+      hasSouth = hasSouth || b.z > zc + 2.2;
+      minX = Math.min(minX, b.x);
+      maxX = Math.max(maxX, b.x);
+      minZ = Math.min(minZ, b.z);
+      maxZ = Math.max(maxZ, b.z);
+      avgX += b.x;
+      avgZ += b.z;
+    }
+    avgX /= buildings.length;
+    avgZ /= buildings.length;
+
+    if (hasWest && hasEast) {
+      roads += addMicroSettlementRoad(clamp(maxX - minX + 2.6, 8.5, 15.2), mapRand(1.25, 1.7), avgX + mapRand(-0.35, 0.35), avgZ + mapRand(-0.25, 0.25));
+    }
+    if (hasNorth && hasSouth && buildings.length >= 3) {
+      roads += addMicroSettlementRoad(mapRand(1.2, 1.65), clamp(maxZ - minZ + 2.4, 7.8, 13.6), avgX + mapRand(-0.25, 0.25), avgZ + mapRand(-0.35, 0.35));
+    }
+    if (roads === 0) {
+      if (maxX - minX >= maxZ - minZ) {
+        roads += addMicroSettlementRoad(clamp(maxX - minX + 2.2, 6.2, 12.5), mapRand(1.15, 1.55), (minX + maxX) / 2, avgZ);
+      } else {
+        roads += addMicroSettlementRoad(mapRand(1.1, 1.5), clamp(maxZ - minZ + 2.0, 6.0, 11.8), avgX, (minZ + maxZ) / 2);
+      }
+    }
+    return roads;
+  }
+
+  function addMicroSettlementRoad(w, d, x, z) {
+    if (mapAreaTouchesMainTownMicroBuffer(x, z, w, d, 0.18, MAIN_TOWN_MICRO_BUFFER - 1.2)) return 0;
+    if (mapAreaHitsFootprintType(x, z, w, d, MICRO_FENCE_ROAD_CLEARANCE + 0.35, "micro-fence")) return 0;
+    return addRoadIfLargeClear(w, 0.055, d, x, 0.047, z, 0.18, "micro-road-clear") ? 1 : 0;
+  }
+
+  function scatterTownProps() {
+    scatterProps(18, "cactus", "city");
+    scatterProps(13, "barrel", "city");
+    scatterProps(scaleMapCount(42), "rock", "all");
   }
 
   function buildOutskirts() {
-    var outskirtCacti = [
-      [-25.1, -16.9], [-24.6, 2.2], [-23.4, 18.1], [-11.2, -18.6],
-      [8.4, -19.1], [24.8, -15.6], [25.4, 4.6], [22.7, 18.4],
-      [5.8, 18.8], [-7.9, 19.0],
-    ];
-    outskirtCacti.forEach(function (p, idx) {
-      buildCactus(p[0], p[1], 0.62 + (idx % 4) * 0.13);
-    });
+    scatterProps(scaleMapCount(34), "cactus", "settledOutskirts");
+    scatterProps(scaleMapCount(12), "barrel", "settledOutskirts");
+    scatterProps(scaleMapCount(82), "rock", "settledOutskirts");
 
-    var outskirtBarrels = [
-      [-24.2, -7.9], [-22.8, 10.9], [23.5, -7.2], [24.2, 12.4],
-    ];
-    outskirtBarrels.forEach(function (p) {
-      buildBarrel(p[0], p[1]);
-    });
-
-    for (var i = 0; i < 32; i++) {
-      var p = randomOutskirtPoint();
-      buildRock(p.x, p.z, rand(0.38, 1.05));
-    }
-
-    for (var s = 0; s < 20; s++) {
-      var scrap = randomOutskirtPoint();
-      var plank = addBox(worldRoot, rand(0.35, 1.25), 0.06, rand(0.09, 0.22), s % 3 === 0 ? mats.sign : mats.wood, scrap.x, 0.11, scrap.z);
-      plank.rotation.y = rand(0, Math.PI);
+    for (var s = 0; s < scaleMapCount(46); s++) {
+      var scrap = randomSettledOutskirtPoint();
+      var plankW = mapRand(0.35, 1.35);
+      var plankD = mapRand(0.09, 0.22);
+      var plankSide = Math.max(plankW, plankD);
+      if (!isMapPointOpen(scrap.x, scrap.z, plankSide / 2 + 0.08, true) || mapAreaHitsFootprints(scrap.x, scrap.z, plankSide, plankSide, 0.08)) continue;
+      var plank = addBox(worldRoot, plankW, 0.06, plankD, s % 3 === 0 ? mats.sign : mats.wood, scrap.x, 0.11, scrap.z);
+      plank.rotation.y = mapRand(0, Math.PI);
+      registerRotatedDecorFootprint("scrap", scrap.x, scrap.z, plankW, plankD, 0.06);
     }
   }
 
+  function buildWasteland() {
+    for (var i = 0; i < scaleMapCount(11); i++) {
+      var p = randomWastelandPoint();
+      var patch = addBox(worldRoot, mapRand(1.4, 3.8), 0.04, mapRand(0.18, 0.55), i % 2 ? mats.sandDark : mats.sand, p.x, 0.09, p.z);
+      patch.rotation.y = mapRand(0, Math.PI);
+    }
+    scatterProps(scaleMapCount(5), "cactus", "wasteland");
+    scatterProps(scaleMapCount(9), "rock", "wasteland");
+    for (var s = 0; s < scaleMapCount(8); s++) {
+      var scrap = randomWastelandPoint();
+      var plankW = mapRand(0.45, 1.45);
+      var plankD = mapRand(0.08, 0.2);
+      var plankSide = Math.max(plankW, plankD);
+      if (!isMapPointOpen(scrap.x, scrap.z, plankSide / 2 + 0.08, true) || mapAreaHitsFootprints(scrap.x, scrap.z, plankSide, plankSide, 0.08)) continue;
+      var plank = addBox(worldRoot, plankW, 0.055, plankD, s % 3 === 0 ? mats.sign : mats.wood, scrap.x, 0.105, scrap.z);
+      plank.rotation.y = mapRand(0, Math.PI);
+      registerRotatedDecorFootprint("scrap", scrap.x, scrap.z, plankW, plankD, 0.06);
+    }
+    var shack = mapRng() < 0.55 ? randomWastelandPoint() : null;
+    if (shack) {
+      var shackW = mapRand(4.2, 5.4);
+      var shackD = mapRand(3.2, 4.2);
+      if (isMapPointOpen(shack.x, shack.z, 3.2, true) && canPlaceLargeMapObject(shack.x, shack.z + 0.35, shackW + 1.8, shackD + 2.6, 0.35)) {
+        buildBuilding(shack.x, shack.z, shackW, shackD, mapRand(2.5, 3.2), "RUIN", material(0x6d4b34, 0.9, 0.01));
+      }
+    }
+  }
+
+  function scatterProps(count, type, region) {
+    for (var i = 0; i < count; i++) {
+      var p = findMapPropPoint(region, type === "rock" ? 1.05 : 1.1);
+      if (!p) continue;
+      if (type === "cactus") buildCactus(p.x, p.z, mapRand(0.58, 1.1));
+      else if (type === "barrel") buildBarrel(p.x, p.z);
+      else buildRock(p.x, p.z, mapRand(0.38, 1.12));
+    }
+  }
+
+  function findMapPropPoint(region, radius) {
+    for (var attempt = 0; attempt < 70; attempt++) {
+      var p = region === "wasteland" ? randomWastelandPoint() : region === "settledOutskirts" ? randomSettledOutskirtPoint() : randomMapPoint(region);
+      if (isMapPointOpen(p.x, p.z, radius, region !== "all")) return p;
+    }
+    return null;
+  }
+
+  function randomMapPoint(region) {
+    if (region === "city") {
+      return {
+        x: townLocalX(mapRand(-CITY_W / 2 + 2, CITY_W / 2 - 2)),
+        z: townLocalZ(mapRand(-CITY_D / 2 + 2, CITY_D / 2 - 2)),
+      };
+    }
+    return {
+      x: mapRand(-ARENA_W / 2 + 2, ARENA_W / 2 - 2),
+      z: mapRand(-ARENA_D / 2 + 2, ARENA_D / 2 - 2),
+    };
+  }
+
   function randomOutskirtPoint() {
-    var side = Math.floor(rng() * 4);
+    var side = Math.floor(mapRng() * 4);
     var x = 0;
     var z = 0;
     if (side === 0) {
-      x = rand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
-      z = rand(-ARENA_D / 2 + 1.2, -CITY_D / 2 - 1.0);
+      x = mapRand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
+      z = mapRand(-ARENA_D / 2 + 1.2, MAIN_TOWN_CENTER.z - CITY_D / 2 - 1.0);
     } else if (side === 1) {
-      x = rand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
-      z = rand(CITY_D / 2 + 1.0, ARENA_D / 2 - 1.2);
+      x = mapRand(-ARENA_W / 2 + 1.4, ARENA_W / 2 - 1.4);
+      z = mapRand(MAIN_TOWN_CENTER.z + CITY_D / 2 + 1.0, ARENA_D / 2 - 1.2);
     } else if (side === 2) {
-      x = rand(-ARENA_W / 2 + 1.2, -CITY_W / 2 - 1.0);
-      z = rand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
+      x = mapRand(-ARENA_W / 2 + 1.2, MAIN_TOWN_CENTER.x - CITY_W / 2 - 1.0);
+      z = mapRand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
     } else {
-      x = rand(CITY_W / 2 + 1.0, ARENA_W / 2 - 1.2);
-      z = rand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
+      x = mapRand(MAIN_TOWN_CENTER.x + CITY_W / 2 + 1.0, ARENA_W / 2 - 1.2);
+      z = mapRand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4);
     }
     return { x: x, z: z };
   }
 
-  function buildBuilding(x, z, w, d, h, label, wallMat) {
+  function randomSettledOutskirtPoint() {
+    for (var attempt = 0; attempt < 30; attempt++) {
+      var p = randomOutskirtPoint();
+      if (!isWastelandPoint(p.x, p.z)) return p;
+    }
+    return {
+      x: mapRand(-CITY_W / 2 - 2.6 + 2.0, ARENA_W / 2 - 1.2),
+      z: mapRand(-ARENA_D / 2 + 1.4, ARENA_D / 2 - 1.4),
+    };
+  }
+
+  function randomWastelandPoint() {
+    return {
+      x: mapRand(-ARENA_W / 2 + 2, -CITY_W / 2 - 3.5),
+      z: mapRand(-ARENA_D / 2 + 2, ARENA_D / 2 - 2),
+    };
+  }
+
+  function isWastelandPoint(x, z) {
+    return x < -CITY_W / 2 - 2.6;
+  }
+
+  function isMapPointOpen(x, z, radius, avoidRoads) {
+    if (Math.hypot(x - PLAYER_START.x, z - PLAYER_START.z) < 7.2) return false;
+    if (avoidRoads && (Math.abs(x - MAIN_TOWN_CENTER.x) < 5.2 || Math.abs(z - MAIN_TOWN_CENTER.z) < 4.6)) return false;
+    if (Math.abs(x) > ARENA_W / 2 - radius - 1 || Math.abs(z) > ARENA_D / 2 - radius - 1) return false;
+    return !pointHitsMapFootprint(x, z, radius);
+  }
+
+  function rectHitsObstacles(x, z, w, d, pad) {
+    return mapAreaHitsFootprints(x, z, w, d, pad);
+  }
+
+  function mapAreaHitsFootprints(x, z, w, d, pad) {
+    var halfW = w / 2 + (pad || 0);
+    var halfD = d / 2 + (pad || 0);
+    for (var i = 0; i < mapFootprints.length; i++) {
+      var rect = mapFootprints[i];
+      if (
+        Math.abs(x - rect.x) < halfW + rect.halfW + rect.pad &&
+        Math.abs(z - rect.z) < halfD + rect.halfD + rect.pad
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function canPlaceLargeMapObject(x, z, w, d, pad) {
+    return mapAreaWithinBounds(x, z, w, d, pad) && !mapAreaHitsFootprints(x, z, w, d, pad) && !mapAreaTooCloseToLargeObjects(x, z, w, d, pad || 0, MIN_PLAYER_PASSAGE);
+  }
+
+  function mapAreaTooCloseToLargeObjects(x, z, w, d, pad, clearance) {
+    var halfW = w / 2 + pad + clearance;
+    var halfD = d / 2 + pad + clearance;
+    for (var i = 0; i < mapFootprints.length; i++) {
+      var rect = mapFootprints[i];
+      if (!isLargePassageFootprint(rect)) continue;
+      if (
+        Math.abs(x - rect.x) < halfW + rect.halfW + rect.pad &&
+        Math.abs(z - rect.z) < halfD + rect.halfD + rect.pad
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function mapAreaHitsLargePassageFootprints(x, z, w, d, pad) {
+    var halfW = w / 2 + (pad || 0);
+    var halfD = d / 2 + (pad || 0);
+    for (var i = 0; i < mapFootprints.length; i++) {
+      var rect = mapFootprints[i];
+      if (!isLargePassageFootprint(rect)) continue;
+      if (
+        Math.abs(x - rect.x) < halfW + rect.halfW + rect.pad &&
+        Math.abs(z - rect.z) < halfD + rect.halfD + rect.pad
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function mapAreaWithinBounds(x, z, w, d, pad) {
+    var halfW = w / 2 + (pad || 0);
+    var halfD = d / 2 + (pad || 0);
+    return (
+      x - halfW >= -ARENA_W / 2 - 2.5 &&
+      x + halfW <= ARENA_W / 2 + 2.5 &&
+      z - halfD >= -ARENA_D / 2 - 2.5 &&
+      z + halfD <= ARENA_D / 2 + 2.5
+    );
+  }
+
+  function mapAreaTouchesMainTownMicroBuffer(x, z, w, d, pad, buffer) {
+    var halfW = w / 2 + (pad || 0);
+    var halfD = d / 2 + (pad || 0);
+    var margin = buffer || 0;
+    return (
+      x + halfW > MAIN_TOWN_CENTER.x - CITY_W / 2 - margin &&
+      x - halfW < MAIN_TOWN_CENTER.x + CITY_W / 2 + margin &&
+      z + halfD > MAIN_TOWN_CENTER.z - CITY_D / 2 - margin &&
+      z - halfD < MAIN_TOWN_CENTER.z + CITY_D / 2 + margin
+    );
+  }
+
+  function mapAreaHitsFootprintType(x, z, w, d, pad, type) {
+    var halfW = w / 2 + (pad || 0);
+    var halfD = d / 2 + (pad || 0);
+    for (var i = 0; i < mapFootprints.length; i++) {
+      var rect = mapFootprints[i];
+      if (Array.isArray(type) ? type.indexOf(rect.type) === -1 : rect.type !== type) continue;
+      if (
+        Math.abs(x - rect.x) < halfW + rect.halfW + rect.pad &&
+        Math.abs(z - rect.z) < halfD + rect.halfD + rect.pad
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function pointHitsMapFootprint(x, z, radius, ignoreType) {
+    for (var i = 0; i < mapFootprints.length; i++) {
+      if (footprintTypeIgnored(mapFootprints[i].type, ignoreType)) continue;
+      if (circleIntersectsRect(x, z, radius, mapFootprints[i])) return true;
+    }
+    return false;
+  }
+
+  function footprintTypeIgnored(type, ignoreType) {
+    if (!ignoreType) return false;
+    if (Array.isArray(ignoreType)) return ignoreType.indexOf(type) !== -1;
+    return type === ignoreType;
+  }
+
+  function registerMapFootprint(type, x, z, w, d, pad, blocking) {
+    var footprint = {
+      id: nextMapFootprintId++,
+      type: type || "map-object",
+      x: x,
+      z: z,
+      halfW: w / 2,
+      halfD: d / 2,
+      pad: pad || 0,
+      blocking: blocking !== false,
+    };
+    mapFootprints.push(footprint);
+    return footprint;
+  }
+
+  function registerRotatedDecorFootprint(type, x, z, w, d, pad) {
+    var maxSide = Math.max(w, d);
+    return registerMapFootprint(type, x, z, maxSide, maxSide, pad || 0, false);
+  }
+
+  function isLargePassageFootprint(footprint) {
+    return (
+      footprint.type.indexOf("building:") === 0 ||
+      footprint.type === "stable" ||
+      footprint.type === "water-tower" ||
+      footprint.type === "graveyard"
+    );
+  }
+
+  function isRoadFootprint(footprint) {
+    return footprint.type === "road-clear" || footprint.type === "micro-road-clear";
+  }
+
+  function validateMapLayout() {
+    var issues = [];
+    var totalIssues = 0;
+    var counts = {};
+    var minGap = Infinity;
+    for (var i = 0; i < mapFootprints.length; i++) {
+      var a = mapFootprints[i];
+      counts[a.type] = (counts[a.type] || 0) + 1;
+      if (
+        !isRoadFootprint(a) &&
+        a.x - a.halfW - a.pad < -ARENA_W / 2 - 2.5 ||
+        (!isRoadFootprint(a) && a.x + a.halfW + a.pad > ARENA_W / 2 + 2.5) ||
+        (!isRoadFootprint(a) && a.z - a.halfD - a.pad < -ARENA_D / 2 - 2.5) ||
+        (!isRoadFootprint(a) && a.z + a.halfD + a.pad > ARENA_D / 2 + 2.5)
+      ) {
+        totalIssues += 1;
+        if (issues.length < 80) {
+          issues.push({
+            kind: "out-of-bounds",
+            type: a.type,
+            x: Number(a.x.toFixed(2)),
+            z: Number(a.z.toFixed(2)),
+          });
+        }
+      }
+      if ((a.type === "micro-road-clear" || a.type === "micro-fence") && mapAreaTouchesMainTownMicroBuffer(a.x, a.z, a.halfW * 2, a.halfD * 2, a.pad, MAIN_TOWN_MICRO_BUFFER - 1.2)) {
+        totalIssues += 1;
+        if (issues.length < 80) {
+          issues.push({
+            kind: "micro-settlement-town-buffer",
+            type: a.type,
+            x: Number(a.x.toFixed(2)),
+            z: Number(a.z.toFixed(2)),
+          });
+        }
+      }
+      for (var j = i + 1; j < mapFootprints.length; j++) {
+        var b = mapFootprints[j];
+        var overlapX = a.halfW + b.halfW + a.pad + b.pad - Math.abs(a.x - b.x);
+        var overlapZ = a.halfD + b.halfD + a.pad + b.pad - Math.abs(a.z - b.z);
+        minGap = Math.min(minGap, Math.max(-overlapX, -overlapZ));
+        var overlapThreshold = getMapOverlapThreshold(a, b);
+        if (overlapX > overlapThreshold && overlapZ > overlapThreshold && !isAllowedMapFootprintContact(a, b)) {
+          totalIssues += 1;
+          if (issues.length < 80) {
+            issues.push({
+              kind: "overlap",
+              a: a.type,
+              b: b.type,
+              ax: Number(a.x.toFixed(2)),
+              az: Number(a.z.toFixed(2)),
+              bx: Number(b.x.toFixed(2)),
+              bz: Number(b.z.toFixed(2)),
+              overlapX: Number(overlapX.toFixed(3)),
+              overlapZ: Number(overlapZ.toFixed(3)),
+            });
+          }
+        }
+        var passageIssue = getPassageIssue(a, b);
+        if (passageIssue) {
+          totalIssues += 1;
+          if (issues.length < 80) issues.push(passageIssue);
+        }
+        var fenceRoadIssue = getMicroFenceRoadIssue(a, b);
+        if (fenceRoadIssue) {
+          totalIssues += 1;
+          if (issues.length < 80) issues.push(fenceRoadIssue);
+        }
+      }
+    }
+    for (var s = 0; s < microSettlementStats.length; s++) {
+      var settlement = microSettlementStats[s];
+      if (settlement.roadCount > 0 && settlement.buildingCount < 2) {
+        totalIssues += 1;
+        if (issues.length < 80) {
+          issues.push({
+            kind: "orphan-micro-road",
+            index: settlement.index,
+            x: Number(settlement.x.toFixed(2)),
+            z: Number(settlement.z.toFixed(2)),
+            buildingCount: settlement.buildingCount,
+            roadCount: settlement.roadCount,
+          });
+        }
+      }
+    }
+    return {
+      seed: MAP_SEED,
+      arenaW: ARENA_W,
+      arenaD: ARENA_D,
+      footprintCount: mapFootprints.length,
+      obstacleCount: obstacleRects.length,
+      issueCount: totalIssues,
+      issues: issues,
+      counts: counts,
+      microSettlements: microSettlementStats.map(function (settlement) {
+        return {
+          index: settlement.index,
+          x: Number(settlement.x.toFixed(2)),
+          z: Number(settlement.z.toFixed(2)),
+          buildingCount: settlement.buildingCount,
+          roadCount: settlement.roadCount,
+          fenceCount: settlement.fenceCount || 0,
+          styleVariants: settlement.styleVariants || [],
+        };
+      }),
+      playerSpawnClear: !pointHitsMapFootprint(PLAYER_START.x, PLAYER_START.z, 1.05, ["player-start-clear", "road-clear", "micro-road-clear"]),
+      minGap: isFinite(minGap) ? Number(minGap.toFixed(3)) : null,
+    };
+  }
+
+  function isAllowedMapFootprintContact(a, b) {
+    if (isRoadFootprint(a) || isRoadFootprint(b)) {
+      var other = isRoadFootprint(a) ? b : a;
+      return !isLargePassageFootprint(other);
+    }
+    if (a.type === "fence" && b.type === "fence") return true;
+    if (
+      (a.type === "fence" && b.type === "gate-post") ||
+      (a.type === "gate-post" && b.type === "fence")
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function getMapOverlapThreshold(a, b) {
+    if (isRoadFootprint(a) || isRoadFootprint(b)) return 0.45;
+    return 0.08;
+  }
+
+  function getMicroFenceRoadIssue(a, b) {
+    var fence = a.type === "micro-fence" ? a : b.type === "micro-fence" ? b : null;
+    var road = fence === a ? b : a;
+    if (!fence || !isRoadFootprint(road)) return null;
+    var overlapX = fence.halfW + road.halfW + fence.pad + road.pad + MICRO_FENCE_ROAD_CLEARANCE - Math.abs(fence.x - road.x);
+    var overlapZ = fence.halfD + road.halfD + fence.pad + road.pad + MICRO_FENCE_ROAD_CLEARANCE - Math.abs(fence.z - road.z);
+    if (overlapX > 0 && overlapZ > 0) {
+      return {
+        kind: "micro-fence-road-clearance",
+        fenceX: Number(fence.x.toFixed(2)),
+        fenceZ: Number(fence.z.toFixed(2)),
+        roadType: road.type,
+        roadX: Number(road.x.toFixed(2)),
+        roadZ: Number(road.z.toFixed(2)),
+        overlapX: Number(overlapX.toFixed(3)),
+        overlapZ: Number(overlapZ.toFixed(3)),
+      };
+    }
+    return null;
+  }
+
+  function getPassageIssue(a, b) {
+    if (!isLargePassageFootprint(a) || !isLargePassageFootprint(b)) return null;
+    var gapX = Math.abs(a.x - b.x) - (a.halfW + a.pad + b.halfW + b.pad);
+    var gapZ = Math.abs(a.z - b.z) - (a.halfD + a.pad + b.halfD + b.pad);
+    if (gapX < -0.08 && gapZ < -0.08) return null;
+    var passage = Math.max(gapX, gapZ);
+    if (passage >= 0 && passage < MIN_PLAYER_PASSAGE) {
+      return {
+        kind: "narrow-passage",
+        a: a.type,
+        b: b.type,
+        ax: Number(a.x.toFixed(2)),
+        az: Number(a.z.toFixed(2)),
+        bx: Number(b.x.toFixed(2)),
+        bz: Number(b.z.toFixed(2)),
+        gapX: Number(gapX.toFixed(3)),
+        gapZ: Number(gapZ.toFixed(3)),
+        passage: Number(passage.toFixed(3)),
+        required: MIN_PLAYER_PASSAGE,
+      };
+    }
+    return null;
+  }
+
+  function buildBuilding(x, z, w, d, h, label, wallMat, style) {
+    style = style || {};
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addObstacle(x, z + 0.35, w + 1.4, d + 2.25, 0.25);
+    addObstacle(x, z + 0.35, w + 1.4, d + 2.25, 0.25, "building:" + label);
+
+    var roofMat = style.roofMat || mats.roof;
+    var signMat = style.signMat || mats.sign;
+    var roofW = w + (style.roofOverhangW || 0.8);
+    var roofD = d + (style.roofOverhangD || 0.9);
+    var roofH = style.roofHeight || 0.55;
+    var porchDepth = style.porchDepth || 1.1;
+    var signScale = style.signScale || 0.72;
+    var postCount = style.postCount || 5;
 
     addBox(g, w + 1.2, 0.25, d + 1.1, mats.darkWood, 0, 0.05, 0);
     addBox(g, w, h, d, wallMat, 0, h / 2, 0);
-    addBox(g, w + 0.8, 0.55, d + 0.9, mats.roof, 0, h + 0.3, 0);
-    addBox(g, w + 1.8, 0.22, 1.1, mats.darkWood, 0, 0.6, d / 2 + 0.68);
-    addBox(g, w + 2.1, 0.18, 0.9, mats.darkWood, 0, 1.25, d / 2 + 0.86);
+    addBox(g, roofW, roofH, roofD, roofMat, 0, h + roofH / 2 + 0.04, 0);
+    addBox(g, w + 1.8, 0.22, porchDepth, mats.darkWood, 0, 0.6, d / 2 + 0.45 + porchDepth / 2);
+    addBox(g, w + 2.1, 0.18, Math.max(0.65, porchDepth * 0.82), mats.darkWood, 0, 1.25, d / 2 + 0.58 + porchDepth / 2);
 
     for (var i = -1; i <= 1; i += 2) {
       addBox(g, 0.24, 1.65, 0.28, mats.darkWood, i * (w / 2 + 0.2), 1.1, d / 2 + 0.65);
@@ -504,14 +1399,49 @@
       addBox(g, 0.9, 1.45, 0.08, mats.darkWood, i * 0.95, 0.95, d / 2 + 0.05);
     }
 
-    addBox(g, w * 0.72, 0.78, 0.16, mats.sign, 0, h + 0.98, d / 2 + 0.08);
+    addBox(g, w * signScale, style.hasFalseFront ? 1.08 : 0.78, 0.16, signMat, 0, h + (style.hasFalseFront ? 1.08 : 0.98), d / 2 + 0.08);
     var letters = label.length;
     for (var l = 0; l < letters; l++) {
       addBox(g, 0.18, 0.28, 0.18, mats.darkWood, (l - letters / 2) * 0.42 + 0.18, h + 1, d / 2 + 0.22);
     }
 
-    for (var p = 0; p < 5; p++) {
-      addBox(g, 0.22, 1.2, 0.22, mats.darkWood, -w / 2 + 0.8 + p * (w - 1.6) / 4, 0.75, d / 2 + 0.65);
+    for (var p = 0; p < postCount; p++) {
+      var postX = postCount === 1 ? 0 : -w / 2 + 0.8 + p * (w - 1.6) / Math.max(1, postCount - 1);
+      addBox(g, 0.22, 1.2, 0.22, mats.darkWood, postX, 0.75, d / 2 + 0.65);
+    }
+    addBuildingStyleDetails(g, w, d, h, label, style);
+    return g;
+  }
+
+  function addBuildingStyleDetails(g, w, d, h, label, style) {
+    if (!style || !style.variant) return;
+    if (style.hasFalseFront) {
+      addBox(g, w * 0.9, 0.55, 0.18, mats.darkWood, 0, h + 1.45, d / 2 + 0.12);
+      addBox(g, w * 0.72, 0.14, 0.2, style.signMat || mats.sign, 0, h + 1.8, d / 2 + 0.18);
+    }
+    if (style.hasAwning) {
+      addBox(g, w * 0.72, 0.16, 0.82, style.signMat || mats.sign, 0, 2.0, d / 2 + 0.82);
+      for (var a = -1; a <= 1; a += 2) {
+        addBox(g, 0.16, 0.85, 0.16, mats.darkWood, a * w * 0.32, 1.45, d / 2 + 1.18);
+      }
+    }
+    if (style.hasLeanTo) {
+      var side = style.side || 1;
+      addBox(g, 0.68, h * 0.55, d * 0.58, style.wallMat || mats.wood, side * (w / 2 + 0.32), h * 0.28, -0.1);
+      addBox(g, 0.92, 0.28, d * 0.7, style.roofMat || mats.roof, side * (w / 2 + 0.34), h * 0.6, -0.1);
+      addBox(g, 0.16, h * 0.52, 0.16, mats.darkWood, side * (w / 2 + 0.7), h * 0.26, d * 0.24);
+    }
+    if (style.hasChimney) {
+      addBox(g, 0.42, 0.9, 0.42, mats.darkWood, -w * 0.28, h + 0.86, -d * 0.2);
+      addBox(g, 0.5, 0.16, 0.5, mats.black, -w * 0.28, h + 1.38, -d * 0.2);
+    }
+    if (style.hasRoofVent) {
+      addBox(g, 0.8, 0.24, 0.38, mats.metal, w * 0.23, h + 0.75, d * 0.12);
+    }
+    if (style.hasCrates) {
+      var sideSign = style.side || 1;
+      addBox(g, 0.55, 0.48, 0.55, mats.barrel, sideSign * (w / 2 - 0.65), 0.34, d / 2 + 0.95);
+      addBox(g, 0.7, 0.34, 0.48, mats.wood, sideSign * (w / 2 - 1.25), 0.28, d / 2 + 0.96);
     }
   }
 
@@ -519,7 +1449,7 @@
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addObstacle(x, z + 0.25, 9.7, 6.9, 0.35);
+    addObstacle(x, z + 0.25, 9.7, 6.9, 0.35, "stable");
 
     addBox(g, 8.5, 2.9, 5.2, material(0x775033, 0.88, 0.02), 0, 1.45, 0);
     addBox(g, 9.5, 0.55, 6.2, mats.roof, 0, 3.25, 0);
@@ -531,11 +1461,23 @@
     addBox(g, 7.8, 0.16, 0.18, mats.darkWood, 0, 2.35, 2.88);
   }
 
+  function tryBuildStable(x, z) {
+    if (!canPlaceLargeMapObject(x, z + 0.25, 9.7, 6.9, 0.35)) return false;
+    buildStable(x, z);
+    return true;
+  }
+
+  function tryBuildWaterTower(x, z) {
+    if (!canPlaceLargeMapObject(x, z, 3.25, 3.25, 0.5)) return false;
+    buildWaterTower(x, z);
+    return true;
+  }
+
   function buildWaterTower(x, z) {
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addObstacle(x, z, 3.25, 3.25, 0.4);
+    addObstacle(x, z, 3.25, 3.25, 0.4, "water-tower");
     for (var i = 0; i < 4; i++) {
       var sx = i < 2 ? -1.05 : 1.05;
       var sz = i % 2 === 0 ? -1.05 : 1.05;
@@ -548,11 +1490,17 @@
     addBox(g, 0.14, 3.9, 0.14, mats.darkWood, 0.6, 2.8, -0.6).rotation.z = 0.45;
   }
 
+  function tryBuildGraveyard(x, z) {
+    if (!canPlaceLargeMapObject(x, z + 0.1, 4.95, 4.25, 0.42)) return false;
+    buildGraveyard(x, z);
+    return true;
+  }
+
   function buildGraveyard(x, z) {
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addObstacle(x, z + 0.1, 4.95, 4.25, 0.25);
+    addObstacle(x, z + 0.1, 4.95, 4.25, 0.25, "graveyard");
     for (var i = 0; i < 6; i++) {
       var gx = (i % 3) * 1.2 - 1.2;
       var gz = Math.floor(i / 3) * 1.25 - 0.6;
@@ -563,15 +1511,36 @@
     addBox(g, 4.6, 0.16, 0.18, mats.darkWood, 0, 0.45, 2.0);
   }
 
-  function addFenceSegment(x, z, vertical) {
+  function addFenceSegment(x, z, vertical, type) {
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
     if (vertical) g.rotation.y = Math.PI / 2;
+    registerMapFootprint(type || "fence", x, z, vertical ? 0.48 : 2.45, vertical ? 2.45 : 0.48, 0.04, false);
     addBox(g, 0.18, 1.1, 0.18, mats.darkWood, -1.05, 0.55, 0);
     addBox(g, 0.18, 1.1, 0.18, mats.darkWood, 1.05, 0.55, 0);
     addBox(g, 2.35, 0.16, 0.16, mats.wood, 0, 0.45, 0);
     addBox(g, 2.35, 0.16, 0.16, mats.wood, 0, 0.86, 0);
+  }
+
+  function addFenceSegmentIfOpen(x, z, vertical) {
+    var w = vertical ? 0.48 : 2.45;
+    var d = vertical ? 2.45 : 0.48;
+    if (mapAreaHitsFootprints(x, z, w, d, 0.1)) return false;
+    addFenceSegment(x, z, vertical);
+    return true;
+  }
+
+  function addMicroFenceSegmentIfOpen(x, z, vertical, cx, zc) {
+    var w = vertical ? 0.48 : 2.45;
+    var d = vertical ? 2.45 : 0.48;
+    if (Math.hypot(x - cx, z - zc) < 8.2) return false;
+    if (!mapAreaWithinBounds(x, z, w, d, 0.35)) return false;
+    if (mapAreaTouchesMainTownMicroBuffer(x, z, w, d, 0.35, MAIN_TOWN_MICRO_BUFFER + 2.5)) return false;
+    if (mapAreaHitsFootprints(x, z, w, d, 0.3)) return false;
+    if (mapAreaHitsFootprintType(x, z, w, d, MICRO_FENCE_ROAD_CLEARANCE + 0.35, ["road-clear", "micro-road-clear"])) return false;
+    addFenceSegment(x, z, vertical, "micro-fence");
+    return true;
   }
 
   function addGatePosts() {
@@ -581,8 +1550,11 @@
       [-CITY_W / 2 - 0.9, -3.95], [-CITY_W / 2 - 0.9, 3.95],
       [CITY_W / 2 + 0.9, -3.95], [CITY_W / 2 + 0.9, 3.95],
     ].forEach(function (p) {
-      addBox(worldRoot, 0.28, 1.45, 0.28, mats.darkWood, p[0], 0.72, p[1]);
-      addBox(worldRoot, 0.52, 0.14, 0.52, mats.sign, p[0], 1.52, p[1]);
+      var x = townLocalX(p[0]);
+      var z = townLocalZ(p[1]);
+      registerMapFootprint("gate-post", x, z, 0.62, 0.62, 0.08, false);
+      addBox(worldRoot, 0.28, 1.45, 0.28, mats.darkWood, x, 0.72, z);
+      addBox(worldRoot, 0.52, 0.14, 0.52, mats.sign, x, 1.52, z);
     });
   }
 
@@ -590,7 +1562,7 @@
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addObstacle(x, z, 0.92 * scale, 0.92 * scale, 0.22);
+    addObstacle(x, z, 0.92 * scale, 0.92 * scale, 0.22, "cactus");
     addBox(g, 0.62 * scale, 2.7 * scale, 0.62 * scale, mats.cactus, 0, 1.35 * scale, 0);
     addBox(g, 0.46 * scale, 1.25 * scale, 0.46 * scale, mats.cactus, -0.72 * scale, 1.65 * scale, 0);
     addBox(g, 0.46 * scale, 1.05 * scale, 0.46 * scale, mats.cactus, 0.72 * scale, 1.35 * scale, 0);
@@ -603,7 +1575,7 @@
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addObstacle(x, z, 1.05, 1.05, 0.14);
+    addObstacle(x, z, 1.05, 1.05, 0.14, "barrel");
     addBox(g, 0.86, 1.1, 0.86, mats.barrel, 0, 0.55, 0);
     addBox(g, 0.96, 0.14, 0.96, mats.metal, 0, 0.22, 0);
     addBox(g, 0.96, 0.14, 0.96, mats.metal, 0, 0.88, 0);
@@ -615,8 +1587,9 @@
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     worldRoot.add(g);
-    addBox(g, 0.9 * scale, 0.45 * scale, 0.7 * scale, mats.rock, 0, 0.2 * scale, 0).rotation.y = rand(0, Math.PI);
-    addBox(g, 0.45 * scale, 0.35 * scale, 0.5 * scale, mats.rock, 0.35 * scale, 0.45 * scale, 0.12 * scale).rotation.y = rand(0, Math.PI);
+    registerMapFootprint("rock", x, z, 1.25 * scale, 1.05 * scale, 0.08, false);
+    addBox(g, 0.9 * scale, 0.45 * scale, 0.7 * scale, mats.rock, 0, 0.2 * scale, 0).rotation.y = mapRand(0, Math.PI);
+    addBox(g, 0.45 * scale, 0.35 * scale, 0.5 * scale, mats.rock, 0.35 * scale, 0.45 * scale, 0.12 * scale).rotation.y = mapRand(0, Math.PI);
   }
 
   function resetRun(mode) {
@@ -652,8 +1625,8 @@
     resetTouchControls();
 
     state.player = {
-      x: 0,
-      z: 2.2,
+      x: PLAYER_START.x,
+      z: PLAYER_START.z,
       radius: 0.72,
       hp: 120,
       maxHp: 120,
@@ -667,6 +1640,8 @@
       shootKick: 0,
       group: createCowboy(),
     };
+    state.pointerWorld = { x: PLAYER_START.x, z: PLAYER_START.z + 4 };
+    pointerHit.set(state.pointerWorld.x, 0, state.pointerWorld.z);
     state.player.group.position.set(state.player.x, 0, state.player.z);
     dynamicRoot.add(state.player.group);
     setWeaponVisual("revolver");
@@ -765,36 +1740,96 @@
   }
 
   function spawnZombie() {
+    var type = chooseZombieType();
+    var zombie = makeZombie(type);
+    var spawn = findZombieSpawnPoint(zombie.radius);
+    zombie.x = spawn.x;
+    zombie.z = spawn.z;
+    zombie.spawnSide = spawn.side;
+    zombie.group.position.set(zombie.x, 0, zombie.z);
+    state.enemies.push(zombie);
+    dynamicRoot.add(zombie.group);
+    addSpawnDust(zombie.x, zombie.z);
+  }
+
+  function chooseZombieType() {
     var type = "walker";
     if (state.wave >= 3 && rng() < 0.22) type = "runner";
     if (state.wave >= 5 && rng() < 0.18) type = "brute";
     if (state.wave >= 8 && rng() < 0.12) type = "spitter";
+    return type;
+  }
 
-    var edge = Math.floor(rng() * 4);
-    var margin = 3.4;
-    var x = 0;
-    var z = 0;
-    if (edge === 0) {
-      x = rand(-ARENA_W / 2, ARENA_W / 2);
-      z = -ARENA_D / 2 - margin;
-    } else if (edge === 1) {
-      x = rand(-ARENA_W / 2, ARENA_W / 2);
-      z = ARENA_D / 2 + margin;
-    } else if (edge === 2) {
-      x = -ARENA_W / 2 - margin;
-      z = rand(-ARENA_D / 2, ARENA_D / 2);
-    } else {
-      x = ARENA_W / 2 + margin;
-      z = rand(-ARENA_D / 2, ARENA_D / 2);
+  function findZombieSpawnPoint(radius) {
+    var rect = getCurrentVisibleGroundRect();
+    var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
+    var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
+    var minZ = -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius;
+    var maxZ = ARENA_D / 2 + ENEMY_BOUNDS_EXTRA - radius;
+    var outsidePad = Math.max(3.65, radius + 0.65);
+    for (var attempt = 0; attempt < 140; attempt++) {
+      var side = Math.floor(rng() * 4);
+      var margin = rand(ZOMBIE_SPAWN_VIEW_MARGIN_MIN, ZOMBIE_SPAWN_VIEW_MARGIN_MAX);
+      var x = 0;
+      var z = 0;
+      if (side === 0) {
+        x = rand(rect.minX + radius, rect.maxX - radius);
+        z = rect.minZ - margin;
+      } else if (side === 1) {
+        x = rand(rect.minX + radius, rect.maxX - radius);
+        z = rect.maxZ + margin;
+      } else if (side === 2) {
+        x = rect.minX - margin;
+        z = rand(rect.minZ + radius, rect.maxZ - radius);
+      } else {
+        x = rect.maxX + margin;
+        z = rand(rect.minZ + radius, rect.maxZ - radius);
+      }
+      x = clamp(x, minX, maxX);
+      z = clamp(z, minZ, maxZ);
+      if (!pointInsideEnemyBounds(x, z, radius)) continue;
+      if (!pointOutsideVisibleGround(x, z, outsidePad, rect)) continue;
+      if (pointHitsObstacle(x, z, radius + 0.16)) continue;
+      return { x: x, z: z, side: side };
     }
+    return findFallbackZombieSpawnPoint(radius, rect);
+  }
 
-    var zombie = makeZombie(type);
-    zombie.x = x;
-    zombie.z = z;
-    zombie.group.position.set(x, 0, z);
-    state.enemies.push(zombie);
-    dynamicRoot.add(zombie.group);
-    addSpawnDust(x, z);
+  function findFallbackZombieSpawnPoint(radius, rect) {
+    var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
+    var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
+    var minZ = -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius;
+    var maxZ = ARENA_D / 2 + ENEMY_BOUNDS_EXTRA - radius;
+    var candidates = [
+      { x: clamp((rect.minX + rect.maxX) / 2, minX, maxX), z: minZ, side: 0 },
+      { x: clamp((rect.minX + rect.maxX) / 2, minX, maxX), z: maxZ, side: 1 },
+      { x: minX, z: clamp((rect.minZ + rect.maxZ) / 2, minZ, maxZ), side: 2 },
+      { x: maxX, z: clamp((rect.minZ + rect.maxZ) / 2, minZ, maxZ), side: 3 },
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var c = candidates[i];
+      if (pointOutsideVisibleGround(c.x, c.z, radius * 0.5, rect) && !pointHitsObstacle(c.x, c.z, radius + 0.16)) return c;
+    }
+    return candidates[Math.floor(rng() * candidates.length)];
+  }
+
+  function getCurrentVisibleGroundRect() {
+    var p = state.player;
+    var follow = clampCameraTarget(p ? p.x : 0, p ? p.z : 0);
+    return {
+      minX: follow.x + cameraGroundBounds.minX,
+      maxX: follow.x + cameraGroundBounds.maxX,
+      minZ: follow.z + cameraGroundBounds.minZ,
+      maxZ: follow.z + cameraGroundBounds.maxZ,
+      targetX: follow.x,
+      targetZ: follow.z,
+    };
+  }
+
+  function pointOutsideVisibleGround(x, z, pad, rect) {
+    var r = rect || getCurrentVisibleGroundRect();
+    var p = pad || 0;
+    return x < r.minX - p || x > r.maxX + p || z < r.minZ - p || z > r.maxZ + p;
   }
 
   function makeZombie(type) {
@@ -1481,7 +2516,7 @@
       }
       e.x += (moveX + sepX * 4.2) * dt;
       e.z += (moveZ + sepZ * 4.2) * dt;
-      resolveMoverPosition(e, e.radius, 3.2);
+      resolveMoverPosition(e, e.radius, ENEMY_BOUNDS_EXTRA);
       var moved = Math.hypot(e.x - oldX, e.z - oldZ);
       updateZombieStuckState(e, moved, dist, dt);
       e.moveAmount += (clamp(moved / Math.max(0.001, e.speed * dt), 0, 1) - e.moveAmount) * Math.min(1, dt * 10);
@@ -2388,12 +3423,11 @@
   function render() {
     if (renderDiagnostics.contextLost) return;
     var p = state.player;
-    var followX = p ? p.x * 0.14 : 0;
-    var followZ = p ? p.z * 0.14 : 0;
+    var follow = clampCameraTarget(p ? p.x : 0, p ? p.z : 0);
     var shakePower = state.shake * state.shake;
     var sx = shakePower > 0 ? rand(-0.45, 0.45) * shakePower : 0;
     var sz = shakePower > 0 ? rand(-0.45, 0.45) * shakePower : 0;
-    cameraTarget.set(followX, 0, followZ);
+    cameraTarget.set(follow.x, 0, follow.z);
     camera.position.set(
       cameraTarget.x + cameraBaseOffset.x + sx,
       cameraBaseOffset.y,
@@ -2407,6 +3441,56 @@
       renderDiagnostics.lastReason = "render-error";
       recoverRenderer("render-error");
     }
+  }
+
+  function clampCameraTarget(x, z) {
+    var minTargetX = cameraMapBounds.minX - cameraGroundBounds.minX;
+    var maxTargetX = cameraMapBounds.maxX - cameraGroundBounds.maxX;
+    var minTargetZ = cameraMapBounds.minZ - cameraGroundBounds.minZ;
+    var maxTargetZ = cameraMapBounds.maxZ - cameraGroundBounds.maxZ;
+    return {
+      x: minTargetX > maxTargetX ? 0 : clamp(x, minTargetX, maxTargetX),
+      z: minTargetZ > maxTargetZ ? 0 : clamp(z, minTargetZ, maxTargetZ),
+    };
+  }
+
+  function updateCameraGroundBounds() {
+    var savedPosition = camera.position.clone();
+    var savedQuaternion = camera.quaternion.clone();
+    var savedTarget = cameraTarget.clone();
+    camera.position.set(cameraBaseOffset.x, cameraBaseOffset.y, cameraBaseOffset.z);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld(true);
+
+    var minX = Infinity;
+    var maxX = -Infinity;
+    var minZ = Infinity;
+    var maxZ = -Infinity;
+    var corners = [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ];
+    var ndc = new THREE.Vector2();
+    var hit = new THREE.Vector3();
+    for (var i = 0; i < corners.length; i++) {
+      ndc.set(corners[i][0], corners[i][1]);
+      raycaster.setFromCamera(ndc, camera);
+      if (!raycaster.ray.intersectPlane(groundPlane, hit)) continue;
+      minX = Math.min(minX, hit.x);
+      maxX = Math.max(maxX, hit.x);
+      minZ = Math.min(minZ, hit.z);
+      maxZ = Math.max(maxZ, hit.z);
+    }
+    if (isFinite(minX) && isFinite(maxX) && isFinite(minZ) && isFinite(maxZ)) {
+      cameraGroundBounds = { minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ };
+    }
+
+    camera.position.copy(savedPosition);
+    camera.quaternion.copy(savedQuaternion);
+    cameraTarget.copy(savedTarget);
+    camera.updateMatrixWorld(true);
   }
 
   function checkRendererHealth() {
@@ -2492,6 +3576,7 @@
     camera.top = frustum / 2;
     camera.bottom = -frustum / 2;
     camera.updateProjectionMatrix();
+    updateCameraGroundBounds();
   }
 
   function setPanel(el, visible) {
@@ -2682,7 +3767,7 @@
     if (typeof material.dispose === "function") material.dispose();
   }
 
-  function addObstacle(x, z, w, d, pad) {
+  function addObstacle(x, z, w, d, pad, type) {
     obstacleRects.push({
       x: x,
       z: z,
@@ -2690,6 +3775,7 @@
       halfD: d / 2,
       pad: pad || 0,
     });
+    registerMapFootprint(type || "obstacle", x, z, w, d, pad || 0, true);
   }
 
   function resolveMoverPosition(mover, radius, boundsExtra) {
@@ -2749,10 +3835,10 @@
 
   function pointInsideEnemyBounds(x, z, radius) {
     return (
-      x >= -ARENA_W / 2 - 3.2 + radius &&
-      x <= ARENA_W / 2 + 3.2 - radius &&
-      z >= -ARENA_D / 2 - 3.2 + radius &&
-      z <= ARENA_D / 2 + 3.2 - radius
+      x >= -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius &&
+      x <= ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius &&
+      z >= -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius &&
+      z <= ARENA_D / 2 + ENEMY_BOUNDS_EXTRA - radius
     );
   }
 
@@ -2842,6 +3928,105 @@
     return min + (max - min) * rng();
   }
 
+  function createMapSeed() {
+    var params = new URLSearchParams(window.location.search || "");
+    if (params.has("mapSeed")) {
+      var explicit = Number(params.get("mapSeed"));
+      if (Number.isFinite(explicit)) return (Math.max(1, Math.floor(explicit)) >>> 0) || 7331;
+    }
+    return ((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0) || 7331;
+  }
+
+  function mapRand(min, max) {
+    return min + (max - min) * mapRng();
+  }
+
+  function scaleMapCount(base) {
+    return Math.max(1, Math.round(base * MAP_LINEAR_SCALE));
+  }
+
+  function createMainTownCenter() {
+    var maxTownX = Math.min(ARENA_W / 2 - CITY_W / 2 - 12, MAP_OUTSKIRT_X * 0.48);
+    var townZRange = Math.min(ARENA_D / 2 - CITY_D / 2 - 12, MAP_OUTSKIRT_Z * 0.42);
+    return {
+      x: mapRand(0.8, maxTownX),
+      z: mapRand(-townZRange, townZRange),
+    };
+  }
+
+  function createMainTownLayout() {
+    return {
+      mirrorX: mapRng() < 0.5,
+      mirrorZ: mapRng() < 0.5,
+      variant: Math.floor(mapRng() * 4),
+    };
+  }
+
+  function createPlayerStart() {
+    var roll = mapRng();
+    if (roll < 0.32) return makePlayerStart(townLocalX(mapRand(-4.8, 4.8)), townLocalZ(mapRand(-3.8, 4.8)), "town");
+    if (roll < 0.62) return createSettledOutskirtStart();
+    if (roll < 0.84) return createOpenDesertStart();
+    return createWastelandStart();
+  }
+
+  function createSettledOutskirtStart() {
+    var side = Math.floor(mapRng() * 3);
+    if (side === 0) {
+      return makePlayerStart(
+        clamp(MAIN_TOWN_CENTER.x + mapRand(-16, 18), -CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7),
+        clamp(MAIN_TOWN_CENTER.z - CITY_D / 2 - mapRand(5.5, 13.5), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+        "settled-outskirts"
+      );
+    }
+    if (side === 1) {
+      return makePlayerStart(
+        clamp(MAIN_TOWN_CENTER.x + mapRand(-16, 18), -CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7),
+        clamp(MAIN_TOWN_CENTER.z + CITY_D / 2 + mapRand(5.5, 13.5), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+        "settled-outskirts"
+      );
+    }
+    return makePlayerStart(
+      clamp(MAIN_TOWN_CENTER.x + CITY_W / 2 + mapRand(5.5, 15.5), -CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7),
+      clamp(MAIN_TOWN_CENTER.z + mapRand(-18, 18), -ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+      "settled-outskirts"
+    );
+  }
+
+  function createOpenDesertStart() {
+    for (var attempt = 0; attempt < 36; attempt++) {
+      var x = mapRand(-CITY_W / 2 - 2.6 + 7, ARENA_W / 2 - 7);
+      var z = mapRand(-ARENA_D / 2 + 7, ARENA_D / 2 - 7);
+      if (Math.abs(x - MAIN_TOWN_CENTER.x) < CITY_W / 2 + 5 && Math.abs(z - MAIN_TOWN_CENTER.z) < CITY_D / 2 + 5) continue;
+      return makePlayerStart(x, z, "open-desert");
+    }
+    return createSettledOutskirtStart();
+  }
+
+  function createWastelandStart() {
+    return makePlayerStart(
+      mapRand(-ARENA_W / 2 + 7, -CITY_W / 2 - 6.5),
+      mapRand(-ARENA_D / 2 + 7, ARENA_D / 2 - 7),
+      "wasteland"
+    );
+  }
+
+  function makePlayerStart(x, z, zone) {
+    return {
+      x: clamp(x, -ARENA_W / 2 + 5, ARENA_W / 2 - 5),
+      z: clamp(z, -ARENA_D / 2 + 5, ARENA_D / 2 - 5),
+      zone: zone,
+    };
+  }
+
+  function townLocalX(x) {
+    return MAIN_TOWN_CENTER.x + (MAIN_TOWN_LAYOUT.mirrorX ? -x : x);
+  }
+
+  function townLocalZ(z) {
+    return MAIN_TOWN_CENTER.z + (MAIN_TOWN_LAYOUT.mirrorZ ? -z : z);
+  }
+
   function isMobileRuntime() {
     var coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
     var ua = navigator.userAgent || "";
@@ -2869,6 +4054,7 @@
 
   window.render_game_to_text = function () {
     var p = state.player;
+    var visibleGround = getCurrentVisibleGroundRect();
     return JSON.stringify({
       coordinateSystem: "origin arena center; x east/right; z south/down; y up",
       mode: state.mode,
@@ -2877,10 +4063,54 @@
       kills: state.kills,
       shotsFired: state.shotsFired,
       map: {
+        seed: MAP_SEED,
         arenaW: ARENA_W,
         arenaD: ARENA_D,
         cityW: CITY_W,
         cityD: CITY_D,
+        mapSizeMultiplier: MAP_SIZE_MULTIPLIER,
+        outskirtMargin: OUTSKIRT_MARGIN,
+        outskirtMarginX: MAP_OUTSKIRT_X,
+        outskirtMarginZ: MAP_OUTSKIRT_Z,
+        microSettlementTarget: MICRO_SETTLEMENT_TARGET,
+        mainTown: {
+          x: Number(MAIN_TOWN_CENTER.x.toFixed(2)),
+          z: Number(MAIN_TOWN_CENTER.z.toFixed(2)),
+          mirrorX: MAIN_TOWN_LAYOUT.mirrorX,
+          mirrorZ: MAIN_TOWN_LAYOUT.mirrorZ,
+          variant: MAIN_TOWN_LAYOUT.variant,
+        },
+        playerStart: {
+          x: Number(PLAYER_START.x.toFixed(2)),
+          z: Number(PLAYER_START.z.toFixed(2)),
+          zone: PLAYER_START.zone,
+        },
+        wasteland: {
+          minX: Number((-ARENA_W / 2).toFixed(2)),
+          maxX: Number((-CITY_W / 2 - 2.6).toFixed(2)),
+        },
+      },
+      camera: {
+        targetX: Number(cameraTarget.x.toFixed(2)),
+        targetZ: Number(cameraTarget.z.toFixed(2)),
+        viewGround: {
+          minX: Number(cameraGroundBounds.minX.toFixed(2)),
+          maxX: Number(cameraGroundBounds.maxX.toFixed(2)),
+          minZ: Number(cameraGroundBounds.minZ.toFixed(2)),
+          maxZ: Number(cameraGroundBounds.maxZ.toFixed(2)),
+        },
+        mapBounds: {
+          minX: Number(cameraMapBounds.minX.toFixed(2)),
+          maxX: Number(cameraMapBounds.maxX.toFixed(2)),
+          minZ: Number(cameraMapBounds.minZ.toFixed(2)),
+          maxZ: Number(cameraMapBounds.maxZ.toFixed(2)),
+        },
+        visibleGround: {
+          minX: Number(visibleGround.minX.toFixed(2)),
+          maxX: Number(visibleGround.maxX.toFixed(2)),
+          minZ: Number(visibleGround.minZ.toFixed(2)),
+          maxZ: Number(visibleGround.maxZ.toFixed(2)),
+        },
       },
       weapon: state.weapon,
       ownedWeapons: Object.keys(state.ownedWeapons).filter(function (id) {
@@ -2965,6 +4195,8 @@
           x: Number(e.x.toFixed(2)),
           z: Number(e.z.toFixed(2)),
           hp: Number(e.hp.toFixed(1)),
+          spawnSide: e.spawnSide === undefined ? null : e.spawnSide,
+          outsideView: pointOutsideVisibleGround(e.x, e.z, e.radius + 0.2, visibleGround),
           stuck: Number(e.stuckTimer.toFixed(2)),
           navigating: !!e.navGoal,
           navX: e.navGoal ? Number(e.navGoal.x.toFixed(2)) : null,
@@ -3001,6 +4233,27 @@
       updateHud();
       return true;
     },
+    spawnZombieNow: function () {
+      spawnZombie();
+      var enemy = state.enemies[state.enemies.length - 1];
+      var visible = getCurrentVisibleGroundRect();
+      return {
+        type: enemy.type,
+        x: Number(enemy.x.toFixed(2)),
+        z: Number(enemy.z.toFixed(2)),
+        radius: Number(enemy.radius.toFixed(2)),
+        spawnSide: enemy.spawnSide,
+        outsideView: pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + 0.2, visible),
+        insideEnemyBounds: pointInsideEnemyBounds(enemy.x, enemy.z, enemy.radius),
+        blocked: pointHitsObstacle(enemy.x, enemy.z, enemy.radius + 0.16),
+        visibleGround: {
+          minX: Number(visible.minX.toFixed(2)),
+          maxX: Number(visible.maxX.toFixed(2)),
+          minZ: Number(visible.minZ.toFixed(2)),
+          maxZ: Number(visible.maxZ.toFixed(2)),
+        },
+      };
+    },
     clearAmmoCrates: function () {
       for (var i = state.ammoCrates.length - 1; i >= 0; i--) {
         removeObject3D(state.ammoCrates[i].group);
@@ -3020,12 +4273,31 @@
       updateHud();
       return getAmmoState(weapon.id);
     },
+    setPlayerPosition: function (x, z) {
+      if (!state.player) return null;
+      state.player.x = Number(x) || 0;
+      state.player.z = Number(z) || 0;
+      resolveMoverPosition(state.player, state.player.radius, 0);
+      state.player.group.position.set(state.player.x, 0, state.player.z);
+      updateAim();
+      updateHud();
+      render();
+      return {
+        x: Number(state.player.x.toFixed(2)),
+        z: Number(state.player.z.toFixed(2)),
+        cameraX: Number(cameraTarget.x.toFixed(2)),
+        cameraZ: Number(cameraTarget.z.toFixed(2)),
+      };
+    },
+    validateMapLayout: function () {
+      return validateMapLayout();
+    },
     spawnZombieAt: function (type, x, z) {
       var id = { walker: true, runner: true, brute: true, spitter: true }[type] ? type : "walker";
       var zombie = makeZombie(id);
       zombie.x = Number(x) || 0;
       zombie.z = Number(z) || 0;
-      resolveMoverPosition(zombie, zombie.radius, 3.2);
+      resolveMoverPosition(zombie, zombie.radius, ENEMY_BOUNDS_EXTRA);
       zombie.group.position.set(zombie.x, 0, zombie.z);
       state.enemies.push(zombie);
       dynamicRoot.add(zombie.group);
