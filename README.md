@@ -1,13 +1,14 @@
 # Dust and Dead
 
-A small top-down western shooter with blocky 3D graphics. You play as a cowboy holding off zombie waves in a desert town.
+A small top-down western shooter with blocky 3D graphics. You play as a cowboy holding off zombie waves across a large procedural desert.
 
 ## Features
 
 - Revolver, Winchester, and grenade launcher with separate ammo pools.
 - Finite ammo with reloads and arcade-style cartridge HUD animations.
 - Ammo crates spawn during combat and refill only weapons you already own.
-- Large procedural desert map with multiple towns, detached micro-settlements, wasteland, roads, fences, and varied western buildings.
+- Large seeded procedural desert map with 2-5 spread-out towns, detached micro-settlements, wasteland, roads, fences, POIs, and varied western buildings.
+- Minimap with player direction, camera view, towns, settlements, POIs, and nearby ammo crates.
 - Touch controls and forced landscape-friendly layout for mobile.
 
 ## Run

@@ -19,8 +19,11 @@
   var MAP_OUTSKIRT_X = (ARENA_W - CITY_W) / 2;
   var MAP_OUTSKIRT_Z = (ARENA_D - CITY_D) / 2;
   var MAP_LINEAR_SCALE = MAP_SIZE_MULTIPLIER;
-  var MAIN_TOWN_TARGET = Math.max(3, MAP_SIZE_MULTIPLIER);
+  var MAIN_TOWN_MIN = 2;
+  var MAIN_TOWN_MAX = 5;
+  var MAIN_TOWN_TARGET = 0;
   var MICRO_SETTLEMENT_TARGET = Math.max(5, MAP_SIZE_MULTIPLIER * 2);
+  var INTEREST_POINT_TARGET = Math.max(18, MAP_SIZE_MULTIPLIER * 7);
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
   var MAX_PARTICLES = 180;
@@ -52,6 +55,9 @@
   var ammoReloadFill = document.getElementById("ammo-reload-fill");
   var ammoWeaponIcon = document.getElementById("ammo-weapon-icon");
   var ammoCartridgeRack = document.getElementById("ammo-cartridge-rack");
+  var minimapCanvas = document.getElementById("minimap-canvas");
+  var minimapAmmoCount = document.getElementById("minimap-ammo-count");
+  var minimapCtx = minimapCanvas ? minimapCanvas.getContext("2d") : null;
   var weaponButtons = Array.prototype.slice.call(document.querySelectorAll("[data-weapon]"));
   var menu = document.getElementById("menu");
   var gameOverPanel = document.getElementById("game-over");
@@ -85,6 +91,13 @@
   var mats = {};
   var keys = Object.create(null);
   var pointerDown = false;
+  var pointerInput = {
+    hasPointer: false,
+    clientX: 0,
+    clientY: 0,
+    followOffsetX: 0,
+    followOffsetZ: 6,
+  };
   var touchMove = {
     active: false,
     pointerId: null,
@@ -109,6 +122,7 @@
   var obstacleRects = [];
   var mapFootprints = [];
   var microSettlementStats = [];
+  var interestPointStats = [];
   var nextMapFootprintId = 1;
   var sharedGeometries = {};
   var cameraGroundBounds = { minX: -14, maxX: 14, minZ: -18, maxZ: 18 };
@@ -413,6 +427,7 @@
     buildTerrainPatches();
     buildMainTowns();
     buildMicroSettlements();
+    buildDistributedPointsOfInterest();
     scatterTownProps();
     buildOutskirts();
     buildWasteland();
@@ -942,6 +957,210 @@
     return addRoadIfLargeClear(w, 0.055, d, x, 0.047, z, 0.18, "micro-road-clear") ? 1 : 0;
   }
 
+  function buildDistributedPointsOfInterest() {
+    var cols = 7;
+    var rows = 4;
+    var cells = [];
+    for (var z = 0; z < rows; z++) {
+      for (var x = 0; x < cols; x++) cells.push({ col: x, row: z });
+    }
+    shuffleMapArray(cells);
+
+    for (var i = 0; i < cells.length && interestPointStats.length < INTEREST_POINT_TARGET; i++) {
+      var spec = getInterestPointSpec(i);
+      var point = findInterestPointInCell(cells[i], cols, rows, spec);
+      if (point) buildInterestPoint(point.x, point.z, point.rotation, spec);
+    }
+
+    for (var fallback = 0; interestPointStats.length < INTEREST_POINT_TARGET && fallback < 90; fallback++) {
+      var fallbackSpec = getInterestPointSpec(cells.length + fallback);
+      var p = findInterestPointAnywhere(fallbackSpec);
+      if (p) buildInterestPoint(p.x, p.z, p.rotation, fallbackSpec);
+    }
+  }
+
+  function shuffleMapArray(items) {
+    for (var i = items.length - 1; i > 0; i--) {
+      var j = Math.floor(mapRng() * (i + 1));
+      var tmp = items[i];
+      items[i] = items[j];
+      items[j] = tmp;
+    }
+  }
+
+  function getInterestPointSpec(index) {
+    var specs = [
+      { type: "wagon", w: 6.2, d: 4.2, pad: 0.55, blocks: true },
+      { type: "camp", w: 5.8, d: 4.8, pad: 0.42, blocks: false },
+      { type: "graves", w: 5.2, d: 4.4, pad: 0.38, blocks: false },
+      { type: "cache", w: 4.6, d: 4.2, pad: 0.36, blocks: false },
+      { type: "ruin", w: 6.6, d: 5.4, pad: 0.45, blocks: true },
+    ];
+    return specs[(index * 3 + Math.floor(mapRng() * specs.length)) % specs.length];
+  }
+
+  function findInterestPointInCell(cell, cols, rows, spec) {
+    var cellW = ARENA_W / cols;
+    var cellD = ARENA_D / rows;
+    var minX = -ARENA_W / 2 + cell.col * cellW + 8;
+    var maxX = -ARENA_W / 2 + (cell.col + 1) * cellW - 8;
+    var minZ = -ARENA_D / 2 + cell.row * cellD + 8;
+    var maxZ = -ARENA_D / 2 + (cell.row + 1) * cellD - 8;
+    for (var attempt = 0; attempt < 24; attempt++) {
+      var x = safeMapRand(minX, maxX);
+      var z = safeMapRand(minZ, maxZ);
+      if (interestPointAreaClear(x, z, spec)) return { x: x, z: z, rotation: mapRand(0, Math.PI * 2) };
+    }
+    return null;
+  }
+
+  function findInterestPointAnywhere(spec) {
+    for (var attempt = 0; attempt < 60; attempt++) {
+      var x = mapRand(-ARENA_W / 2 + 10, ARENA_W / 2 - 10);
+      var z = mapRand(-ARENA_D / 2 + 10, ARENA_D / 2 - 10);
+      if (interestPointAreaClear(x, z, spec)) return { x: x, z: z, rotation: mapRand(0, Math.PI * 2) };
+    }
+    return null;
+  }
+
+  function interestPointAreaClear(x, z, spec) {
+    if (Math.hypot(x - PLAYER_START.x, z - PLAYER_START.z) < 9.5) return false;
+    if (pointNearAnyMainTown(x, z, 11)) return false;
+    if (mapAreaTouchesMainTownMicroBuffer(x, z, spec.w, spec.d, spec.pad, 5.5)) return false;
+    if (!mapAreaWithinBounds(x, z, spec.w, spec.d, spec.pad)) return false;
+    if (mapAreaHitsFootprints(x, z, spec.w, spec.d, spec.pad)) return false;
+    if (mapAreaTooCloseToLargeObjects(x, z, spec.w, spec.d, spec.pad, spec.blocks ? MIN_PLAYER_PASSAGE + 0.45 : 1.0)) return false;
+    return true;
+  }
+
+  function buildInterestPoint(x, z, rotation, spec) {
+    var built = false;
+    if (spec.type === "wagon") built = buildAbandonedWagon(x, z, rotation, spec);
+    else if (spec.type === "camp") built = buildDesertCamp(x, z, rotation, spec);
+    else if (spec.type === "graves") built = buildLonelyGraves(x, z, rotation, spec);
+    else if (spec.type === "cache") built = buildProspectorCache(x, z, rotation, spec);
+    else built = buildLowRuin(x, z, rotation, spec);
+    if (!built) return false;
+    interestPointStats.push({
+      type: spec.type,
+      x: x,
+      z: z,
+    });
+    return true;
+  }
+
+  function registerInterestFootprint(spec, x, z) {
+    if (spec.blocks) addObstacle(x, z, spec.w, spec.d, spec.pad, "poi-large:" + spec.type);
+    else registerMapFootprint("poi:" + spec.type, x, z, spec.w, spec.d, spec.pad, false);
+  }
+
+  function buildAbandonedWagon(x, z, rotation, spec) {
+    registerInterestFootprint(spec, x, z);
+    var g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotation;
+    worldRoot.add(g);
+    addContactShadow(g, 4.8, 2.8, 0.2);
+    addBox(g, 3.3, 0.24, 1.45, mats.darkWood, 0, 0.48, 0);
+    addBox(g, 3.65, 0.18, 0.18, mats.wood, 0, 0.78, -0.68);
+    addBox(g, 3.65, 0.18, 0.18, mats.wood, 0, 0.78, 0.68);
+    addBox(g, 0.18, 0.65, 1.45, mats.wood, -1.72, 0.72, 0);
+    addBox(g, 0.18, 0.48, 1.35, mats.wood, 1.72, 0.66, 0);
+    addBox(g, 1.65, 0.14, 0.14, mats.darkWood, 2.38, 0.43, 0.35).rotation.y = 0.28;
+    addBox(g, 1.35, 0.12, 0.12, mats.darkWood, -2.28, 0.38, -0.45).rotation.y = -0.45;
+    for (var i = -1; i <= 1; i += 2) {
+      addBox(g, 0.22, 0.95, 0.95, mats.black, -1.12, 0.44, i * 0.92);
+      addBox(g, 0.18, 0.76, 0.76, mats.wood, -1.12, 0.44, i * 0.94);
+      addBox(g, 0.2, 0.82, 0.82, mats.black, 1.14, 0.42, i * 0.92);
+      addBox(g, 0.16, 0.62, 0.62, mats.wood, 1.14, 0.42, i * 0.94);
+    }
+    addBox(g, 1.15, 0.22, 0.55, mats.sign, 0.35, 0.78, 0.05).rotation.y = -0.22;
+    addBox(g, 0.58, 0.52, 0.42, mats.barrel, -0.42, 0.82, -0.1);
+    return true;
+  }
+
+  function buildDesertCamp(x, z, rotation, spec) {
+    registerInterestFootprint(spec, x, z);
+    var g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotation;
+    worldRoot.add(g);
+    addContactShadow(g, 3.6, 2.7, 0.14);
+    addBox(g, 0.72, 0.1, 0.72, mats.black, 0, 0.14, 0);
+    for (var r = 0; r < 7; r++) {
+      var angle = (r / 7) * Math.PI * 2;
+      addBox(g, 0.22, 0.16, 0.18, mats.rock, Math.cos(angle) * 0.52, 0.22, Math.sin(angle) * 0.52).rotation.y = angle;
+    }
+    addBox(g, 0.16, 0.14, 0.72, mats.wood, -0.12, 0.33, 0).rotation.y = 0.9;
+    addBox(g, 0.16, 0.14, 0.64, mats.wood, 0.18, 0.34, 0).rotation.y = -0.65;
+    addBox(g, 1.42, 0.12, 0.58, mats.denim, -1.28, 0.16, -0.88).rotation.y = 0.14;
+    addBox(g, 1.22, 0.1, 0.44, mats.sign, 1.34, 0.16, 0.92).rotation.y = -0.22;
+    addBox(g, 0.72, 0.44, 0.62, mats.wood, 1.52, 0.38, -0.64);
+    addBox(g, 0.48, 0.52, 0.48, mats.barrel, -1.52, 0.42, 0.68);
+    addBox(g, 0.12, 1.38, 0.12, mats.darkWood, -1.8, 0.76, -1.45).rotation.z = -0.15;
+    addBox(g, 0.12, 1.38, 0.12, mats.darkWood, 1.8, 0.76, -1.45).rotation.z = 0.15;
+    addBox(g, 3.75, 0.1, 0.26, mats.sign, 0, 1.48, -1.45);
+    return true;
+  }
+
+  function buildLonelyGraves(x, z, rotation, spec) {
+    registerInterestFootprint(spec, x, z);
+    var g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotation;
+    worldRoot.add(g);
+    addContactShadow(g, 3.7, 2.8, 0.12);
+    for (var i = 0; i < 3; i++) {
+      var gx = (i - 1) * 1.05;
+      addBox(g, 0.48, 0.56, 0.16, mats.rock, gx, 0.34, -0.38);
+      addBox(g, 0.72, 0.07, 0.2, mats.rock, gx, 0.68, -0.38);
+      addBox(g, 0.76, 0.08, 1.02, mats.sandDark, gx, 0.12, 0.2);
+    }
+    addBox(g, 3.6, 0.13, 0.14, mats.darkWood, 0, 0.45, -1.25);
+    addBox(g, 3.2, 0.13, 0.14, mats.darkWood, 0, 0.45, 1.25);
+    addBox(g, 0.14, 0.82, 0.14, mats.darkWood, -1.92, 0.43, -1.25);
+    addBox(g, 0.14, 0.82, 0.14, mats.darkWood, 1.92, 0.43, -1.25);
+    return true;
+  }
+
+  function buildProspectorCache(x, z, rotation, spec) {
+    registerInterestFootprint(spec, x, z);
+    var g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotation;
+    worldRoot.add(g);
+    addContactShadow(g, 3.4, 3.1, 0.13);
+    addBox(g, 1.04, 0.5, 0.78, mats.wood, -0.68, 0.36, -0.38);
+    addBox(g, 0.9, 0.42, 0.68, mats.darkWood, 0.48, 0.32, -0.52);
+    addBox(g, 0.48, 0.64, 0.48, mats.barrel, 1.24, 0.42, 0.48);
+    addBox(g, 0.58, 0.18, 1.54, mats.sign, -0.54, 0.2, 0.82).rotation.y = 0.18;
+    addBox(g, 0.16, 1.3, 0.16, mats.darkWood, -1.75, 0.72, -1.35);
+    addBox(g, 0.16, 1.3, 0.16, mats.darkWood, 1.68, 0.72, -1.26);
+    addBox(g, 3.54, 0.12, 0.18, mats.wood, -0.04, 1.28, -1.31).rotation.z = 0.04;
+    addBox(g, 0.42, 0.22, 0.32, mats.metal, 0.02, 0.36, 0.48);
+    addBox(g, 0.34, 0.16, 0.26, mats.ammoRound, 0.48, 0.34, 0.5);
+    return true;
+  }
+
+  function buildLowRuin(x, z, rotation, spec) {
+    if (!canPlaceLargeMapObject(x, z + 0.18, spec.w, spec.d, spec.pad)) return false;
+    var g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotation;
+    worldRoot.add(g);
+    addObstacle(x, z + 0.18, spec.w, spec.d, spec.pad, "poi-large:ruin");
+    addContactShadow(g, 5.2, 3.7, 0.17);
+    addBox(g, 4.2, 0.24, 2.6, mats.darkWood, 0, 0.16, 0);
+    addBox(g, 3.4, 1.35, 0.24, material(0x6d4b34, 0.88, 0.01), -0.22, 0.82, -1.16);
+    addBox(g, 0.26, 1.12, 2.2, mats.wood, -1.84, 0.68, 0.02);
+    addBox(g, 0.24, 0.78, 1.7, mats.wood, 1.74, 0.5, 0.18);
+    addBox(g, 3.8, 0.26, 0.46, mats.roof, -0.1, 1.48, -1.22).rotation.z = -0.05;
+    addBox(g, 1.2, 0.14, 0.18, mats.sign, 0.85, 1.18, -1.42).rotation.z = 0.12;
+    addBox(g, 0.55, 0.4, 0.46, mats.barrel, -0.82, 0.39, 0.9);
+    addBox(g, 0.86, 0.18, 0.32, mats.wood, 1.12, 0.28, 1.08).rotation.y = -0.42;
+    return true;
+  }
+
   function scatterTownProps() {
     MAIN_TOWNS.forEach(function (town) {
       withMainTown(town, function () {
@@ -1221,6 +1440,7 @@
   function isLargePassageFootprint(footprint) {
     return (
       footprint.type.indexOf("building:") === 0 ||
+      footprint.type.indexOf("poi-large:") === 0 ||
       footprint.type === "stable" ||
       footprint.type === "water-tower" ||
       footprint.type === "graveyard"
@@ -1341,6 +1561,8 @@
       arenaW: ARENA_W,
       arenaD: ARENA_D,
       mainTownCount: MAIN_TOWNS.length,
+      interestPointTarget: INTEREST_POINT_TARGET,
+      interestPointCount: interestPointStats.length,
       mainTowns: MAIN_TOWNS.map(function (town) {
         return {
           index: town.index,
@@ -1352,6 +1574,8 @@
         };
       }),
       mainTownMinDistance: getMainTownMinDistance(),
+      mainTownMaxDistance: getMainTownMaxDistance(),
+      mainTownSpread: getMainTownSpread(),
       footprintCount: mapFootprints.length,
       obstacleCount: obstacleRects.length,
       issueCount: totalIssues,
@@ -1368,6 +1592,13 @@
           styleVariants: settlement.styleVariants || [],
         };
       }),
+      interestPoints: interestPointStats.map(function (point) {
+        return {
+          type: point.type,
+          x: Number(point.x.toFixed(2)),
+          z: Number(point.z.toFixed(2)),
+        };
+      }),
       playerSpawnClear: !pointHitsMapFootprint(PLAYER_START.x, PLAYER_START.z, 1.05, ["player-start-clear", "road-clear", "micro-road-clear"]),
       minGap: isFinite(minGap) ? Number(minGap.toFixed(3)) : null,
     };
@@ -1382,6 +1613,37 @@
       }
     }
     return Number(minDistance.toFixed(2));
+  }
+
+  function getMainTownMaxDistance() {
+    if (MAIN_TOWNS.length < 2) return null;
+    var maxDistance = 0;
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      for (var j = i + 1; j < MAIN_TOWNS.length; j++) {
+        maxDistance = Math.max(maxDistance, Math.hypot(MAIN_TOWNS[i].center.x - MAIN_TOWNS[j].center.x, MAIN_TOWNS[i].center.z - MAIN_TOWNS[j].center.z));
+      }
+    }
+    return Number(maxDistance.toFixed(2));
+  }
+
+  function getMainTownSpread() {
+    var minX = Infinity;
+    var maxX = -Infinity;
+    var minZ = Infinity;
+    var maxZ = -Infinity;
+    for (var i = 0; i < MAIN_TOWNS.length; i++) {
+      var c = MAIN_TOWNS[i].center;
+      minX = Math.min(minX, c.x);
+      maxX = Math.max(maxX, c.x);
+      minZ = Math.min(minZ, c.z);
+      maxZ = Math.max(maxZ, c.z);
+    }
+    return {
+      width: Number((maxX - minX).toFixed(2)),
+      depth: Number((maxZ - minZ).toFixed(2)),
+      widthRatio: Number(((maxX - minX) / ARENA_W).toFixed(3)),
+      depthRatio: Number(((maxZ - minZ) / ARENA_D).toFixed(3)),
+    };
   }
 
   function isAllowedMapFootprintContact(a, b) {
@@ -1720,6 +1982,9 @@
     };
     state.pointerWorld = { x: PLAYER_START.x, z: PLAYER_START.z + 4 };
     pointerHit.set(state.pointerWorld.x, 0, state.pointerWorld.z);
+    pointerInput.hasPointer = false;
+    pointerInput.followOffsetX = 0;
+    pointerInput.followOffsetZ = 4;
     state.player.group.position.set(state.player.x, 0, state.player.z);
     dynamicRoot.add(state.player.group);
     setWeaponVisual("revolver");
@@ -2325,6 +2590,8 @@
     var p = state.player;
     if (touchFire.active || (touchMove.active && Math.hypot(touchMove.x, touchMove.z) > 0.18)) {
       updateMobileAimTarget(p);
+    } else {
+      refreshPointerWorldFromFollow(p);
     }
     var dx = state.pointerWorld.x - p.x;
     var dz = state.pointerWorld.z - p.z;
@@ -3445,6 +3712,9 @@
   }
 
   function updatePointerFromClient(clientX, clientY) {
+    pointerInput.hasPointer = true;
+    pointerInput.clientX = clientX;
+    pointerInput.clientY = clientY;
     var rect = renderer.domElement.getBoundingClientRect();
     pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointerNdc.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
@@ -3452,6 +3722,28 @@
     raycaster.ray.intersectPlane(groundPlane, pointerHit);
     state.pointerWorld.x = clamp(pointerHit.x, -ARENA_W / 2 - 4, ARENA_W / 2 + 4);
     state.pointerWorld.z = clamp(pointerHit.z, -ARENA_D / 2 - 4, ARENA_D / 2 + 4);
+    updatePointerFollowOffset();
+  }
+
+  function updatePointerFollowOffset() {
+    var follow = getPointerFollowTarget();
+    pointerInput.followOffsetX = state.pointerWorld.x - follow.x;
+    pointerInput.followOffsetZ = state.pointerWorld.z - follow.z;
+  }
+
+  function refreshPointerWorldFromFollow(player) {
+    if (!pointerInput.hasPointer || !player) return;
+    var follow = getPointerFollowTarget();
+    state.pointerWorld.x = clamp(follow.x + pointerInput.followOffsetX, -ARENA_W / 2 - 4, ARENA_W / 2 + 4);
+    state.pointerWorld.z = clamp(follow.z + pointerInput.followOffsetZ, -ARENA_D / 2 - 4, ARENA_D / 2 + 4);
+  }
+
+  function getPointerFollowTarget() {
+    if (state.player) return clampCameraTarget(state.player.x, state.player.z);
+    return {
+      x: cameraTarget.x,
+      z: cameraTarget.z,
+    };
   }
 
   function updateHud() {
@@ -3472,6 +3764,163 @@
       button.classList.toggle("is-active", id === state.weapon);
       button.classList.toggle("is-owned", owned);
     });
+    updateMinimap();
+  }
+
+  function updateMinimap() {
+    if (!minimapCanvas || !minimapCtx) return;
+    if (state.mode !== "playing" || !state.player) return;
+    resizeMinimapCanvas();
+    var ctx = minimapCtx;
+    var width = minimapCanvas.width;
+    var height = minimapCanvas.height;
+    var dpr = getMinimapDpr();
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var cssW = width / dpr;
+    var cssH = height / dpr;
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    var pad = 7;
+    var scale = Math.min((cssW - pad * 2) / ARENA_W, (cssH - pad * 2) / ARENA_D);
+    var mapW = ARENA_W * scale;
+    var mapH = ARENA_D * scale;
+    var ox = (cssW - mapW) / 2;
+    var oy = (cssH - mapH) / 2;
+    var toMap = function (x, z) {
+      return {
+        x: ox + (x + ARENA_W / 2) * scale,
+        y: oy + (z + ARENA_D / 2) * scale,
+      };
+    };
+
+    fillRoundRect(ctx, 0, 0, cssW, cssH, 5, "rgba(28, 16, 8, 0.55)");
+    fillRoundRect(ctx, ox, oy, mapW, mapH, 4, "#c29355");
+    ctx.strokeStyle = "rgba(255, 236, 182, 0.22)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox + 0.5, oy + 0.5, mapW - 1, mapH - 1);
+
+    ctx.fillStyle = "rgba(133, 87, 47, 0.42)";
+    MAIN_TOWNS.forEach(function (town) {
+      var a = toMap(town.center.x - CITY_W / 2, town.center.z - CITY_D / 2);
+      ctx.fillRect(a.x, a.y, CITY_W * scale, CITY_D * scale);
+      var h = toMap(town.center.x - CITY_W / 2, town.center.z);
+      var v = toMap(town.center.x, town.center.z - CITY_D / 2);
+      ctx.fillStyle = "rgba(91, 58, 34, 0.72)";
+      ctx.fillRect(h.x, h.y - Math.max(1, 3.5 * scale), CITY_W * scale, Math.max(1.3, 7 * scale));
+      ctx.fillRect(v.x - Math.max(1, 3.5 * scale), v.y, Math.max(1.3, 7 * scale), CITY_D * scale);
+      ctx.fillStyle = "rgba(133, 87, 47, 0.42)";
+    });
+
+    ctx.fillStyle = "rgba(255, 223, 148, 0.62)";
+    microSettlementStats.forEach(function (settlement) {
+      if (settlement.skipped || settlement.buildingCount < 2) return;
+      var p = toMap(settlement.x, settlement.z);
+      ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    });
+
+    ctx.fillStyle = "rgba(83, 72, 54, 0.62)";
+    interestPointStats.forEach(function (point) {
+      var p = toMap(point.x, point.z);
+      ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+    });
+
+    var visible = getCurrentVisibleGroundRect();
+    var va = toMap(visible.minX, visible.minZ);
+    var vb = toMap(visible.maxX, visible.maxZ);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.36)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(va.x, va.y, vb.x - va.x, vb.y - va.y);
+
+    var nearestCrates = getNearestAmmoCratesForMinimap(4);
+    if (minimapAmmoCount) minimapAmmoCount.textContent = "Ammo " + nearestCrates.length;
+    nearestCrates.forEach(function (crate, index) {
+      var p = toMap(crate.x, crate.z);
+      var pulse = 1 + Math.sin(state.time * 5 + index) * 0.18;
+      ctx.fillStyle = index === 0 ? "#ffe285" : "#ffc34f";
+      ctx.shadowColor = "rgba(255, 211, 107, 0.75)";
+      ctx.shadowBlur = 5;
+      fillDiamond(ctx, p.x, p.y, 3.2 * pulse);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(45, 23, 8, 0.72)";
+      ctx.lineWidth = 1;
+      strokeDiamond(ctx, p.x, p.y, 3.2 * pulse);
+    });
+
+    var pp = toMap(state.player.x, state.player.z);
+    ctx.save();
+    ctx.translate(pp.x, pp.y);
+    ctx.rotate(Math.PI - state.player.aimAngle);
+    ctx.fillStyle = "#ffffff";
+    ctx.shadowColor = "rgba(255, 255, 255, 0.8)";
+    ctx.shadowBlur = 5;
+    ctx.beginPath();
+    ctx.moveTo(0, -5.2);
+    ctx.lineTo(3.9, 4.4);
+    ctx.lineTo(0, 2.5);
+    ctx.lineTo(-3.9, 4.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(38, 20, 8, 0.85)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+  }
+
+  function resizeMinimapCanvas() {
+    if (!minimapCanvas) return;
+    var dpr = getMinimapDpr();
+    var w = Math.max(1, Math.round((minimapCanvas.clientWidth || 176) * dpr));
+    var h = Math.max(1, Math.round((minimapCanvas.clientHeight || 128) * dpr));
+    if (minimapCanvas.width !== w) minimapCanvas.width = w;
+    if (minimapCanvas.height !== h) minimapCanvas.height = h;
+  }
+
+  function getMinimapDpr() {
+    return Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  }
+
+  function getNearestAmmoCratesForMinimap(limit) {
+    if (!state.player) return [];
+    return state.ammoCrates
+      .slice()
+      .sort(function (a, b) {
+        return Math.hypot(a.x - state.player.x, a.z - state.player.z) - Math.hypot(b.x - state.player.x, b.z - state.player.z);
+      })
+      .slice(0, limit || 4);
+  }
+
+  function fillRoundRect(ctx, x, y, w, h, r, fillStyle) {
+    ctx.fillStyle = fillStyle;
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      ctx.fill();
+      return;
+    }
+    ctx.fillRect(x, y, w, h);
+  }
+
+  function fillDiamond(ctx, x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.lineTo(x + r, y);
+    ctx.lineTo(x, y + r);
+    ctx.lineTo(x - r, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function strokeDiamond(ctx, x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.lineTo(x + r, y);
+    ctx.lineTo(x, y + r);
+    ctx.lineTo(x - r, y);
+    ctx.closePath();
+    ctx.stroke();
   }
 
   function updateAmmoHud() {
@@ -4024,21 +4473,94 @@
   }
 
   function createMainTowns() {
-    var towns = [];
-    for (var i = 0; i < MAIN_TOWN_TARGET; i++) {
+    MAIN_TOWN_TARGET = MAIN_TOWN_MIN + Math.floor(mapRng() * (MAIN_TOWN_MAX - MAIN_TOWN_MIN + 1));
+    var centers = chooseMainTownCenters(MAIN_TOWN_TARGET);
+    if (!centers.length) centers.push({ x: 0, z: 0 });
+    return centers.map(function (center, index) {
+      return makeMainTown(center, index);
+    });
+  }
+
+  function chooseMainTownCenters(target) {
+    var candidates = createMainTownCandidates();
+    var chosen = chooseFarthestTownPair(candidates);
+    if (!chosen.length) chosen.push(createMainTownCenter());
+    while (chosen.length < target) {
       var best = null;
-      for (var attempt = 0; attempt < 220; attempt++) {
-        var center = createMainTownCenter();
-        var score = getTownPlacementScore(center, towns);
+      for (var i = 0; i < candidates.length; i++) {
+        var center = candidates[i];
+        if (!isTownCenterFarEnough(center, chosen.map(function (point, index) { return { center: point, index: index }; }))) continue;
+        if (townCenterAlreadyChosen(center, chosen)) continue;
+        var score = getTownPlacementScore(center, chosen.map(function (point, index) { return { center: point, index: index }; }));
         if (!best || score > best.score) best = { center: center, score: score };
-        if (isTownCenterFarEnough(center, towns)) {
-          towns.push(makeMainTown(center, towns.length));
-          break;
+      }
+      if (best) {
+        chosen.push(best.center);
+      } else {
+        var fallback = findFallbackTownCenter(chosen);
+        if (!fallback) break;
+        chosen.push(fallback);
+      }
+    }
+    return chosen.slice(0, target);
+  }
+
+  function createMainTownCandidates() {
+    var bounds = getMainTownCenterBounds();
+    var candidates = [
+      { x: bounds.minX, z: bounds.minZ },
+      { x: bounds.maxX, z: bounds.minZ },
+      { x: bounds.minX, z: bounds.maxZ },
+      { x: bounds.maxX, z: bounds.maxZ },
+      { x: (bounds.minX + bounds.maxX) / 2, z: bounds.minZ },
+      { x: (bounds.minX + bounds.maxX) / 2, z: bounds.maxZ },
+      { x: bounds.minX, z: (bounds.minZ + bounds.maxZ) / 2 },
+      { x: bounds.maxX, z: (bounds.minZ + bounds.maxZ) / 2 },
+      { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 },
+    ];
+    for (var i = 0; i < 180; i++) candidates.push(createMainTownCenter());
+    return candidates;
+  }
+
+  function chooseFarthestTownPair(candidates) {
+    var bestDistance = -Infinity;
+    var topPairs = [];
+    for (var i = 0; i < candidates.length; i++) {
+      for (var j = i + 1; j < candidates.length; j++) {
+        if (!isTownCenterFarEnough(candidates[i], [{ center: candidates[j] }])) continue;
+        var distance = Math.hypot(candidates[i].x - candidates[j].x, candidates[i].z - candidates[j].z);
+        if (distance > bestDistance + 6) {
+          bestDistance = distance;
+          topPairs = [{ a: candidates[i], b: candidates[j], distance: distance }];
+        } else if (distance >= bestDistance - 6) {
+          topPairs.push({ a: candidates[i], b: candidates[j], distance: distance });
         }
       }
     }
-    if (!towns.length) towns.push(makeMainTown({ x: 0, z: 0 }, 0));
-    return towns;
+    if (!topPairs.length) return [];
+    var best = topPairs[Math.floor(mapRng() * topPairs.length)];
+    return [best.a, best.b];
+  }
+
+  function townCenterAlreadyChosen(center, chosen) {
+    for (var i = 0; i < chosen.length; i++) {
+      if (Math.hypot(center.x - chosen[i].x, center.z - chosen[i].z) < 1) return true;
+    }
+    return false;
+  }
+
+  function findFallbackTownCenter(chosen) {
+    var towns = chosen.map(function (point, index) {
+      return { center: point, index: index };
+    });
+    var best = null;
+    for (var attempt = 0; attempt < 300; attempt++) {
+      var center = createMainTownCenter();
+      if (!isTownCenterFarEnough(center, towns)) continue;
+      var score = getTownPlacementScore(center, towns);
+      if (!best || score > best.score) best = { center: center, score: score };
+    }
+    return best ? best.center : null;
   }
 
   function makeMainTown(center, index) {
@@ -4050,11 +4572,21 @@
   }
 
   function createMainTownCenter() {
+    var bounds = getMainTownCenterBounds();
+    return {
+      x: mapRand(bounds.minX, bounds.maxX),
+      z: mapRand(bounds.minZ, bounds.maxZ),
+    };
+  }
+
+  function getMainTownCenterBounds() {
     var safeX = CITY_W / 2 + 14;
     var safeZ = CITY_D / 2 + 14;
     return {
-      x: mapRand(-ARENA_W / 2 + safeX, ARENA_W / 2 - safeX),
-      z: mapRand(-ARENA_D / 2 + safeZ, ARENA_D / 2 - safeZ),
+      minX: -ARENA_W / 2 + safeX,
+      maxX: ARENA_W / 2 - safeX,
+      minZ: -ARENA_D / 2 + safeZ,
+      maxZ: ARENA_D / 2 - safeZ,
     };
   }
 
@@ -4074,6 +4606,7 @@
     if (!towns.length) return 1;
     var minDistance = Infinity;
     var minAabbClearance = Infinity;
+    var edgeDistance = Math.min(ARENA_W / 2 - Math.abs(center.x), ARENA_D / 2 - Math.abs(center.z));
     for (var i = 0; i < towns.length; i++) {
       var other = towns[i].center;
       var dx = Math.abs(center.x - other.x);
@@ -4081,7 +4614,7 @@
       minDistance = Math.min(minDistance, Math.hypot(dx, dz));
       minAabbClearance = Math.min(minAabbClearance, Math.max(dx - (CITY_W + 34), dz - (CITY_D + 30)));
     }
-    return Math.min(minDistance / 112, 1) * 0.65 + Math.min(Math.max(minAabbClearance, 0) / 42, 1) * 0.35;
+    return minDistance * 0.72 + Math.max(minAabbClearance, 0) * 0.2 + edgeDistance * 0.08;
   }
 
   function createMainTownLayout() {
@@ -4274,6 +4807,8 @@
         outskirtMarginX: MAP_OUTSKIRT_X,
         outskirtMarginZ: MAP_OUTSKIRT_Z,
         microSettlementTarget: MICRO_SETTLEMENT_TARGET,
+        interestPointTarget: INTEREST_POINT_TARGET,
+        interestPointCount: interestPointStats.length,
         mainTownTarget: MAIN_TOWN_TARGET,
         mainTownCount: MAIN_TOWNS.length,
         mainTown: {
@@ -4294,6 +4829,15 @@
           };
         }),
         mainTownMinDistance: getMainTownMinDistance(),
+        mainTownMaxDistance: getMainTownMaxDistance(),
+        mainTownSpread: getMainTownSpread(),
+        interestPoints: interestPointStats.map(function (point) {
+          return {
+            type: point.type,
+            x: Number(point.x.toFixed(2)),
+            z: Number(point.z.toFixed(2)),
+          };
+        }),
         playerStart: {
           x: Number(PLAYER_START.x.toFixed(2)),
           z: Number(PLAYER_START.z.toFixed(2)),
@@ -4371,6 +4915,19 @@
       pointer: {
         x: Number(state.pointerWorld.x.toFixed(2)),
         z: Number(state.pointerWorld.z.toFixed(2)),
+        screenLocked: pointerInput.hasPointer,
+        followOffsetX: Number(pointerInput.followOffsetX.toFixed(2)),
+        followOffsetZ: Number(pointerInput.followOffsetZ.toFixed(2)),
+      },
+      minimap: {
+        visible: state.mode === "playing",
+        nearestAmmoCrates: getNearestAmmoCratesForMinimap(4).map(function (crate) {
+          return {
+            x: Number(crate.x.toFixed(2)),
+            z: Number(crate.z.toFixed(2)),
+            distance: state.player ? Number(Math.hypot(crate.x - state.player.x, crate.z - state.player.z).toFixed(2)) : null,
+          };
+        }),
       },
       mobileControls: {
         moveActive: touchMove.active,
