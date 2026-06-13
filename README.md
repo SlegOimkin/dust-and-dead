@@ -5,9 +5,14 @@ A small top-down western shooter with blocky 3D graphics. You play as a cowboy h
 ## Features
 
 - Revolver, Winchester, and grenade launcher with separate ammo pools.
+- Grenade launcher shots land on the aimed point, clamped by launcher range.
 - Finite ammo with reloads and arcade-style cartridge HUD animations.
 - Ammo crates spawn during combat and refill only weapons you already own.
+- Zombies drop visible XP orbs and the player now has level/progression state for future upgrades.
+- Distant zombies catch up by teleporting closer from outside the camera view, with safe obstacle-aware placement.
+- Rare acid spitters appear after wave 4, using animated slime projectiles and damaging acid puddles.
 - Large seeded procedural desert map with 2-5 spread-out towns, detached micro-settlements, wasteland, roads, fences, POIs, and varied western buildings.
+- Rotated ruins and other blockers use matching collision so visuals and navigation stay aligned.
 - Minimap with player direction, camera view, towns, settlements, POIs, and nearby ammo crates.
 - Touch controls and forced landscape-friendly layout for mobile.
 

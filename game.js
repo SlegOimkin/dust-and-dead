@@ -32,13 +32,34 @@
   var MAX_DECALS = 48;
   var MAX_DEBRIS = 120;
   var MAX_AMMO_CRATES = 4;
+  var MAX_XP_ORBS = 90;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
+  var XP_PICKUP_RADIUS = 1.1;
+  var XP_ATTRACT_RADIUS = 7.5;
+  var XP_ORB_SPEED = 8.2;
   var MIN_PLAYER_PASSAGE = 2.0;
   var MAIN_TOWN_MICRO_BUFFER = 10.5;
   var MICRO_FENCE_ROAD_CLEARANCE = 2.2;
   var ENEMY_BOUNDS_EXTRA = 8.4;
   var ZOMBIE_SPAWN_VIEW_MARGIN_MIN = 4.2;
   var ZOMBIE_SPAWN_VIEW_MARGIN_MAX = 6.0;
+  var ZOMBIE_CATCHUP_DISTANCE = 92;
+  var ZOMBIE_CATCHUP_VISIBLE_PAD = 4.8;
+  var ZOMBIE_CATCHUP_COOLDOWN = 4.5;
+  var ACID_SPITTER_START_WAVE = 5;
+  var ACID_SPITTER_CHANCE = 0.08;
+  var ACID_SPITTER_CHANCE_LATE = 0.12;
+  var ACID_SPIT_RANGE = 20;
+  var ACID_SPIT_MIN_RANGE = 5.2;
+  var ACID_SPIT_WINDUP = 0.42;
+  var ACID_SPIT_COOLDOWN = 3.1;
+  var ACID_SPIT_SPEED = 12.5;
+  var ACID_PUDDLE_RADIUS = 2.55;
+  var ACID_PUDDLE_LIFE = 5.8;
+  var ACID_PUDDLE_DAMAGE = 5;
+  var ACID_PUDDLE_DAMAGE_INTERVAL = 0.42;
+  var MAX_ACID_PROJECTILES = 12;
+  var MAX_ACID_PUDDLES = 10;
   var MOBILE_RENDER_MODE = isMobileRuntime();
   var DYNAMIC_LIGHTS_ENABLED = true;
 
@@ -47,6 +68,8 @@
   var hudWave = document.getElementById("wave-value");
   var hudScore = document.getElementById("score-value");
   var hudKills = document.getElementById("kills-value");
+  var hudLevel = document.getElementById("level-value");
+  var hudXpFill = document.getElementById("xp-fill");
   var hudWeapon = document.getElementById("weapon-value");
   var ammoHud = document.getElementById("ammo-hud");
   var ammoStatus = document.getElementById("ammo-status");
@@ -198,6 +221,7 @@
       damage: 0,
       speed: 15.5,
       life: 1.35,
+      range: 20.5,
       hitRadius: 0.45,
       width: 0.34,
       length: 0.5,
@@ -262,6 +286,14 @@
     smokePuffs: [],
     ambientDust: [],
     debris: [],
+    acidProjectiles: [],
+    acidPuddles: [],
+    xpOrbs: [],
+    level: 1,
+    xp: 0,
+    xpToNext: 20,
+    totalXp: 0,
+    levelUps: 0,
     weapon: "revolver",
     ownedWeapons: { revolver: true, rifle: false, launcher: false },
     ammo: {},
@@ -269,6 +301,7 @@
     reloadTimers: {},
     ammoCrates: [],
     ammoCrateTimer: 0,
+    zombieTeleports: 0,
     pointerWorld: { x: 0, z: 6 },
   };
 
@@ -316,8 +349,59 @@
     mats.denim = material(0x2d5c84, 0.78, 0.01);
     mats.zombieSkin = material(0x6aa15e, 0.9, 0.01);
     mats.zombieSkinDark = material(0x456f43, 0.9, 0.01);
+    mats.zombieAcidSkin = material(0x8bcf63, 0.84, 0.02, 0x244a18, 0.12);
     mats.zombieShirt = material(0x5e6254, 0.9, 0.01);
     mats.zombieBlood = material(0x5b1010, 0.85, 0.02);
+    mats.acid = material(0x9cff47, 0.36, 0.02, 0x79ff22, 0.72);
+    mats.acidDark = material(0x3f7a20, 0.66, 0.01, 0x56d11d, 0.24);
+    mats.slimeCore = new THREE.MeshStandardMaterial({
+      color: 0x9dff48,
+      roughness: 0.24,
+      metalness: 0.02,
+      emissive: 0x69e421,
+      emissiveIntensity: 0.68,
+      transparent: true,
+      opacity: 0.92,
+    });
+    mats.slimeDark = new THREE.MeshStandardMaterial({
+      color: 0x3f8f24,
+      roughness: 0.42,
+      metalness: 0.01,
+      emissive: 0x2f8f18,
+      emissiveIntensity: 0.28,
+      transparent: true,
+      opacity: 0.82,
+    });
+    mats.slimeHighlight = new THREE.MeshBasicMaterial({
+      color: 0xdbff9d,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.acidPuddle = new THREE.MeshBasicMaterial({
+      color: 0x91ff2c,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.acidPuddleDark = new THREE.MeshBasicMaterial({
+      color: 0x2f7518,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    mats.acidPuddleFoam = new THREE.MeshBasicMaterial({
+      color: 0xd8ff7d,
+      transparent: true,
+      opacity: 0.52,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
     mats.bullet = material(0xffdc67, 0.25, 0.2, 0xffb52f, 0.45);
     mats.rifleTracer = material(0xf8f5d7, 0.2, 0.25, 0xffe27a, 0.35);
     mats.grenade = material(0x293226, 0.62, 0.22);
@@ -326,6 +410,8 @@
     mats.healthRed = material(0xd83a2e, 0.65, 0.02);
     mats.healthBack = material(0x301010, 0.8, 0.01);
     mats.gold = material(0xffc44d, 0.45, 0.08, 0xffa51f, 0.25);
+    mats.xp = material(0x62d8ff, 0.32, 0.04, 0x65f4ff, 0.58);
+    mats.xpLight = material(0xb8ff6a, 0.28, 0.02, 0xb8ff6a, 0.72);
     mats.contactShadow = new THREE.MeshBasicMaterial({
       color: 0x2a160c,
       transparent: true,
@@ -1045,6 +1131,7 @@
       type: spec.type,
       x: x,
       z: z,
+      rotation: rotation,
     });
     return true;
   }
@@ -1143,12 +1230,13 @@
   }
 
   function buildLowRuin(x, z, rotation, spec) {
-    if (!canPlaceLargeMapObject(x, z + 0.18, spec.w, spec.d, spec.pad)) return false;
+    var colliderBounds = getRotatedRectBounds(spec.w, spec.d, rotation);
+    if (!canPlaceLargeMapObject(x, z + 0.18, colliderBounds.w, colliderBounds.d, spec.pad)) return false;
     var g = new THREE.Group();
     g.position.set(x, 0, z);
     g.rotation.y = rotation;
     worldRoot.add(g);
-    addObstacle(x, z + 0.18, spec.w, spec.d, spec.pad, "poi-large:ruin");
+    addRotatedObstacle(x, z + 0.18, spec.w, spec.d, spec.pad, rotation, "poi-large:ruin");
     addContactShadow(g, 5.2, 3.7, 0.17);
     addBox(g, 4.2, 0.24, 2.6, mats.darkWood, 0, 0.16, 0);
     addBox(g, 3.4, 1.35, 0.24, material(0x6d4b34, 0.88, 0.01), -0.22, 0.82, -1.16);
@@ -1597,6 +1685,7 @@
           type: point.type,
           x: Number(point.x.toFixed(2)),
           z: Number(point.z.toFixed(2)),
+          rotation: Number((point.rotation || 0).toFixed(3)),
         };
       }),
       playerSpawnClear: !pointHitsMapFootprint(PLAYER_START.x, PLAYER_START.z, 1.05, ["player-start-clear", "road-clear", "micro-road-clear"]),
@@ -1709,6 +1798,53 @@
       };
     }
     return null;
+  }
+
+  function circleIntersectsUnrotatedRect(x, z, radius, rect) {
+    var minDist = radius + rect.pad;
+    var closestX = clamp(x, rect.x - rect.halfW, rect.x + rect.halfW);
+    var closestZ = clamp(z, rect.z - rect.halfD, rect.z + rect.halfD);
+    var dx = x - closestX;
+    var dz = z - closestZ;
+    return dx * dx + dz * dz < minDist * minDist;
+  }
+
+  function getRuinColliderDiagnostics() {
+    var count = 0;
+    var rotatedCount = 0;
+    var rotatedOnlyHits = 0;
+    var missedInsideSamples = 0;
+    var samplesPerRuin = 0;
+    var testRadius = 0.04;
+    for (var i = 0; i < obstacleRects.length; i++) {
+      var rect = obstacleRects[i];
+      if (rect.type !== "poi-large:ruin") continue;
+      count += 1;
+      if (Math.abs(rect.rotation || 0) > 0.001) rotatedCount += 1;
+      var inset = 0.12;
+      var samples = [
+        { x: rect.halfW - inset, z: rect.halfD - inset },
+        { x: -rect.halfW + inset, z: rect.halfD - inset },
+        { x: rect.halfW - inset, z: -rect.halfD + inset },
+        { x: -rect.halfW + inset, z: -rect.halfD + inset },
+      ];
+      samplesPerRuin += samples.length;
+      for (var j = 0; j < samples.length; j++) {
+        var world = rectLocalPointToWorld(rect, samples[j].x, samples[j].z);
+        var rotatedHit = circleIntersectsRect(world.x, world.z, testRadius, rect);
+        if (!rotatedHit) missedInsideSamples += 1;
+        if (rotatedHit && !circleIntersectsUnrotatedRect(world.x, world.z, testRadius, rect)) {
+          rotatedOnlyHits += 1;
+        }
+      }
+    }
+    return {
+      count: count,
+      rotatedCount: rotatedCount,
+      rotatedOnlyHits: rotatedOnlyHits,
+      missedInsideSamples: missedInsideSamples,
+      samplesPerRuin: samplesPerRuin,
+    };
   }
 
   function buildBuilding(x, z, w, d, h, label, wallMat, style) {
@@ -1955,8 +2091,17 @@
     state.smokePuffs = [];
     state.ambientDust = [];
     state.debris = [];
+    state.acidProjectiles = [];
+    state.acidPuddles = [];
+    state.xpOrbs = [];
+    state.level = 1;
+    state.xp = 0;
+    state.xpToNext = getXpToNextLevel(state.level);
+    state.totalXp = 0;
+    state.levelUps = 0;
     state.ammoCrates = [];
     state.ammoCrateTimer = state.mode === "playing" ? rand(7, 11) : 0;
+    state.zombieTeleports = 0;
     state.weapon = "revolver";
     state.ownedWeapons = { revolver: true, rifle: false, launcher: false };
     initAmmoState();
@@ -2097,13 +2242,15 @@
 
   function chooseZombieType() {
     var type = "walker";
+    var spitterChance = state.wave >= 8 ? ACID_SPITTER_CHANCE_LATE : ACID_SPITTER_CHANCE;
+    if (state.wave >= ACID_SPITTER_START_WAVE && rng() < spitterChance) return "spitter";
     if (state.wave >= 3 && rng() < 0.22) type = "runner";
     if (state.wave >= 5 && rng() < 0.18) type = "brute";
-    if (state.wave >= 8 && rng() < 0.12) type = "spitter";
     return type;
   }
 
-  function findZombieSpawnPoint(radius) {
+  function findZombieSpawnPoint(radius, options) {
+    var strict = options && options.strict;
     var rect = getCurrentVisibleGroundRect();
     var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
@@ -2130,19 +2277,18 @@
       }
       x = clamp(x, minX, maxX);
       z = clamp(z, minZ, maxZ);
-      if (!pointInsideEnemyBounds(x, z, radius)) continue;
-      if (!pointOutsideVisibleGround(x, z, outsidePad, rect)) continue;
-      if (pointHitsObstacle(x, z, radius + 0.16)) continue;
+      if (!isSafeZombieSpawnPoint(x, z, radius, rect, outsidePad)) continue;
       return { x: x, z: z, side: side };
     }
-    return findFallbackZombieSpawnPoint(radius, rect);
+    return findFallbackZombieSpawnPoint(radius, rect, strict);
   }
 
-  function findFallbackZombieSpawnPoint(radius, rect) {
+  function findFallbackZombieSpawnPoint(radius, rect, strict) {
     var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
     var minZ = -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxZ = ARENA_D / 2 + ENEMY_BOUNDS_EXTRA - radius;
+    var outsidePad = Math.max(radius * 0.5, 0.3);
     var candidates = [
       { x: clamp((rect.minX + rect.maxX) / 2, minX, maxX), z: minZ, side: 0 },
       { x: clamp((rect.minX + rect.maxX) / 2, minX, maxX), z: maxZ, side: 1 },
@@ -2151,8 +2297,9 @@
     ];
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
-      if (pointOutsideVisibleGround(c.x, c.z, radius * 0.5, rect) && !pointHitsObstacle(c.x, c.z, radius + 0.16)) return c;
+      if (isSafeZombieSpawnPoint(c.x, c.z, radius, rect, outsidePad)) return c;
     }
+    if (strict) return null;
     return candidates[Math.floor(rng() * candidates.length)];
   }
 
@@ -2175,27 +2322,55 @@
     return x < r.minX - p || x > r.maxX + p || z < r.minZ - p || z > r.maxZ + p;
   }
 
+  function isSafeZombieSpawnPoint(x, z, radius, visibleGround, outsidePad) {
+    return (
+      pointInsideEnemyBounds(x, z, radius) &&
+      pointOutsideVisibleGround(x, z, outsidePad || 0, visibleGround) &&
+      !pointHitsObstacle(x, z, radius + 0.16) &&
+      hasClearZombieStep(x, z, radius)
+    );
+  }
+
+  function hasClearZombieStep(x, z, radius) {
+    var step = Math.max(1.2, radius + 1.05);
+    for (var i = 0; i < 8; i++) {
+      var angle = (Math.PI * 2 * i) / 8;
+      var nx = x + Math.cos(angle) * step;
+      var nz = z + Math.sin(angle) * step;
+      if (pointInsideEnemyBounds(nx, nz, radius) && !pointHitsObstacle(nx, nz, radius + 0.08)) return true;
+    }
+    return false;
+  }
+
   function makeZombie(type) {
     var config = {
-      walker: { hp: 2, speed: 2.35, radius: 0.68, damage: 8, scale: 1, score: 100, color: mats.zombieSkin },
-      runner: { hp: 1, speed: 3.85, radius: 0.58, damage: 6, scale: 0.86, score: 140, color: mats.zombieSkinDark },
-      brute: { hp: 5, speed: 1.85, radius: 0.93, damage: 15, scale: 1.28, score: 280, color: mats.zombieSkin },
-      spitter: { hp: 3, speed: 2.15, radius: 0.72, damage: 12, scale: 1.04, score: 220, color: mats.zombieSkinDark },
+      walker: { hp: 2, speed: 2.35, radius: 0.68, damage: 8, scale: 1, score: 100, xp: 4, color: mats.zombieSkin },
+      runner: { hp: 1, speed: 3.85, radius: 0.58, damage: 6, scale: 0.86, score: 140, xp: 5, color: mats.zombieSkinDark },
+      brute: { hp: 5, speed: 1.85, radius: 0.93, damage: 15, scale: 1.28, score: 280, xp: 12, color: mats.zombieSkin },
+      spitter: { hp: 4, speed: 1.92, radius: 0.62, damage: 9, scale: 1.0, score: 320, xp: 16, color: mats.zombieAcidSkin, tall: true },
     }[type];
     var g = new THREE.Group();
     g.name = "blocky zombie " + type;
     var s = config.scale;
-    addContactShadow(g, 1.75 * s, 1.45 * s, 0.18);
-    var leftLeg = rememberBase(addBox(g, 0.62 * s, 0.58 * s, 0.54 * s, mats.zombieShirt, -0.18 * s, 0.42 * s, 0));
-    var rightLeg = rememberBase(addBox(g, 0.62 * s, 0.58 * s, 0.54 * s, mats.zombieShirt, 0.18 * s, 0.42 * s, 0));
-    var torso = rememberBase(addBox(g, 1.0 * s, 1.05 * s, 0.7 * s, mats.zombieShirt, 0, 1.15 * s, 0));
-    var leftArm = rememberBase(addBox(g, 0.35 * s, 1.0 * s, 0.35 * s, config.color, -0.74 * s, 1.22 * s, 0.22 * s));
-    var rightArm = rememberBase(addBox(g, 0.35 * s, 1.0 * s, 0.35 * s, config.color, 0.74 * s, 1.22 * s, 0.22 * s));
-    var head = rememberBase(addBox(g, 0.86 * s, 0.75 * s, 0.82 * s, config.color, 0, 2.02 * s, 0));
-    var leftEye = rememberBase(addBox(g, 0.16 * s, 0.12 * s, 0.12 * s, mats.black, -0.2 * s, 2.1 * s, 0.44 * s));
-    var rightEye = rememberBase(addBox(g, 0.16 * s, 0.12 * s, 0.12 * s, mats.black, 0.2 * s, 2.08 * s, 0.44 * s));
-    var mouth = rememberBase(addBox(g, 0.55 * s, 0.11 * s, 0.12 * s, mats.zombieBlood, 0, 1.88 * s, 0.46 * s));
-    addHealthBar(g, s);
+    var slim = config.tall ? 0.7 : 1;
+    var tallY = config.tall ? 1.28 : 1;
+    addContactShadow(g, (config.tall ? 1.34 : 1.75) * s, (config.tall ? 1.12 : 1.45) * s, 0.18);
+    var leftLeg = rememberBase(addBox(g, 0.62 * s * slim, 0.58 * s * tallY, 0.54 * s * slim, mats.zombieShirt, -0.18 * s * slim, 0.42 * s * tallY, 0));
+    var rightLeg = rememberBase(addBox(g, 0.62 * s * slim, 0.58 * s * tallY, 0.54 * s * slim, mats.zombieShirt, 0.18 * s * slim, 0.42 * s * tallY, 0));
+    var torso = rememberBase(addBox(g, 1.0 * s * slim, 1.05 * s * tallY, 0.7 * s * slim, mats.zombieShirt, 0, 1.15 * s * tallY, 0));
+    var leftArm = rememberBase(addBox(g, 0.35 * s * slim, 1.0 * s * (config.tall ? 1.38 : 1), 0.35 * s * slim, config.color, -0.74 * s * slim, 1.22 * s * tallY, 0.22 * s));
+    var rightArm = rememberBase(addBox(g, 0.35 * s * slim, 1.0 * s * (config.tall ? 1.38 : 1), 0.35 * s * slim, config.color, 0.74 * s * slim, 1.22 * s * tallY, 0.22 * s));
+    var headY = 2.02 * s * tallY + (config.tall ? 0.14 : 0);
+    var head = rememberBase(addBox(g, 0.86 * s * slim, 0.75 * s, 0.82 * s * slim, config.color, 0, headY, 0));
+    var leftEye = rememberBase(addBox(g, 0.16 * s, 0.12 * s, 0.12 * s, config.tall ? mats.acid : mats.black, -0.2 * s * slim, headY + 0.08 * s, 0.44 * s * slim));
+    var rightEye = rememberBase(addBox(g, 0.16 * s, 0.12 * s, 0.12 * s, config.tall ? mats.acid : mats.black, 0.2 * s * slim, headY + 0.06 * s, 0.44 * s * slim));
+    var mouth = rememberBase(addBox(g, 0.55 * s * slim, 0.11 * s, 0.12 * s, config.tall ? mats.acid : mats.zombieBlood, 0, headY - 0.14 * s, 0.46 * s * slim));
+    var chestGlow = null;
+    if (config.tall) {
+      chestGlow = rememberBase(addBox(g, 0.24 * s, 0.18 * s, 0.14 * s, mats.acid, 0, 1.42 * s * tallY, 0.38 * s));
+      chestGlow.userData.noDebris = true;
+    }
+    addHealthBar(g, s, config.tall ? headY + 0.62 * s : null);
     g.userData.animParts = {
       leftLeg: leftLeg,
       rightLeg: rightLeg,
@@ -2206,6 +2381,7 @@
       leftEye: leftEye,
       rightEye: rightEye,
       mouth: mouth,
+      chestGlow: chestGlow,
     };
     return {
       type: type,
@@ -2217,6 +2393,7 @@
       radius: config.radius,
       damage: config.damage,
       score: config.score,
+      xp: config.xp,
       group: g,
       attackCooldown: 0,
       hitPulse: 0,
@@ -2227,12 +2404,20 @@
       steerZ: 1,
       avoidSide: rng() < 0.5 ? -1 : 1,
       navGoal: null,
+      catchupReadyAt: 0,
+      teleportCount: 0,
+      acidCooldown: type === "spitter" ? rand(0.65, 1.35) : 0,
+      acidShots: 0,
+      spitWindup: 0,
+      spitTarget: null,
+      spitPulse: 0,
     };
   }
 
-  function addHealthBar(group, scale) {
-    var back = addBox(group, 1.25 * scale, 0.12 * scale, 0.12 * scale, mats.healthBack, 0, 2.74 * scale, 0);
-    var fill = addBox(group, 1.15 * scale, 0.14 * scale, 0.14 * scale, mats.healthRed, 0, 2.75 * scale, 0.02);
+  function addHealthBar(group, scale, y) {
+    var healthY = y || 2.74 * scale;
+    var back = addBox(group, 1.25 * scale, 0.12 * scale, 0.12 * scale, mats.healthBack, 0, healthY, 0);
+    var fill = addBox(group, 1.15 * scale, 0.14 * scale, 0.14 * scale, mats.healthRed, 0, healthY + 0.01 * scale, 0.02);
     fill.name = "health-fill";
     group.userData.healthFill = fill;
     group.userData.healthBaseWidth = 1.15 * scale;
@@ -2259,9 +2444,12 @@
 
     updateReloads(dt);
     updatePlayer(dt);
+    updateXpOrbs(dt);
     updateAmmoCrates(dt);
     updateSpawning(dt);
     updateEnemies(dt);
+    updateAcidProjectiles(dt);
+    updateAcidPuddles(dt);
     updateBullets(dt);
     updateParticles(dt);
     updateVisualEffects(dt);
@@ -2687,12 +2875,24 @@
       if ((state.ammoReserve[weapon.id] || 0) <= 0) p.cooldown = Math.max(p.cooldown, 0.16);
       return false;
     }
-    var dir = new THREE.Vector3(Math.sin(p.aimAngle), 0, Math.cos(p.aimAngle)).normalize();
+    var shot = getWeaponShotPlan(weapon, p);
+    var dir = shot.dir;
     var start = new THREE.Vector3(
       p.x + dir.x * weapon.muzzleDistance,
       weapon.muzzleY,
       p.z + dir.z * weapon.muzzleDistance
     );
+    shot.start = start;
+    if (shot.target) {
+      var tx = shot.target.x - start.x;
+      var tz = shot.target.z - start.z;
+      var travelDistance = Math.max(0.05, Math.hypot(tx, tz));
+      dir.x = tx / travelDistance;
+      dir.z = tz / travelDistance;
+      shot.travelDistance = travelDistance;
+      shot.life = travelDistance / weapon.speed;
+      shot.angle = Math.atan2(dir.x, dir.z);
+    }
     var bulletMesh = createProjectileMesh(weapon, start, p.aimAngle);
     state.shotsFired += 1;
     state.bullets.push({
@@ -2703,13 +2903,16 @@
       dirX: dir.x,
       dirZ: dir.z,
       speed: weapon.speed,
-      life: weapon.life,
-      maxLife: weapon.life,
+      life: shot.life || weapon.life,
+      maxLife: shot.life || weapon.life,
       age: 0,
       damage: weapon.damage,
       hitRadius: weapon.hitRadius,
       blastRadius: weapon.blastRadius || 0,
       blastDamage: weapon.blastDamage || 0,
+      targetX: shot.target ? shot.target.x : null,
+      targetZ: shot.target ? shot.target.z : null,
+      targetRadius: shot.target ? Math.max(0.12, weapon.hitRadius * 0.7) : 0,
       trailTimer: 0,
       mesh: bulletMesh,
     });
@@ -2736,6 +2939,29 @@
       );
     }
     return true;
+  }
+
+  function getWeaponShotPlan(weapon, player) {
+    var aimX = state.pointerWorld.x - player.x;
+    var aimZ = state.pointerWorld.z - player.z;
+    var aimDistance = Math.hypot(aimX, aimZ);
+    if (aimDistance < 0.001) {
+      aimX = Math.sin(player.aimAngle);
+      aimZ = Math.cos(player.aimAngle);
+      aimDistance = 1;
+    }
+    var dir = new THREE.Vector3(aimX / aimDistance, 0, aimZ / aimDistance);
+    if (weapon.id !== "launcher") return { dir: dir };
+
+    var maxRange = weapon.range || weapon.speed * weapon.life;
+    var targetDistance = clamp(aimDistance, weapon.muzzleDistance + 0.25, maxRange);
+    return {
+      dir: dir,
+      target: {
+        x: player.x + dir.x * targetDistance,
+        z: player.z + dir.z * targetDistance,
+      },
+    };
   }
 
   function createProjectileMesh(weapon, start, angle) {
@@ -2806,14 +3032,20 @@
 
   function updateEnemies(dt) {
     var p = state.player;
+    var visibleGround = getCurrentVisibleGroundRect();
     for (var i = state.enemies.length - 1; i >= 0; i--) {
       var e = state.enemies[i];
       e.attackCooldown = Math.max(0, e.attackCooldown - dt);
+      if (e.type === "spitter") e.acidCooldown = Math.max(0, (e.acidCooldown || 0) - dt);
       e.hitPulse = Math.max(0, e.hitPulse - dt * 5);
+      e.spitPulse = Math.max(0, (e.spitPulse || 0) - dt * 2.7);
 
       var dx = p.x - e.x;
       var dz = p.z - e.z;
       var dist = Math.max(0.001, Math.hypot(dx, dz));
+      if (maybeTeleportDistantZombie(e, p, dist, visibleGround)) {
+        continue;
+      }
       var nx = dx / dist;
       var nz = dz / dist;
       var oldX = e.x;
@@ -2849,12 +3081,31 @@
       var moveZ = 0;
       var faceX = nx;
       var faceZ = nz;
+      var spitterBusy = updateAcidSpitterAttack(e, p, dist, nx, nz, dt);
       if (dist > e.radius + p.radius + 0.18) {
-        var steer = chooseZombieDirection(e, p, nx, nz, dist, dt);
-        moveX = steer.x * e.speed;
-        moveZ = steer.z * e.speed;
-        faceX = steer.x;
-        faceZ = steer.z;
+        var steer = null;
+        if (e.type === "spitter" && dist < ACID_SPIT_MIN_RANGE) {
+          steer = chooseClearZombieDirection(e, -nx, -nz, dt);
+          moveX = steer.x * e.speed * 0.74;
+          moveZ = steer.z * e.speed * 0.74;
+          faceX = nx;
+          faceZ = nz;
+        } else if (e.type === "spitter" && dist <= ACID_SPIT_RANGE * 0.92) {
+          if (!spitterBusy) {
+            var side = e.avoidSide || 1;
+            steer = chooseClearZombieDirection(e, -nz * side, nx * side, dt);
+            moveX = steer.x * e.speed * 0.26;
+            moveZ = steer.z * e.speed * 0.26;
+          }
+          faceX = nx;
+          faceZ = nz;
+        } else {
+          steer = chooseZombieDirection(e, p, nx, nz, dist, dt);
+          moveX = steer.x * e.speed;
+          moveZ = steer.z * e.speed;
+          faceX = steer.x;
+          faceZ = steer.z;
+        }
       } else if (e.attackCooldown <= 0) {
         damagePlayer(e.damage);
         e.attackCooldown = e.type === "runner" ? 0.8 : 1.05;
@@ -2873,6 +3124,384 @@
       updateZombieVisual(e);
       updateEnemyHealthBar(e);
     }
+  }
+
+  function updateAcidSpitterAttack(enemy, player, dist, nx, nz, dt) {
+    if (enemy.type !== "spitter") return false;
+    if (enemy.spitWindup > 0) {
+      enemy.spitWindup -= dt;
+      if (enemy.spitWindup <= 0) {
+        var target = enemy.spitTarget || { x: player.x, z: player.z };
+        launchAcidSpit(enemy, target.x, target.z);
+        enemy.spitTarget = null;
+        enemy.acidCooldown = ACID_SPIT_COOLDOWN + rand(-0.38, 0.52);
+        enemy.spitPulse = 1;
+      }
+      return true;
+    }
+
+    if ((enemy.acidCooldown || 0) > 0) return false;
+    if (dist < ACID_SPIT_MIN_RANGE || dist > ACID_SPIT_RANGE) return false;
+    enemy.spitWindup = ACID_SPIT_WINDUP;
+    enemy.spitTarget = { x: player.x, z: player.z };
+    enemy.navGoal = null;
+    enemy.stuckTimer = 0;
+    enemy.steerX = nx;
+    enemy.steerZ = nz;
+    enemy.spitPulse = 0.55;
+    return true;
+  }
+
+  function launchAcidSpit(enemy, targetX, targetZ) {
+    var dx = targetX - enemy.x;
+    var dz = targetZ - enemy.z;
+    var dist = Math.max(0.001, Math.hypot(dx, dz));
+    var maxRange = ACID_SPIT_RANGE;
+    if (dist > maxRange) {
+      targetX = enemy.x + (dx / dist) * maxRange;
+      targetZ = enemy.z + (dz / dist) * maxRange;
+      dist = maxRange;
+    }
+    var dirX = (targetX - enemy.x) / Math.max(0.001, dist);
+    var dirZ = (targetZ - enemy.z) / Math.max(0.001, dist);
+    var startX = enemy.x + dirX * (enemy.radius + 0.32);
+    var startY = 2.75;
+    var startZ = enemy.z + dirZ * (enemy.radius + 0.32);
+    var travel = Math.max(0.2, Math.hypot(targetX - startX, targetZ - startZ));
+    var mesh = createAcidProjectileMesh(startX, startY, startZ, Math.atan2(dirX, dirZ));
+    state.acidProjectiles.push({
+      x: startX,
+      y: startY,
+      z: startZ,
+      dirX: (targetX - startX) / travel,
+      dirZ: (targetZ - startZ) / travel,
+      targetX: targetX,
+      targetZ: targetZ,
+      speed: ACID_SPIT_SPEED,
+      life: travel / ACID_SPIT_SPEED,
+      maxLife: travel / ACID_SPIT_SPEED,
+      age: 0,
+      dripTimer: 0,
+      mesh: mesh,
+    });
+    enemy.acidShots = (enemy.acidShots || 0) + 1;
+    addLightFlash(startX, startY, startZ, 0x93ff38, 2.4, 6, 0.16);
+    for (var i = 0; i < 8; i++) {
+      spawnParticle(startX, startY, startZ, dirX * rand(1.4, 3.2) + rand(-0.8, 0.8), rand(0.5, 1.9), dirZ * rand(1.4, 3.2) + rand(-0.8, 0.8), rand(0.18, 0.34), rand(0.06, 0.14), i % 2 ? mats.acid : mats.acidDark);
+    }
+    trimEffects(state.acidProjectiles, MAX_ACID_PROJECTILES, removeAcidProjectile);
+  }
+
+  function createAcidProjectileMesh(x, y, z, angle) {
+    var group = new THREE.Group();
+    group.position.set(x, y, z);
+    group.rotation.y = angle;
+    effectRoot.add(group);
+    var parts = [];
+    parts.push(addSlimeLobe(group, 0.34, 0.28, 0.42, mats.slimeCore, 0, 0, 0, 0.2));
+    parts.push(addSlimeLobe(group, 0.22, 0.2, 0.28, mats.slimeDark, -0.2, -0.02, -0.11, 1.4));
+    parts.push(addSlimeLobe(group, 0.18, 0.17, 0.2, mats.slimeCore, 0.22, 0.07, 0.11, 2.1));
+    parts.push(addSlimeLobe(group, 0.13, 0.12, 0.16, mats.slimeHighlight, 0.04, 0.13, 0.25, 3.2));
+    parts.push(addSlimeLobe(group, 0.12, 0.1, 0.18, mats.slimeDark, -0.04, -0.13, 0.24, 4.4));
+    group.userData.slimeParts = parts;
+    return group;
+  }
+
+  function addSlimeLobe(parent, sx, sy, sz, mat, x, y, z, phase) {
+    var mesh = new THREE.Mesh(getSharedGeometry("slime-lobe-sphere", function () {
+      return new THREE.SphereGeometry(1, 14, 10);
+    }), mat);
+    mesh.position.set(x || 0, y || 0, z || 0);
+    mesh.scale.set(sx, sy, sz);
+    mesh.castShadow = true;
+    mesh.receiveShadow = false;
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.noDebris = true;
+    mesh.userData.slimePhase = phase || 0;
+    rememberBase(mesh);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function updateAcidProjectiles(dt) {
+    for (var i = state.acidProjectiles.length - 1; i >= 0; i--) {
+      var spit = state.acidProjectiles[i];
+      spit.age += dt;
+      var toTargetX = spit.targetX - spit.x;
+      var toTargetZ = spit.targetZ - spit.z;
+      var targetDistance = Math.hypot(toTargetX, toTargetZ);
+      var step = spit.speed * dt;
+      if (targetDistance <= step + 0.18 || spit.life <= 0) {
+        spawnAcidPuddle(spit.targetX, spit.targetZ);
+        removeAcidProjectile(i);
+        continue;
+      }
+      spit.life -= dt;
+      spit.x += spit.dirX * step;
+      spit.z += spit.dirZ * step;
+      var progress = clamp(spit.age / spit.maxLife, 0, 1);
+      spit.y = 0.48 + Math.sin(progress * Math.PI) * 1.75;
+      spit.mesh.position.set(spit.x, spit.y, spit.z);
+      animateAcidProjectileMesh(spit, progress, dt);
+      spit.dripTimer -= dt;
+      if (spit.dripTimer <= 0) {
+        spit.dripTimer = 0.045;
+        spawnSlimeParticle(
+          spit.x - spit.dirX * rand(0.05, 0.32),
+          spit.y + rand(-0.08, 0.08),
+          spit.z - spit.dirZ * rand(0.05, 0.32),
+          -spit.dirX * rand(0.4, 1.4) + rand(-0.35, 0.35),
+          rand(-0.25, 0.55),
+          -spit.dirZ * rand(0.4, 1.4) + rand(-0.35, 0.35),
+          rand(0.2, 0.38),
+          rand(0.045, 0.095),
+          rng() < 0.35 ? mats.slimeHighlight : mats.acid
+        );
+      }
+    }
+  }
+
+  function animateAcidProjectileMesh(spit, progress, dt) {
+    var group = spit.mesh;
+    group.rotation.x += dt * 5.6;
+    group.rotation.z += dt * 4.4;
+    var parts = group.userData.slimeParts || [];
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      var phase = part.userData.slimePhase || 0;
+      var wobble = Math.sin(state.time * 13 + phase + progress * Math.PI * 2) * 0.12;
+      var stretch = Math.cos(state.time * 9 + phase) * 0.08;
+      scaleFromBase(part, 1 + wobble + stretch * 0.4, 1 - wobble * 0.55, 1 + stretch);
+      animateMesh(part, {
+        x: Math.sin(state.time * 10 + phase) * 0.018,
+        y: Math.cos(state.time * 11 + phase) * 0.016,
+        z: Math.sin(state.time * 8 + phase) * 0.02,
+      });
+    }
+  }
+
+  function spawnAcidPuddle(x, z) {
+    if (pointHitsObstacle(x, z, 0.4)) {
+      var safe = findNearestClearGroundPoint(x, z, 0.48);
+      x = safe.x;
+      z = safe.z;
+    }
+    var visual = createAcidPuddleVisual(x, z);
+    state.acidPuddles.push({
+      x: x,
+      z: z,
+      radius: ACID_PUDDLE_RADIUS,
+      life: ACID_PUDDLE_LIFE,
+      startLife: ACID_PUDDLE_LIFE,
+      damageTimer: 0,
+      mesh: visual.group,
+      surface: visual.surface,
+      darkPatch: visual.darkPatch,
+      ring: visual.ring,
+      foam: visual.foam,
+      bubbles: visual.bubbles,
+    });
+    addShockwave(x, z, ACID_PUDDLE_RADIUS * 0.85, 0.34, 0x9cff47);
+    addLightFlash(x, 0.8, z, 0x8dff31, 2.1, 5.5, 0.2);
+    for (var i = 0; i < 14; i++) {
+      var angle = rand(0, Math.PI * 2);
+      var speed = rand(0.9, 3.6);
+      spawnSlimeParticle(x, rand(0.2, 0.8), z, Math.cos(angle) * speed, rand(0.45, 2.2), Math.sin(angle) * speed, rand(0.22, 0.46), rand(0.05, 0.13), i % 2 ? mats.acid : mats.acidDark);
+    }
+    trimEffects(state.acidPuddles, MAX_ACID_PUDDLES, removeAcidPuddle);
+  }
+
+  function createAcidPuddleVisual(x, z) {
+    var group = new THREE.Group();
+    group.position.set(x, 0, z);
+    effectRoot.add(group);
+
+    var surface = addPuddleCircle(group, mats.acidPuddle.clone(), ACID_PUDDLE_RADIUS * rand(0.92, 1.08), ACID_PUDDLE_RADIUS * rand(0.72, 0.96), 0.09, -1, rand(0, Math.PI * 2));
+    var darkPatch = addPuddleCircle(group, mats.acidPuddleDark.clone(), ACID_PUDDLE_RADIUS * rand(0.48, 0.62), ACID_PUDDLE_RADIUS * rand(0.26, 0.42), 0.095, 0, rand(0, Math.PI * 2));
+    darkPatch.position.x = rand(-0.22, 0.22);
+    darkPatch.position.z = rand(-0.16, 0.16);
+    rememberBase(darkPatch);
+    var ring = addPuddleRing(group, ACID_PUDDLE_RADIUS * 0.68, 0.105);
+    var foam = addPuddleCircle(group, mats.acidPuddleFoam.clone(), ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, 0.11, 1, rand(0, Math.PI * 2));
+    foam.position.x = rand(-0.42, 0.42);
+    foam.position.z = rand(-0.32, 0.32);
+    rememberBase(foam);
+
+    var bubbles = [];
+    for (var i = 0; i < 7; i++) {
+      var angle = rand(0, Math.PI * 2);
+      var distance = rand(0.25, ACID_PUDDLE_RADIUS * 0.78);
+      bubbles.push(addPuddleBubble(group, Math.cos(angle) * distance, Math.sin(angle) * distance, rand(0.055, 0.13), i));
+    }
+
+    return { group: group, surface: surface, darkPatch: darkPatch, ring: ring, foam: foam, bubbles: bubbles };
+  }
+
+  function addPuddleCircle(parent, mat, sx, sz, y, renderOrder, angle) {
+    mat.opacity = mat.opacity == null ? 0.4 : mat.opacity;
+    var mesh = new THREE.Mesh(getSharedGeometry("acid-puddle-circle", function () {
+      return new THREE.CircleGeometry(1, 28);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = true;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.rotation.z = angle || 0;
+    mesh.position.y = y;
+    mesh.scale.set(sx, sz, 1);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = renderOrder || 0;
+    rememberBase(mesh);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function addPuddleRing(parent, radius, y) {
+    var mat = mats.acidPuddleFoam.clone();
+    mat.opacity = 0.46;
+    var mesh = new THREE.Mesh(getSharedGeometry("acid-puddle-ripple-ring", function () {
+      return new THREE.RingGeometry(0.78, 1, 36);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = true;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = y;
+    mesh.scale.set(radius, radius * 0.82, 1);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = 2;
+    rememberBase(mesh);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function addPuddleBubble(parent, x, z, size, index) {
+    var mesh = new THREE.Mesh(getSharedGeometry("acid-puddle-bubble-sphere", function () {
+      return new THREE.SphereGeometry(1, 9, 6);
+    }), index % 2 ? mats.slimeHighlight : mats.acid);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.noDebris = true;
+    mesh.userData.bubblePhase = rand(0, Math.PI * 2);
+    mesh.position.set(x, 0.13, z);
+    mesh.scale.set(size, size * 0.32, size);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    rememberBase(mesh);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function findNearestClearGroundPoint(x, z, radius) {
+    if (!pointHitsObstacle(x, z, radius)) return { x: x, z: z };
+    for (var ring = 1; ring <= 5; ring++) {
+      var step = ring * 0.9;
+      for (var i = 0; i < 10; i++) {
+        var angle = (Math.PI * 2 * i) / 10 + ring * 0.37;
+        var nx = x + Math.cos(angle) * step;
+        var nz = z + Math.sin(angle) * step;
+        if (!pointHitsObstacle(nx, nz, radius)) return { x: nx, z: nz };
+      }
+    }
+    return { x: x, z: z };
+  }
+
+  function updateAcidPuddles(dt) {
+    for (var i = state.acidPuddles.length - 1; i >= 0; i--) {
+      var puddle = state.acidPuddles[i];
+      puddle.life -= dt;
+      puddle.damageTimer = Math.max(0, puddle.damageTimer - dt);
+      var fade = clamp(puddle.life / puddle.startLife, 0, 1);
+      var pulse = 1 + Math.sin(state.time * 7 + i) * 0.035;
+      if (puddle.surface) {
+        puddle.surface.material.opacity = 0.4 * Math.min(1, fade * 1.55);
+        puddle.surface.rotation.z += dt * 0.08;
+        scaleFromBase(puddle.surface, pulse, 1 - (pulse - 1) * 0.55, 1);
+      }
+      if (puddle.darkPatch) {
+        puddle.darkPatch.material.opacity = 0.24 * Math.min(1, fade * 1.35);
+        puddle.darkPatch.rotation.z -= dt * 0.16;
+        scaleFromBase(puddle.darkPatch, 1 + Math.sin(state.time * 5.3 + i) * 0.08, 1 + Math.cos(state.time * 4.1 + i) * 0.06, 1);
+      }
+      if (puddle.ring) {
+        var ringPulse = 1 + ((state.time * 0.72 + i * 0.21) % 1) * 0.32;
+        puddle.ring.material.opacity = 0.36 * fade * (2 - ringPulse);
+        scaleFromBase(puddle.ring, ringPulse, ringPulse * 0.86, 1);
+      }
+      if (puddle.foam) {
+        puddle.foam.material.opacity = 0.45 * Math.min(1, fade * 1.8) * (0.78 + Math.sin(state.time * 8 + i) * 0.22);
+        puddle.foam.rotation.z += dt * 0.42;
+      }
+      var bubbles = puddle.bubbles || [];
+      for (var b = 0; b < bubbles.length; b++) {
+        var bubble = bubbles[b];
+        var phase = bubble.userData.bubblePhase || 0;
+        var bubblePulse = 0.7 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.75;
+        bubble.position.y = 0.12 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.09;
+        scaleFromBase(bubble, bubblePulse, 0.28 + bubblePulse * 0.18, bubblePulse);
+      }
+      if (state.player && puddle.damageTimer <= 0) {
+        var dist = Math.hypot(state.player.x - puddle.x, state.player.z - puddle.z);
+        if (dist <= puddle.radius + state.player.radius * 0.35) {
+          damagePlayer(ACID_PUDDLE_DAMAGE);
+          puddle.damageTimer = ACID_PUDDLE_DAMAGE_INTERVAL;
+        }
+      }
+      if (puddle.life <= 0) removeAcidPuddle(i);
+    }
+  }
+
+  function removeAcidProjectile(index) {
+    var spit = state.acidProjectiles[index];
+    if (!spit) return;
+    removeObject3D(spit.mesh);
+    state.acidProjectiles.splice(index, 1);
+  }
+
+  function removeAcidPuddle(index) {
+    var puddle = state.acidPuddles[index];
+    if (!puddle) return;
+    removeObject3D(puddle.mesh);
+    state.acidPuddles.splice(index, 1);
+  }
+
+  function maybeTeleportDistantZombie(enemy, player, dist, visibleGround) {
+    if (dist < ZOMBIE_CATCHUP_DISTANCE) return false;
+    if (state.time < (enemy.catchupReadyAt || 0)) return false;
+    if (!pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + ZOMBIE_CATCHUP_VISIBLE_PAD, visibleGround)) return false;
+
+    var spawn = findZombieSpawnPoint(enemy.radius, { strict: true });
+    if (!spawn) {
+      enemy.catchupReadyAt = state.time + ZOMBIE_CATCHUP_COOLDOWN;
+      return false;
+    }
+    var newDist = Math.hypot(player.x - spawn.x, player.z - spawn.z);
+    if (newDist > dist - 8) {
+      enemy.catchupReadyAt = state.time + ZOMBIE_CATCHUP_COOLDOWN;
+      return false;
+    }
+
+    enemy.x = spawn.x;
+    enemy.z = spawn.z;
+    enemy.spawnSide = spawn.side;
+    enemy.navGoal = null;
+    enemy.stuckTimer = 0;
+    enemy.attackCooldown = Math.max(enemy.attackCooldown, 0.25);
+    enemy.catchupReadyAt = state.time + ZOMBIE_CATCHUP_COOLDOWN;
+    enemy.teleportCount = (enemy.teleportCount || 0) + 1;
+    enemy.avoidSide = rng() < 0.5 ? -1 : 1;
+
+    var dx = player.x - enemy.x;
+    var dz = player.z - enemy.z;
+    var len = Math.max(0.001, Math.hypot(dx, dz));
+    enemy.steerX = dx / len;
+    enemy.steerZ = dz / len;
+    enemy.group.position.set(enemy.x, 0, enemy.z);
+    enemy.group.rotation.y = Math.atan2(enemy.steerX, enemy.steerZ);
+    enemy.group.scale.setScalar(1 + enemy.hitPulse * 0.08);
+
+    state.zombieTeleports += 1;
+    addSpawnDust(enemy.x, enemy.z);
+    return true;
   }
 
   function chooseZombieDirection(enemy, player, nx, nz, dist, dt) {
@@ -3047,17 +3676,32 @@
     var stride = Math.sin(enemy.walkPhase);
     var counterStride = Math.sin(enemy.walkPhase + Math.PI);
     var lurch = Math.sin(enemy.walkPhase * 0.5 + enemy.radius) * 0.08 * intensity;
+    var spit = 0;
+    if (enemy.type === "spitter") {
+      if (enemy.spitWindup > 0) {
+        var windupProgress = 1 - clamp(enemy.spitWindup / ACID_SPIT_WINDUP, 0, 1);
+        spit = 0.25 + Math.sin(windupProgress * Math.PI) * 0.75;
+      } else {
+        spit = enemy.spitPulse || 0;
+      }
+    }
     enemy.group.position.y = Math.abs(Math.sin(enemy.walkPhase * 2)) * 0.055 * intensity;
     enemy.group.rotation.z = lurch + enemy.hitPulse * 0.04;
     animateMesh(parts.leftLeg, { rx: stride * 0.34 * intensity, z: -Math.abs(stride) * 0.05 * intensity });
     animateMesh(parts.rightLeg, { rx: counterStride * 0.34 * intensity, z: -Math.abs(counterStride) * 0.05 * intensity });
-    animateMesh(parts.leftArm, { rx: -0.55 + counterStride * 0.22 * intensity, rz: -0.12 + stride * 0.12 * intensity });
-    animateMesh(parts.rightArm, { rx: -0.55 + stride * 0.22 * intensity, rz: 0.12 + counterStride * 0.12 * intensity });
-    animateMesh(parts.torso, { rx: -0.08 * intensity, rz: lurch * 0.7 });
-    animateMesh(parts.head, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity, rz: -lurch * 1.6 });
-    animateMesh(parts.leftEye, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity, rz: -lurch * 1.6 });
-    animateMesh(parts.rightEye, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity, rz: -lurch * 1.6 });
-    animateMesh(parts.mouth, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity, rz: -lurch * 1.6 });
+    animateMesh(parts.leftArm, { rx: -0.55 - spit * 0.58 + counterStride * 0.22 * intensity, rz: -0.12 - spit * 0.22 + stride * 0.12 * intensity, z: spit * 0.12 });
+    animateMesh(parts.rightArm, { rx: -0.55 - spit * 0.58 + stride * 0.22 * intensity, rz: 0.12 + spit * 0.22 + counterStride * 0.12 * intensity, z: spit * 0.12 });
+    animateMesh(parts.torso, { rx: -0.08 * intensity - spit * 0.24, rz: lurch * 0.7, z: spit * 0.08 });
+    animateMesh(parts.head, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity + spit * 0.34, rz: -lurch * 1.6, z: spit * 0.18 });
+    animateMesh(parts.leftEye, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity + spit * 0.34, rz: -lurch * 1.6, z: spit * 0.18 });
+    animateMesh(parts.rightEye, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity + spit * 0.34, rz: -lurch * 1.6, z: spit * 0.18 });
+    animateMesh(parts.mouth, { rx: 0.08 + Math.sin(enemy.walkPhase * 1.4) * 0.08 * intensity + spit * 0.46, rz: -lurch * 1.6, z: spit * 0.27 });
+    if (enemy.type === "spitter") {
+      scaleFromBase(parts.mouth, 1 + spit * 0.65, 1 + spit * 0.45, 1 + spit * 0.8);
+      scaleFromBase(parts.leftEye, 1 + spit * 0.28, 1 + spit * 0.28, 1 + spit * 0.28);
+      scaleFromBase(parts.rightEye, 1 + spit * 0.28, 1 + spit * 0.28, 1 + spit * 0.28);
+      scaleFromBase(parts.chestGlow, 1 + spit * 0.7, 1 + spit * 0.7, 1 + spit * 1.1);
+    }
   }
 
   function damagePlayer(amount) {
@@ -3077,9 +3721,26 @@
     for (var i = state.bullets.length - 1; i >= 0; i--) {
       var b = state.bullets[i];
       b.age += dt;
-      b.life -= dt;
-      b.x += b.dirX * b.speed * dt;
-      b.z += b.dirZ * b.speed * dt;
+      if (b.targetX != null && b.targetZ != null) {
+        var toTargetX = b.targetX - b.x;
+        var toTargetZ = b.targetZ - b.z;
+        var targetDistance = Math.hypot(toTargetX, toTargetZ);
+        var step = b.speed * dt;
+        if (targetDistance <= step + (b.targetRadius || 0)) {
+          b.x = b.targetX;
+          b.z = b.targetZ;
+          b.life = 0;
+          b.age = b.maxLife;
+        } else {
+          b.life -= dt;
+          b.x += b.dirX * step;
+          b.z += b.dirZ * step;
+        }
+      } else {
+        b.life -= dt;
+        b.x += b.dirX * b.speed * dt;
+        b.z += b.dirZ * b.speed * dt;
+      }
       if (b.type === "launcher") {
         var progress = clamp(b.age / b.maxLife, 0, 1);
         b.y = 0.68 + Math.sin(progress * Math.PI) * 1.15;
@@ -3149,6 +3810,7 @@
     removeObject3D(enemy.group);
     state.score += enemy.score;
     state.kills += 1;
+    spawnXpOrb(enemy.x, enemy.z, enemy.xp || 1);
     addScorchMark(enemy.x, enemy.z, 0.9);
     addGoldBurst(enemy.x, enemy.z, enemy.score);
     for (var i = 0; i < 18; i++) {
@@ -3314,6 +3976,13 @@
     state.debris.splice(index, 1);
   }
 
+  function removeXpOrb(index) {
+    var orb = state.xpOrbs[index];
+    if (!orb) return;
+    removeObject3D(orb.mesh);
+    state.xpOrbs.splice(index, 1);
+  }
+
   function trimEffects(array, maxCount, remover) {
     while (array.length > maxCount) remover(0);
   }
@@ -3335,7 +4004,7 @@
     pointerDown = false;
     resetTouchControls();
     setPanel(gameOverPanel, true);
-    gameOverStats.textContent = "Wave " + state.wave + " - Score " + state.score + " - Zombies " + state.kills;
+    gameOverStats.textContent = "Wave " + state.wave + " - Level " + state.level + " - Score " + state.score + " - Zombies " + state.kills;
     updateHud();
   }
 
@@ -3355,6 +4024,159 @@
       mesh: mesh,
     });
     trimEffects(state.particles, MAX_PARTICLES, removeParticle);
+  }
+
+  function spawnSlimeParticle(x, y, z, vx, vy, vz, life, size, mat) {
+    var mesh = new THREE.Mesh(getSharedGeometry("slime-particle-sphere", function () {
+      return new THREE.SphereGeometry(1, 9, 6);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.position.set(x, y, z);
+    mesh.scale.setScalar(size);
+    effectRoot.add(mesh);
+    state.particles.push({
+      x: x,
+      y: y,
+      z: z,
+      vx: vx,
+      vy: vy,
+      vz: vz,
+      life: life,
+      startLife: life,
+      startScale: size,
+      mesh: mesh,
+    });
+    trimEffects(state.particles, MAX_PARTICLES, removeParticle);
+  }
+
+  function spawnXpOrb(x, z, value) {
+    var amount = Math.max(1, Math.round(Number(value) || 1));
+    var coreScale = amount >= 12 ? 0.31 : 0.24;
+    var glintScale = amount >= 12 ? 0.14 : 0.105;
+    var group = new THREE.Group();
+    group.position.set(x + rand(-0.2, 0.2), 0.5, z + rand(-0.2, 0.2));
+    effectRoot.add(group);
+    var core = new THREE.Mesh(getSharedGeometry("xp-orb-core", function () {
+      return new THREE.OctahedronGeometry(1, 0);
+    }), mats.xp);
+    core.userData.disposeGeometry = false;
+    core.scale.setScalar(coreScale);
+    core.castShadow = false;
+    core.receiveShadow = false;
+    rememberBase(core);
+    group.add(core);
+    var glint = new THREE.Mesh(getSharedGeometry("xp-orb-glint", function () {
+      return new THREE.OctahedronGeometry(1, 0);
+    }), mats.xpLight);
+    glint.userData.disposeGeometry = false;
+    glint.scale.setScalar(glintScale);
+    glint.position.set(0.08, 0.11, 0.07);
+    glint.castShadow = false;
+    glint.receiveShadow = false;
+    rememberBase(glint);
+    group.add(glint);
+    state.xpOrbs.push({
+      x: group.position.x,
+      y: group.position.y,
+      z: group.position.z,
+      vx: rand(-0.8, 0.8),
+      vz: rand(-0.8, 0.8),
+      value: amount,
+      age: 0,
+      phase: rand(0, Math.PI * 2),
+      mesh: group,
+      core: core,
+      glint: glint,
+      visualScale: coreScale,
+    });
+    trimEffects(state.xpOrbs, MAX_XP_ORBS, removeXpOrb);
+  }
+
+  function updateXpOrbs(dt) {
+    if (!state.player) return;
+    for (var i = state.xpOrbs.length - 1; i >= 0; i--) {
+      var orb = state.xpOrbs[i];
+      orb.age += dt;
+      var dx = state.player.x - orb.x;
+      var dz = state.player.z - orb.z;
+      var dist = Math.hypot(dx, dz);
+      if (dist <= XP_PICKUP_RADIUS) {
+        collectXpOrb(i);
+        continue;
+      }
+      if (dist <= XP_ATTRACT_RADIUS) {
+        var pull = 1 - dist / XP_ATTRACT_RADIUS;
+        var speed = XP_ORB_SPEED * (0.45 + pull * 1.8);
+        var len = Math.max(0.001, dist);
+        orb.vx += (dx / len) * speed * dt * 5.2;
+        orb.vz += (dz / len) * speed * dt * 5.2;
+      } else {
+        orb.vx *= Math.max(0, 1 - dt * 1.8);
+        orb.vz *= Math.max(0, 1 - dt * 1.8);
+      }
+      var maxSpeed = XP_ORB_SPEED * 1.7;
+      var moveSpeed = Math.hypot(orb.vx, orb.vz);
+      if (moveSpeed > maxSpeed) {
+        orb.vx = (orb.vx / moveSpeed) * maxSpeed;
+        orb.vz = (orb.vz / moveSpeed) * maxSpeed;
+      }
+      orb.x += orb.vx * dt;
+      orb.z += orb.vz * dt;
+      orb.y = 0.5 + Math.sin(orb.age * 5.5 + orb.phase) * 0.1;
+      orb.mesh.position.set(orb.x, orb.y, orb.z);
+      orb.mesh.rotation.y += dt * 2.6;
+      orb.mesh.rotation.z += dt * 1.4;
+      var pulse = 1 + Math.sin(orb.age * 8 + orb.phase) * 0.08;
+      scaleFromBase(orb.core, pulse, pulse, pulse);
+      scaleFromBase(orb.glint, 1.1 - pulse * 0.12, 1.1 - pulse * 0.12, 1.1 - pulse * 0.12);
+    }
+  }
+
+  function collectXpOrb(index) {
+    var orb = state.xpOrbs[index];
+    if (!orb) return;
+    addXp(orb.value, orb.x, orb.z);
+    removeXpOrb(index);
+  }
+
+  function addXp(amount, x, z) {
+    var gained = Math.max(0, Math.round(Number(amount) || 0));
+    if (!gained) return;
+    state.xp += gained;
+    state.totalXp += gained;
+    var leveled = false;
+    while (state.xp >= state.xpToNext) {
+      state.xp -= state.xpToNext;
+      state.level += 1;
+      state.levelUps += 1;
+      state.xpToNext = getXpToNextLevel(state.level);
+      leveled = true;
+    }
+    if (leveled) addLevelUpBurst(x, z);
+    updateHud();
+  }
+
+  function getXpToNextLevel(level) {
+    var lvl = Math.max(1, Math.floor(Number(level) || 1));
+    return Math.floor(18 + lvl * 9 + Math.pow(lvl, 1.35) * 4);
+  }
+
+  function addLevelUpBurst(x, z) {
+    var px = x;
+    var pz = z;
+    if (state.player) {
+      px = state.player.x;
+      pz = state.player.z;
+    }
+    addShockwave(px, pz, 2.65, 0.42, 0x87eaff);
+    addLightFlash(px, 1.4, pz, 0x9dfcff, 3.1, 7, 0.24);
+    for (var i = 0; i < 20; i++) {
+      var angle = rand(0, Math.PI * 2);
+      var speed = rand(1.4, 4.8);
+      spawnSlimeParticle(px, rand(0.7, 1.8), pz, Math.cos(angle) * speed, rand(1.4, 4.6), Math.sin(angle) * speed, rand(0.28, 0.5), rand(0.04, 0.1), i % 2 ? mats.xp : mats.xpLight);
+    }
   }
 
   function createAmbientDust() {
@@ -3752,6 +4574,11 @@
     hudWave.textContent = String(state.wave);
     hudScore.textContent = String(state.score);
     hudKills.textContent = String(state.kills);
+    if (hudLevel) hudLevel.textContent = String(state.level);
+    if (hudXpFill) {
+      var xpRatio = state.xpToNext > 0 ? clamp(state.xp / state.xpToNext, 0, 1) : 0;
+      hudXpFill.style.transform = "scaleX(" + xpRatio.toFixed(3) + ")";
+    }
     if (hudWeapon) hudWeapon.textContent = (WEAPONS[state.weapon] || WEAPONS.revolver).label;
     updateAmmoHud();
     weaponButtons.forEach(function (button) {
@@ -4148,6 +4975,12 @@
     );
   }
 
+  function scaleFromBase(mesh, sx, sy, sz) {
+    if (!mesh || !mesh.userData.baseScale) return;
+    var bs = mesh.userData.baseScale;
+    mesh.scale.set(bs.x * sx, bs.y * sy, bs.z * sz);
+  }
+
   function animateWeaponMeshes(group, kick, intensity, armPose) {
     var rig = group.userData.weaponRig;
     if (!rig) return;
@@ -4295,14 +5128,69 @@
   }
 
   function addObstacle(x, z, w, d, pad, type) {
+    addObstacleRect(x, z, w, d, pad, type, 0);
+  }
+
+  function addRotatedObstacle(x, z, w, d, pad, rotation, type) {
+    addObstacleRect(x, z, w, d, pad, type, rotation);
+  }
+
+  function addObstacleRect(x, z, w, d, pad, type, rotation) {
+    var angle = Number(rotation) || 0;
+    var obstacleType = type || "obstacle";
     obstacleRects.push({
       x: x,
       z: z,
       halfW: w / 2,
       halfD: d / 2,
       pad: pad || 0,
+      rotation: angle,
+      type: obstacleType,
     });
-    registerMapFootprint(type || "obstacle", x, z, w, d, pad || 0, true);
+    var bounds = getRotatedRectBounds(w, d, angle);
+    registerMapFootprint(obstacleType, x, z, bounds.w, bounds.d, pad || 0, true);
+  }
+
+  function getRotatedRectBounds(w, d, rotation) {
+    var angle = Number(rotation) || 0;
+    var c = Math.abs(Math.cos(angle));
+    var s = Math.abs(Math.sin(angle));
+    return {
+      w: w * c + d * s,
+      d: w * s + d * c,
+    };
+  }
+
+  function worldToRectLocal(x, z, rect) {
+    var angle = rect.rotation || 0;
+    var dx = x - rect.x;
+    var dz = z - rect.z;
+    if (!angle) return { x: dx, z: dz };
+    var c = Math.cos(angle);
+    var s = Math.sin(angle);
+    return {
+      x: dx * c - dz * s,
+      z: dx * s + dz * c,
+    };
+  }
+
+  function rectLocalDeltaToWorld(x, z, rotation) {
+    var angle = rotation || 0;
+    if (!angle) return { x: x, z: z };
+    var c = Math.cos(angle);
+    var s = Math.sin(angle);
+    return {
+      x: x * c + z * s,
+      z: -x * s + z * c,
+    };
+  }
+
+  function rectLocalPointToWorld(rect, x, z) {
+    var delta = rectLocalDeltaToWorld(x, z, rect.rotation || 0);
+    return {
+      x: rect.x + delta.x,
+      z: rect.z + delta.z,
+    };
   }
 
   function resolveMoverPosition(mover, radius, boundsExtra) {
@@ -4318,30 +5206,36 @@
 
   function pushCircleOutOfRect(circle, rect, radius) {
     var minDist = radius + rect.pad;
-    var closestX = clamp(circle.x, rect.x - rect.halfW, rect.x + rect.halfW);
-    var closestZ = clamp(circle.z, rect.z - rect.halfD, rect.z + rect.halfD);
-    var dx = circle.x - closestX;
-    var dz = circle.z - closestZ;
+    var local = worldToRectLocal(circle.x, circle.z, rect);
+    var closestX = clamp(local.x, -rect.halfW, rect.halfW);
+    var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
+    var dx = local.x - closestX;
+    var dz = local.z - closestZ;
     var distSq = dx * dx + dz * dz;
     if (distSq >= minDist * minDist) return;
 
+    var pushX = 0;
+    var pushZ = 0;
     if (distSq > 0.000001) {
       var dist = Math.sqrt(distSq);
       var push = minDist - dist;
-      circle.x += (dx / dist) * push;
-      circle.z += (dz / dist) * push;
-      return;
+      pushX = (dx / dist) * push;
+      pushZ = (dz / dist) * push;
+    } else {
+      var left = Math.abs(local.x + rect.halfW);
+      var right = Math.abs(rect.halfW - local.x);
+      var top = Math.abs(local.z + rect.halfD);
+      var bottom = Math.abs(rect.halfD - local.z);
+      var minEdge = Math.min(left, right, top, bottom);
+      if (minEdge === left) pushX = -rect.halfW - minDist - local.x;
+      else if (minEdge === right) pushX = rect.halfW + minDist - local.x;
+      else if (minEdge === top) pushZ = -rect.halfD - minDist - local.z;
+      else pushZ = rect.halfD + minDist - local.z;
     }
 
-    var left = Math.abs(circle.x - (rect.x - rect.halfW));
-    var right = Math.abs(rect.x + rect.halfW - circle.x);
-    var top = Math.abs(circle.z - (rect.z - rect.halfD));
-    var bottom = Math.abs(rect.z + rect.halfD - circle.z);
-    var minEdge = Math.min(left, right, top, bottom);
-    if (minEdge === left) circle.x = rect.x - rect.halfW - minDist;
-    else if (minEdge === right) circle.x = rect.x + rect.halfW + minDist;
-    else if (minEdge === top) circle.z = rect.z - rect.halfD - minDist;
-    else circle.z = rect.z + rect.halfD + minDist;
+    var worldPush = rectLocalDeltaToWorld(pushX, pushZ, rect.rotation || 0);
+    circle.x += worldPush.x;
+    circle.z += worldPush.z;
   }
 
   function pointHitsObstacle(x, z, radius) {
@@ -4353,10 +5247,11 @@
 
   function circleIntersectsRect(x, z, radius, rect) {
     var minDist = radius + rect.pad;
-    var closestX = clamp(x, rect.x - rect.halfW, rect.x + rect.halfW);
-    var closestZ = clamp(z, rect.z - rect.halfD, rect.z + rect.halfD);
-    var dx = x - closestX;
-    var dz = z - closestZ;
+    var local = worldToRectLocal(x, z, rect);
+    var closestX = clamp(local.x, -rect.halfW, rect.halfW);
+    var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
+    var dx = local.x - closestX;
+    var dz = local.z - closestZ;
     return dx * dx + dz * dz < minDist * minDist;
   }
 
@@ -4373,10 +5268,11 @@
     var best = 3;
     for (var i = 0; i < obstacleRects.length; i++) {
       var rect = obstacleRects[i];
-      var closestX = clamp(x, rect.x - rect.halfW, rect.x + rect.halfW);
-      var closestZ = clamp(z, rect.z - rect.halfD, rect.z + rect.halfD);
-      var dx = x - closestX;
-      var dz = z - closestZ;
+      var local = worldToRectLocal(x, z, rect);
+      var closestX = clamp(local.x, -rect.halfW, rect.halfW);
+      var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
+      var dx = local.x - closestX;
+      var dz = local.z - closestZ;
       var clearance = Math.sqrt(dx * dx + dz * dz) - (radius + rect.pad);
       best = Math.min(best, clearance);
     }
@@ -4399,20 +5295,22 @@
   }
 
   function segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius) {
-    var minX = rect.x - rect.halfW - rect.pad - radius;
-    var maxX = rect.x + rect.halfW + rect.pad + radius;
-    var minZ = rect.z - rect.halfD - rect.pad - radius;
-    var maxZ = rect.z + rect.halfD + rect.pad + radius;
-    var dx = x2 - x1;
-    var dz = z2 - z1;
+    var start = worldToRectLocal(x1, z1, rect);
+    var end = worldToRectLocal(x2, z2, rect);
+    var minX = -rect.halfW - rect.pad - radius;
+    var maxX = rect.halfW + rect.pad + radius;
+    var minZ = -rect.halfD - rect.pad - radius;
+    var maxZ = rect.halfD + rect.pad + radius;
+    var dx = end.x - start.x;
+    var dz = end.z - start.z;
     var tMin = 0;
     var tMax = 1;
 
     if (Math.abs(dx) < 0.000001) {
-      if (x1 < minX || x1 > maxX) return null;
+      if (start.x < minX || start.x > maxX) return null;
     } else {
-      var tx1 = (minX - x1) / dx;
-      var tx2 = (maxX - x1) / dx;
+      var tx1 = (minX - start.x) / dx;
+      var tx2 = (maxX - start.x) / dx;
       if (tx1 > tx2) {
         var txSwap = tx1;
         tx1 = tx2;
@@ -4424,10 +5322,10 @@
     }
 
     if (Math.abs(dz) < 0.000001) {
-      if (z1 < minZ || z1 > maxZ) return null;
+      if (start.z < minZ || start.z > maxZ) return null;
     } else {
-      var tz1 = (minZ - z1) / dz;
-      var tz2 = (maxZ - z1) / dz;
+      var tz1 = (minZ - start.z) / dz;
+      var tz2 = (maxZ - start.z) / dz;
       if (tz1 > tz2) {
         var tzSwap = tz1;
         tz1 = tz2;
@@ -4483,19 +5381,17 @@
 
   function chooseMainTownCenters(target) {
     var candidates = createMainTownCandidates();
-    var chosen = chooseFarthestTownPair(candidates);
+    if (target <= 2) {
+      var pair = chooseFarthestTownPair(candidates);
+      if (pair.length) return pair.slice(0, target);
+    }
+
+    var chosen = chooseRandomSpreadTownSeed(candidates);
     if (!chosen.length) chosen.push(createMainTownCenter());
     while (chosen.length < target) {
-      var best = null;
-      for (var i = 0; i < candidates.length; i++) {
-        var center = candidates[i];
-        if (!isTownCenterFarEnough(center, chosen.map(function (point, index) { return { center: point, index: index }; }))) continue;
-        if (townCenterAlreadyChosen(center, chosen)) continue;
-        var score = getTownPlacementScore(center, chosen.map(function (point, index) { return { center: point, index: index }; }));
-        if (!best || score > best.score) best = { center: center, score: score };
-      }
-      if (best) {
-        chosen.push(best.center);
+      var next = chooseWeightedSpreadTownCenter(candidates, chosen, target);
+      if (next) {
+        chosen.push(next);
       } else {
         var fallback = findFallbackTownCenter(chosen);
         if (!fallback) break;
@@ -4520,6 +5416,64 @@
     ];
     for (var i = 0; i < 180; i++) candidates.push(createMainTownCenter());
     return candidates;
+  }
+
+  function townRefsFromCenters(chosen) {
+    return chosen.map(function (point, index) {
+      return { center: point, index: index };
+    });
+  }
+
+  function chooseRandomSpreadTownSeed(candidates) {
+    if (!candidates.length) return [];
+    var start = candidates[Math.floor(mapRng() * candidates.length)];
+    return start ? [start] : [];
+  }
+
+  function chooseWeightedSpreadTownCenter(candidates, chosen, target) {
+    var towns = townRefsFromCenters(chosen);
+    var scored = scoreTownCandidates(candidates, chosen, towns);
+    if (!scored.length) return null;
+
+    var bestScore = scored[0].score;
+    for (var i = 1; i < scored.length; i++) bestScore = Math.max(bestScore, scored[i].score);
+    var keepRatio = target >= 5 ? 0.48 : target === 4 ? 0.54 : 0.62;
+    var threshold = bestScore * keepRatio;
+    var pool = scored.filter(function (entry) {
+      return entry.score >= threshold;
+    });
+    if (!pool.length) pool = scored;
+    return pickWeightedTownCandidate(pool);
+  }
+
+  function scoreTownCandidates(candidates, chosen, towns) {
+    var scored = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var center = candidates[i];
+      if (!isTownCenterFarEnough(center, towns)) continue;
+      if (townCenterAlreadyChosen(center, chosen)) continue;
+      scored.push({
+        center: center,
+        score: getTownPlacementScore(center, towns),
+      });
+    }
+    return scored;
+  }
+
+  function pickWeightedTownCandidate(scored) {
+    var minScore = Infinity;
+    for (var i = 0; i < scored.length; i++) minScore = Math.min(minScore, scored[i].score);
+    var total = 0;
+    for (var j = 0; j < scored.length; j++) {
+      scored[j].weight = Math.pow(Math.max(1, scored[j].score - minScore + 24), 1.35);
+      total += scored[j].weight;
+    }
+    var roll = mapRng() * total;
+    for (var k = 0; k < scored.length; k++) {
+      roll -= scored[k].weight;
+      if (roll <= 0) return scored[k].center;
+    }
+    return scored[scored.length - 1].center;
   }
 
   function chooseFarthestTownPair(candidates) {
@@ -4871,6 +5825,15 @@
         },
       },
       weapon: state.weapon,
+      progression: {
+        level: state.level,
+        xp: state.xp,
+        xpToNext: state.xpToNext,
+        totalXp: state.totalXp,
+        levelUps: state.levelUps,
+        xpOrbs: state.xpOrbs.length,
+        xpProgress: Number((state.xpToNext > 0 ? state.xp / state.xpToNext : 0).toFixed(3)),
+      },
       ownedWeapons: Object.keys(state.ownedWeapons).filter(function (id) {
         return state.ownedWeapons[id];
       }),
@@ -4902,7 +5865,17 @@
           z: Number(crate.z.toFixed(2)),
         };
       }),
+      xpOrbs: state.xpOrbs.slice(0, 8).map(function (orb) {
+        return {
+          x: Number(orb.x.toFixed(2)),
+          z: Number(orb.z.toFixed(2)),
+          value: orb.value,
+          visualScale: Number((orb.visualScale || 0).toFixed(2)),
+          distance: state.player ? Number(Math.hypot(orb.x - state.player.x, orb.z - state.player.z).toFixed(2)) : null,
+        };
+      }),
       enemyCount: state.enemies.length,
+      zombieTeleports: state.zombieTeleports,
       player: p
         ? {
             x: Number(p.x.toFixed(2)),
@@ -4936,6 +5909,8 @@
         fireActive: touchFire.active,
       },
       bullets: state.bullets.length,
+      acidProjectiles: state.acidProjectiles.length,
+      acidPuddles: state.acidPuddles.length,
       effects: {
         particles: state.particles.length,
         smoke: state.smokePuffs.length,
@@ -4957,7 +5932,28 @@
           type: b.type,
           x: Number(b.x.toFixed(2)),
           z: Number(b.z.toFixed(2)),
+          targetX: b.targetX == null ? null : Number(b.targetX.toFixed(2)),
+          targetZ: b.targetZ == null ? null : Number(b.targetZ.toFixed(2)),
           life: Number(b.life.toFixed(2)),
+        };
+      }),
+      acidShots: state.acidProjectiles.slice(0, 6).map(function (spit) {
+        return {
+          x: Number(spit.x.toFixed(2)),
+          z: Number(spit.z.toFixed(2)),
+          targetX: Number(spit.targetX.toFixed(2)),
+          targetZ: Number(spit.targetZ.toFixed(2)),
+          visualParts: spit.mesh && spit.mesh.userData.slimeParts ? spit.mesh.userData.slimeParts.length : 0,
+          life: Number(spit.life.toFixed(2)),
+        };
+      }),
+      acidPools: state.acidPuddles.slice(0, 6).map(function (puddle) {
+        return {
+          x: Number(puddle.x.toFixed(2)),
+          z: Number(puddle.z.toFixed(2)),
+          radius: Number(puddle.radius.toFixed(2)),
+          visualParts: 1 + (puddle.darkPatch ? 1 : 0) + (puddle.ring ? 1 : 0) + (puddle.foam ? 1 : 0) + (puddle.bubbles ? puddle.bubbles.length : 0),
+          life: Number(puddle.life.toFixed(2)),
         };
       }),
       enemies: state.enemies.slice(0, 12).map(function (e) {
@@ -4966,8 +5962,16 @@
           x: Number(e.x.toFixed(2)),
           z: Number(e.z.toFixed(2)),
           hp: Number(e.hp.toFixed(1)),
+          xp: e.xp || 0,
           spawnSide: e.spawnSide === undefined ? null : e.spawnSide,
           outsideView: pointOutsideVisibleGround(e.x, e.z, e.radius + 0.2, visibleGround),
+          insideEnemyBounds: pointInsideEnemyBounds(e.x, e.z, e.radius),
+          blocked: pointHitsObstacle(e.x, e.z, e.radius + 0.16),
+          hasClearStep: hasClearZombieStep(e.x, e.z, e.radius),
+          teleports: e.teleportCount || 0,
+          acidShots: e.acidShots || 0,
+          spitWindup: Number((e.spitWindup || 0).toFixed(2)),
+          spitPulse: Number((e.spitPulse || 0).toFixed(2)),
           stuck: Number(e.stuckTimer.toFixed(2)),
           navigating: !!e.navGoal,
           navX: e.navGoal ? Number(e.navGoal.x.toFixed(2)) : null,
@@ -5004,6 +6008,26 @@
       updateHud();
       return true;
     },
+    clearAcidHazards: function () {
+      for (var i = state.acidProjectiles.length - 1; i >= 0; i--) {
+        removeAcidProjectile(i);
+      }
+      for (var j = state.acidPuddles.length - 1; j >= 0; j--) {
+        removeAcidPuddle(j);
+      }
+      return true;
+    },
+    sampleZombieTypes: function (wave, count) {
+      var previousWave = state.wave;
+      var result = {};
+      state.wave = Math.max(1, Math.floor(Number(wave) || 1));
+      for (var i = 0; i < Math.max(0, Math.floor(Number(count) || 0)); i++) {
+        var type = chooseZombieType();
+        result[type] = (result[type] || 0) + 1;
+      }
+      state.wave = previousWave;
+      return result;
+    },
     spawnZombieNow: function () {
       spawnZombie();
       var enemy = state.enemies[state.enemies.length - 1];
@@ -5017,6 +6041,7 @@
         outsideView: pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + 0.2, visible),
         insideEnemyBounds: pointInsideEnemyBounds(enemy.x, enemy.z, enemy.radius),
         blocked: pointHitsObstacle(enemy.x, enemy.z, enemy.radius + 0.16),
+        hasClearStep: hasClearZombieStep(enemy.x, enemy.z, enemy.radius),
         visibleGround: {
           minX: Number(visible.minX.toFixed(2)),
           maxX: Number(visible.maxX.toFixed(2)),
@@ -5060,8 +6085,49 @@
         cameraZ: Number(cameraTarget.z.toFixed(2)),
       };
     },
+    setAimTarget: function (x, z) {
+      if (!state.player) return null;
+      state.pointerWorld.x = Number(x) || 0;
+      state.pointerWorld.z = Number(z) || 0;
+      updateAim();
+      render();
+      return {
+        x: Number(state.pointerWorld.x.toFixed(2)),
+        z: Number(state.pointerWorld.z.toFixed(2)),
+        angle: Number(state.player.aimAngle.toFixed(3)),
+      };
+    },
+    shootOnce: function () {
+      if (!state.player) return false;
+      state.player.cooldown = 0;
+      var fired = shoot();
+      updateHud();
+      return fired;
+    },
+    readyNearestSpitter: function () {
+      if (!state.player) return null;
+      var best = null;
+      var bestDist = Infinity;
+      for (var i = 0; i < state.enemies.length; i++) {
+        var enemy = state.enemies[i];
+        if (enemy.type !== "spitter") continue;
+        var dist = Math.hypot(enemy.x - state.player.x, enemy.z - state.player.z);
+        if (dist < bestDist) {
+          best = enemy;
+          bestDist = dist;
+        }
+      }
+      if (!best) return null;
+      best.acidCooldown = 0;
+      best.spitWindup = 0;
+      best.spitTarget = null;
+      return { x: Number(best.x.toFixed(2)), z: Number(best.z.toFixed(2)), distance: Number(bestDist.toFixed(2)) };
+    },
     validateMapLayout: function () {
       return validateMapLayout();
+    },
+    getRuinColliderDiagnostics: function () {
+      return getRuinColliderDiagnostics();
     },
     spawnZombieAt: function (type, x, z) {
       var id = { walker: true, runner: true, brute: true, spitter: true }[type] ? type : "walker";

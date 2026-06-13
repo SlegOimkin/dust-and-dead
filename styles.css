@@ -85,12 +85,21 @@ canvas {
   align-items: center;
 }
 
+.xp-row {
+  margin-top: 8px;
+}
+
 .hud-label,
 .hud-grid span {
   color: #f8d28a;
   font-size: 13px;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.hud-label b {
+  color: #ffffff;
+  font-size: 14px;
 }
 
 .meter {
@@ -107,6 +116,15 @@ canvas {
   background: linear-gradient(90deg, #d9412f, #ffd166);
   transform-origin: left center;
   transition: transform 120ms linear;
+}
+
+.xp-meter {
+  background: #172a23;
+}
+
+.xp-fill {
+  transform: scaleX(0);
+  background: linear-gradient(90deg, #58d2ff, #b8ff6a);
 }
 
 .hud-grid {
