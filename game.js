@@ -37,6 +37,8 @@
   var XP_PICKUP_RADIUS = 1.1;
   var XP_ATTRACT_RADIUS = 7.5;
   var XP_ORB_SPEED = 8.2;
+  var BASE_PLAYER_SPEED = 8.3;
+  var BASE_PLAYER_HP = 120;
   var MIN_PLAYER_PASSAGE = 2.0;
   var MAIN_TOWN_MICRO_BUFFER = 10.5;
   var MICRO_FENCE_ROAD_CLEARANCE = 2.2;
@@ -46,6 +48,60 @@
   var ZOMBIE_CATCHUP_DISTANCE = 92;
   var ZOMBIE_CATCHUP_VISIBLE_PAD = 4.8;
   var ZOMBIE_CATCHUP_COOLDOWN = 4.5;
+  var ZOMBIES_PER_WAVE_MULTIPLIER = 3;
+  var ZOMBIES_PER_WAVE_AFTER_9_MULTIPLIER = 4;
+  var ZOMBIES_PER_WAVE_AFTER_15_MULTIPLIER = 6;
+  var WAVE_LOW_REMAINING_RATIO = 0.1;
+  var WAVE_LOW_REMAINING_COUNT = 5;
+  var WAVE_LOW_REMAINING_DELAY = 10;
+  var WAVE_HARD_LIMIT = 120;
+  var WAVE_CLEAR_DELAY = 1.8;
+  var CLASS_CHOICE_LEVEL = 5;
+  var REVOLVER_UPGRADE_LEVEL = 10;
+  var REVOLVER_SPECIAL_START_LEVEL = 13;
+  var REVOLVER_SPECIAL_INTERVAL = 3;
+  var RIFLE_UPGRADE_LEVEL = 10;
+  var RIFLE_SPECIAL_START_LEVEL = 13;
+  var RIFLE_SPECIAL_INTERVAL = 3;
+  var RIFLE_EXTENDED_TUBE_AMMO_PICKUP_BONUS = 36;
+  var LAUNCHER_UPGRADE_LEVEL = 10;
+  var LAUNCHER_SPECIAL_START_LEVEL = 13;
+  var LAUNCHER_SPECIAL_INTERVAL = 3;
+  var LAUNCHER_CHAIN_BASE_EXPLOSIONS = 2;
+  var LAUNCHER_CHAIN_MAX_EXPLOSIONS = 10;
+  var LAUNCHER_FULL_SALVO_KILL_THRESHOLD = 4;
+  var LAUNCHER_MADMAN_MAX_STACKS = 3;
+  var LAUNCHER_MADMAN_STACK_BONUS = 0.5;
+  var LAUNCHER_AMMO_CRATE_BONUS = 6;
+  var LAUNCHER_BRANCH_AMMO_CRATE_BONUS = 3;
+  var LAUNCHER_BOMBARDIER_AMMO_CRATE_BONUS = 3;
+  var LAUNCHER_BOMBARDIER_MAGAZINE_MULTIPLIER = 2;
+  var LAUNCHER_BLAST_RADIUS_MULTIPLIER = 1.2;
+  var LAUNCHER_POWDER_ECHO_COUNT = 3;
+  var LAUNCHER_CROSSFIRE_RANGE_MULTIPLIER = 0.82;
+  var LAUNCHER_CROSSFIRE_SPEED = 17.5;
+  var LAUNCHER_CROSSFIRE_TRAIL_INTERVAL = 0.14;
+  var MAX_FIRE_PATCHES = 90;
+  var FIRE_PATCH_BASE_RADIUS = 2.05;
+  var FIRE_PATCH_BASE_LIFE = 12.1;
+  var FIRE_PATCH_DAMAGE_INTERVAL = 0.38;
+  var FIREPROOF_AMMO_RESTORE_RATE = 1.6;
+  var FIREPROOF_HP_REGEN = 3;
+  var RIFLE_LIGHTNING_SHOT_INTERVAL = 4;
+  var RIFLE_LIGHTNING_BASE_TARGETS = 4;
+  var MAX_RIFLE_TRAPS = 240;
+  var RIFLE_TRAP_BASE_BLAST_RADIUS = 2.65;
+  var RIFLE_TRAP_POWDER_BLAST_RADIUS = 3.45;
+  var RIFLE_AUTO_TRAP_BASE_INTERVAL = 5;
+  var RIFLE_AUTO_TRAP_MIN_INTERVAL = 0.5;
+  var RIFLE_AUTO_TRAP_INTERVAL_STEP = 0.5;
+  var MAX_LIGHTNING_BOLTS = 28;
+  var DUAL_SOFT_AIM_BASE = 0.2;
+  var DUELIST_FOCUS_SOFT_AIM_BONUS = 0.38;
+  var DUELIST_FOCUS_GAIN_RATE = 0.3;
+  var DUELIST_FOCUS_DECAY_RATE = 0.16;
+  var SILVER_BULLET_SIZE_MULTIPLIER = 1.5;
+  var SILVER_BULLET_SPEED_MULTIPLIER = 1.3;
   var ACID_SPITTER_START_WAVE = 5;
   var ACID_SPITTER_CHANCE = 0.08;
   var ACID_SPITTER_CHANCE_LATE = 0.12;
@@ -70,7 +126,6 @@
   var hudKills = document.getElementById("kills-value");
   var hudLevel = document.getElementById("level-value");
   var hudXpFill = document.getElementById("xp-fill");
-  var hudWeapon = document.getElementById("weapon-value");
   var ammoHud = document.getElementById("ammo-hud");
   var ammoStatus = document.getElementById("ammo-status");
   var ammoCurrent = document.getElementById("ammo-current");
@@ -81,12 +136,23 @@
   var minimapCanvas = document.getElementById("minimap-canvas");
   var minimapAmmoCount = document.getElementById("minimap-ammo-count");
   var minimapCtx = minimapCanvas ? minimapCanvas.getContext("2d") : null;
-  var weaponButtons = Array.prototype.slice.call(document.querySelectorAll("[data-weapon]"));
   var menu = document.getElementById("menu");
   var gameOverPanel = document.getElementById("game-over");
+  var classChoicePanel = document.getElementById("class-choice");
+  var revolverUpgradePanel = document.getElementById("revolver-upgrade");
+  var rifleUpgradePanel = document.getElementById("rifle-upgrade");
+  var launcherUpgradePanel = document.getElementById("launcher-upgrade");
+  var levelUpPanel = document.getElementById("level-up-choice");
+  var levelUpSubtitle = document.getElementById("level-up-subtitle");
+  var levelUpOptions = document.getElementById("level-up-options");
   var gameOverStats = document.getElementById("game-over-stats");
   var startBtn = document.getElementById("start-btn");
   var restartBtn = document.getElementById("restart-btn");
+  var classChoiceButtons = Array.prototype.slice.call(document.querySelectorAll("[data-class]"));
+  var revolverUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-revolver-upgrade]"));
+  var rifleUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-rifle-upgrade]"));
+  var launcherUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-launcher-upgrade]"));
+  var classWeaponIcons = Array.prototype.slice.call(document.querySelectorAll("[data-weapon-icon]"));
   var moveStick = document.getElementById("move-stick");
   var moveKnob = document.getElementById("move-knob");
   var mobileFire = document.getElementById("mobile-fire");
@@ -215,13 +281,13 @@
       shortLabel: "GL",
       cost: 900,
       magazine: 3,
-      reserveStart: 12,
+      reserveStart: 18,
       reloadTime: 2.05,
       cooldown: 0.92,
       damage: 0,
       speed: 15.5,
       life: 1.35,
-      range: 20.5,
+      range: 22.5,
       hitRadius: 0.45,
       width: 0.34,
       length: 0.5,
@@ -231,6 +297,919 @@
       blastDamage: 4,
       shake: 0.38,
     },
+  };
+  var PLAYER_CLASSES = {
+    gunslinger: {
+      id: "gunslinger",
+      label: "Gunslinger",
+      weapon: "revolver",
+      revolverDamageMultiplier: 2,
+      revolverAmmoPickupBonus: 12,
+    },
+    ranger: {
+      id: "ranger",
+      label: "Ranger",
+      weapon: "rifle",
+    },
+    demolitionist: {
+      id: "demolitionist",
+      label: "Demolitionist",
+      weapon: "launcher",
+    },
+  };
+  var REVOLVER_UPGRADES = {
+    dualRevolvers: {
+      id: "dualRevolvers",
+      label: "Dual Revolvers",
+      revolverMagazineBonus: 6,
+      revolverReserveBonus: 24,
+      revolverAmmoPickupBonus: 24,
+      revolverDamageMultiplier: 2,
+    },
+    bigIron: {
+      id: "bigIron",
+      label: "Big Iron",
+      revolverMagazineBonus: 0,
+      revolverReserveBonus: 0,
+      revolverAmmoPickupBonus: 12,
+      revolverDamageMultiplier: 4,
+    },
+  };
+  var RIFLE_UPGRADES = {
+    leverBarrage: {
+      id: "leverBarrage",
+      label: "Lever Barrage",
+      rifleAmmoPickupBonus: 36,
+    },
+    trailWarden: {
+      id: "trailWarden",
+      label: "Trail Warden",
+      rifleAmmoPickupBonus: 0,
+    },
+  };
+  var LAUNCHER_UPGRADES = {
+    bombardier: {
+      id: "bombardier",
+      label: "Bombardier",
+      launcherMagazineMultiplier: LAUNCHER_BOMBARDIER_MAGAZINE_MULTIPLIER,
+    },
+    pyrotechnician: {
+      id: "pyrotechnician",
+      label: "Pyrotechnician",
+    },
+  };
+  var STANDARD_UPGRADES = [
+    {
+      id: "swiftBoots",
+      title: "Swift Boots",
+      description: "+5% move speed. No cap.",
+      symbol: "SPD",
+      rank: "2",
+      suit: "H",
+      color: "red",
+      apply: function () {
+        state.moveSpeedBonus += 0.05;
+        if (state.player) state.player.speed = BASE_PLAYER_SPEED * (1 + state.moveSpeedBonus);
+      },
+    },
+    {
+      id: "steadyHand",
+      title: "Steady Hand",
+      description: "+10% damage for every weapon.",
+      symbol: "DMG",
+      rank: "3",
+      suit: "S",
+      color: "black",
+      apply: function () {
+        state.globalDamageBonus += 0.1;
+      },
+    },
+    {
+      id: "quickReload",
+      title: "Quick Reload",
+      description: "+12% faster reloads.",
+      symbol: "RLD",
+      rank: "4",
+      suit: "D",
+      color: "red",
+      apply: function () {
+        state.reloadSpeedBonus += 0.12;
+      },
+    },
+    {
+      id: "hairTrigger",
+      title: "Hair Trigger",
+      description: "+8% faster shooting.",
+      symbol: "ROF",
+      rank: "5",
+      suit: "C",
+      color: "black",
+      apply: function () {
+        state.fireRateBonus += 0.08;
+      },
+    },
+    {
+      id: "scavengerLuck",
+      title: "Scavenger's Luck",
+      description: "+10% ammo from every crate.",
+      symbol: "AMO",
+      rank: "6",
+      suit: "D",
+      color: "red",
+      apply: function () {
+        state.ammoPickupBonus += 0.1;
+      },
+    },
+    {
+      id: "grit",
+      title: "Grit",
+      description: "+15 max HP and heal 15.",
+      symbol: "HP",
+      rank: "7",
+      suit: "S",
+      color: "black",
+      apply: function () {
+        state.maxHpBonus += 15;
+        if (state.player) {
+          state.player.maxHp += 15;
+          state.player.hp = Math.min(state.player.maxHp, state.player.hp + 15);
+        }
+      },
+    },
+    {
+      id: "desertMender",
+      title: "Desert Mender",
+      description: "+0.4 HP regenerated each second.",
+      symbol: "REG",
+      rank: "8",
+      suit: "H",
+      color: "red",
+      apply: function () {
+        state.hpRegen += 0.4;
+      },
+    },
+    {
+      id: "luckyMagnet",
+      title: "Lucky Magnet",
+      description: "+25% XP pickup and pull reach.",
+      symbol: "MAG",
+      rank: "9",
+      suit: "C",
+      color: "black",
+      apply: function () {
+        state.xpPickupRadiusBonus += 0.25;
+      },
+    },
+    {
+      id: "xpHunger",
+      title: "XP Hunger",
+      description: "+10% XP from every pickup.",
+      symbol: "XP",
+      rank: "10",
+      suit: "H",
+      color: "red",
+      apply: function () {
+        state.xpGainBonus += 0.1;
+      },
+    },
+    {
+      id: "longReach",
+      title: "Long Reach",
+      description: "+10% weapon attack range.",
+      symbol: "RNG",
+      rank: "J",
+      suit: "S",
+      color: "black",
+      apply: function () {
+        state.attackRangeBonus += 0.1;
+      },
+    },
+  ];
+  var REVOLVER_SPECIAL_UPGRADES = [
+    {
+      id: "ricochetRounds",
+      branch: "dualRevolvers",
+      title: "Ricochet Rounds",
+      description: "Revolver bullets bounce to 1 nearby enemy.",
+      symbol: "RCH",
+      rank: "A",
+      suit: "D",
+      color: "red",
+    },
+    {
+      id: "moreRicochets",
+      branch: "dualRevolvers",
+      title: "More Ricochets",
+      description: "+1 extra ricochet. Can stack.",
+      symbol: "+R",
+      rank: "2",
+      suit: "D",
+      color: "red",
+      repeatable: true,
+      requires: ["ricochetRounds"],
+    },
+    {
+      id: "softAim",
+      branch: "dualRevolvers",
+      title: "Soft Aim",
+      description: "Bullets bend more toward enemies ahead.",
+      symbol: "AIM",
+      rank: "K",
+      suit: "H",
+      color: "red",
+    },
+    {
+      id: "fanTheHammer",
+      branch: "dualRevolvers",
+      title: "Fan the Hammer",
+      description: "Kills trigger 1.8s of rapid fire.",
+      symbol: "FAN",
+      rank: "Q",
+      suit: "H",
+      color: "red",
+    },
+    {
+      id: "trickShot",
+      branch: "dualRevolvers",
+      title: "Trick Shot",
+      description: "Ricochets deal +35% damage per bounce.",
+      symbol: "TRK",
+      rank: "J",
+      suit: "D",
+      color: "red",
+      requires: ["ricochetRounds"],
+    },
+    {
+      id: "duelistFocus",
+      branch: "dualRevolvers",
+      title: "Duelist's Focus",
+      description: "Moving safely builds stronger Soft Aim faster.",
+      symbol: "DFS",
+      rank: "10",
+      suit: "H",
+      color: "red",
+      requires: ["softAim"],
+    },
+    {
+      id: "killReload",
+      branch: "dualRevolvers",
+      title: "Quick Hands",
+      description: "Every 3 kills restores 3 revolver shots.",
+      symbol: "K3",
+      rank: "9",
+      suit: "D",
+      color: "red",
+    },
+    {
+      id: "silverBullet",
+      branch: "bigIron",
+      title: "Silver Bullet",
+      description: "Every 6th Big Iron shot is x3 damage, x1.5 size, x1.3 speed.",
+      symbol: "SIL",
+      rank: "A",
+      suit: "S",
+      color: "black",
+    },
+    {
+      id: "executioner",
+      branch: "bigIron",
+      title: "Executioner",
+      description: "Big Iron finishes enemies below 28% HP.",
+      symbol: "EXE",
+      rank: "K",
+      suit: "S",
+      color: "black",
+      minLevel: 16,
+    },
+    {
+      id: "biggerCaliber",
+      branch: "bigIron",
+      title: "Bigger Caliber",
+      description: "Bigger Big Iron bullet and hitbox.",
+      symbol: "CAL",
+      rank: "Q",
+      suit: "C",
+      color: "black",
+      repeatable: true,
+    },
+    {
+      id: "heavyRupture",
+      branch: "bigIron",
+      title: "Heavy Rupture",
+      description: "Piercing shots end in a shockwave.",
+      symbol: "RUP",
+      rank: "J",
+      suit: "S",
+      color: "black",
+      requires: ["throughAndThrough"],
+    },
+    {
+      id: "leadBloom",
+      branch: "bigIron",
+      title: "Lead Bloom",
+      description: "Big Iron kills split into 2 side bullets.",
+      symbol: "BLM",
+      rank: "10",
+      suit: "C",
+      color: "black",
+    },
+    {
+      id: "throughAndThrough",
+      branch: "bigIron",
+      title: "Through and Through",
+      description: "Each pierce gives the next hit +25% damage.",
+      symbol: "THR",
+      rank: "9",
+      suit: "S",
+      color: "black",
+    },
+  ];
+  var RIFLE_SPECIAL_UPGRADES = [
+    {
+      id: "extendedTube",
+      branch: "leverBarrage",
+      title: "Extended Tube",
+      description: "Winchester magazine becomes x2. Crates give +36 rifle ammo.",
+      symbol: "TUB",
+      rank: "A",
+      suit: "H",
+      color: "red",
+      apply: function () {
+        var previousMagazine = getWeaponMagazine(WEAPONS.rifle);
+        state.rifleMagazineMultiplier = Math.max(state.rifleMagazineMultiplier || 1, 2);
+        state.rifleAmmoPickupBonus += RIFLE_EXTENDED_TUBE_AMMO_PICKUP_BONUS;
+        resizeWeaponAmmo("rifle", previousMagazine, getWeaponMagazine(WEAPONS.rifle));
+      },
+    },
+    {
+      id: "trailLoader",
+      branch: "leverBarrage",
+      title: "Trail Loader",
+      description: "Every 3 rifle kills restores 3 shots.",
+      symbol: "LOD",
+      rank: "K",
+      suit: "H",
+      color: "red",
+    },
+    {
+      id: "chainLightning",
+      branch: "leverBarrage",
+      title: "Chain Lightning",
+      description: "Every 4th rifle shot shocks 4 enemies.",
+      symbol: "LIT",
+      rank: "Q",
+      suit: "D",
+      color: "red",
+      apply: function () {
+        state.rifleShotsFired = 0;
+      },
+    },
+    {
+      id: "stormTempo",
+      branch: "leverBarrage",
+      title: "Storm Tempo",
+      description: "Lightning gives 1.65s faster rifle fire.",
+      symbol: "STM",
+      rank: "J",
+      suit: "D",
+      color: "red",
+      requires: ["chainLightning"],
+    },
+    {
+      id: "snapTraps",
+      branch: "trailWarden",
+      title: "Snap Traps",
+      description: "Rifle hits plant damaging traps.",
+      symbol: "TRP",
+      rank: "A",
+      suit: "C",
+      color: "black",
+    },
+    {
+      id: "baitedTrap",
+      branch: "trailWarden",
+      title: "Baited Trap",
+      description: "Traps lure up to 5 nearby zombies.",
+      symbol: "BTE",
+      rank: "K",
+      suit: "C",
+      color: "black",
+      requires: ["snapTraps"],
+    },
+    {
+      id: "trailLayer",
+      branch: "trailWarden",
+      title: "Trail Layer",
+      description: "You leave a trap every 5 seconds.",
+      symbol: "LAY",
+      rank: "Q",
+      suit: "S",
+      color: "black",
+      apply: function () {
+        state.rifleAutoTrapTimer = getRifleAutoTrapInterval();
+      },
+    },
+    {
+      id: "quickerTrail",
+      branch: "trailWarden",
+      title: "Quicker Trail",
+      description: "Auto-traps appear 0.5s more often.",
+      symbol: "QTR",
+      rank: "J",
+      suit: "S",
+      color: "black",
+      repeatable: true,
+      requires: ["trailLayer"],
+      apply: function () {
+        state.rifleAutoTrapFrequency += 1;
+        state.rifleAutoTrapTimer = Math.min(state.rifleAutoTrapTimer || 0, getRifleAutoTrapInterval());
+      },
+    },
+    {
+      id: "powderTrap",
+      branch: "trailWarden",
+      title: "Powder Trap",
+      description: "Traps get larger radius and 5 damage.",
+      symbol: "PWD",
+      rank: "10",
+      suit: "C",
+      color: "black",
+      requires: ["snapTraps"],
+    },
+    {
+      id: "salvagedTrap",
+      branch: "trailWarden",
+      title: "Salvaged Trap",
+      description: "Trap kills restore 2 shots and drop XP.",
+      symbol: "SLV",
+      rank: "9",
+      suit: "S",
+      color: "black",
+      requires: ["snapTraps"],
+    },
+  ];
+  var LAUNCHER_SPECIAL_UPGRADES = [
+    {
+      id: "clusterCharge",
+      branch: "bombardier",
+      title: "Cluster Charge",
+      description: "Main launcher blasts split into 3 bomblets.",
+      symbol: "CLS",
+      rank: "A",
+      suit: "S",
+      color: "black",
+    },
+    {
+      id: "moreBomblets",
+      branch: "bombardier",
+      title: "More Bomblets",
+      description: "+1 bomblet after each blast. Max 5.",
+      symbol: "+B",
+      rank: "K",
+      suit: "S",
+      color: "black",
+      repeatable: true,
+      maxStacks: 5,
+      requires: ["clusterCharge"],
+    },
+    {
+      id: "chainDetonation",
+      branch: "bombardier",
+      title: "Chain Detonation",
+      description: "Explosion kills trigger up to 2 side blasts.",
+      symbol: "CHN",
+      rank: "Q",
+      suit: "C",
+      color: "black",
+    },
+    {
+      id: "moreChainDetonations",
+      branch: "bombardier",
+      title: "Longer Chain",
+      description: "+1 secondary blast. Max 10.",
+      symbol: "+C",
+      rank: "J",
+      suit: "C",
+      color: "black",
+      repeatable: true,
+      maxStacks: LAUNCHER_CHAIN_MAX_EXPLOSIONS - LAUNCHER_CHAIN_BASE_EXPLOSIONS,
+      requires: ["chainDetonation"],
+    },
+    {
+      id: "heavyPayload",
+      branch: "bombardier",
+      title: "Heavy Payload",
+      description: "+34% blast radius, +2 damage, airburst.",
+      symbol: "HVY",
+      rank: "10",
+      suit: "S",
+      color: "black",
+    },
+    {
+      id: "fullSalvo",
+      branch: "bombardier",
+      title: "Full Salvo",
+      description: "4 explosion or shrapnel kills refill the magazine.",
+      symbol: "SAL",
+      rank: "9",
+      suit: "C",
+      color: "black",
+    },
+    {
+      id: "shrapnelRain",
+      branch: "bombardier",
+      title: "Shrapnel Rain",
+      description: "Blasts throw hot fragments outward.",
+      symbol: "SHR",
+      rank: "8",
+      suit: "S",
+      color: "black",
+      requires: ["heavyPayload"],
+    },
+    {
+      id: "powderEcho",
+      branch: "bombardier",
+      title: "Powder Echo",
+      description: "Every 3rd grenade echoes outward 3 times.",
+      symbol: "ECH",
+      rank: "7",
+      suit: "C",
+      color: "black",
+    },
+    {
+      id: "madmansJourney",
+      branch: "bombardier",
+      title: "Madman's Journey",
+      description: "Multi-kill grenades ramp fire rate to x2.5.",
+      symbol: "MAD",
+      rank: "6",
+      suit: "S",
+      color: "black",
+    },
+    {
+      id: "napalmShells",
+      branch: "pyrotechnician",
+      title: "Napalm Shells",
+      description: "Explosions leave burning ground.",
+      symbol: "NAP",
+      rank: "A",
+      suit: "H",
+      color: "red",
+      starter: true,
+    },
+    {
+      id: "rollingFlame",
+      branch: "pyrotechnician",
+      title: "Rolling Flame",
+      description: "Each grenade drags a fire trail.",
+      symbol: "ROL",
+      rank: "K",
+      suit: "D",
+      color: "red",
+    },
+    {
+      id: "fireproofPowder",
+      branch: "pyrotechnician",
+      title: "Fireproof Powder",
+      description: "Stand in fire: free shots, ammo, +3 HP/s.",
+      symbol: "FRP",
+      rank: "Q",
+      suit: "H",
+      color: "red",
+      requires: ["rollingFlame"],
+      starter: true,
+      apply: function () {
+        state.launcherFireAmmoAccumulator = 0;
+      },
+    },
+    {
+      id: "longBurn",
+      branch: "pyrotechnician",
+      title: "Long Burn",
+      description: "Fire lasts +2.1 seconds longer.",
+      symbol: "LNG",
+      rank: "J",
+      suit: "D",
+      color: "red",
+      repeatable: true,
+      maxStacks: 5,
+      requiresAny: ["napalmShells", "rollingFlame"],
+    },
+    {
+      id: "hotterFire",
+      branch: "pyrotechnician",
+      title: "Hotter Fire",
+      description: "+1 damage per fire tick. Can stack.",
+      symbol: "HOT",
+      rank: "10",
+      suit: "H",
+      color: "red",
+      repeatable: true,
+      maxStacks: 5,
+      requiresAny: ["napalmShells", "rollingFlame"],
+    },
+    {
+      id: "scorchedEarth",
+      branch: "pyrotechnician",
+      title: "Scorched Earth",
+      description: "Burning ground slows zombies.",
+      symbol: "SLW",
+      rank: "9",
+      suit: "D",
+      color: "red",
+      requiresAny: ["napalmShells", "rollingFlame"],
+    },
+    {
+      id: "thermiteCore",
+      branch: "pyrotechnician",
+      title: "Thermite Core",
+      description: "+20% fire radius, +1 fire damage, self-fire.",
+      symbol: "THM",
+      rank: "8",
+      suit: "H",
+      color: "red",
+      requires: ["hotterFire"],
+    },
+    {
+      id: "backdraft",
+      branch: "pyrotechnician",
+      title: "Backdraft",
+      description: "Fire kills burst into extra flame patches.",
+      symbol: "BDR",
+      rank: "7",
+      suit: "D",
+      color: "red",
+      requiresAny: ["napalmShells", "rollingFlame"],
+    },
+    {
+      id: "crossfireShells",
+      branch: "pyrotechnician",
+      title: "Crossfire Shells",
+      description: "Landing blasts fire 2 burning side shards.",
+      symbol: "T",
+      rank: "6",
+      suit: "H",
+      color: "red",
+      requiresAny: ["napalmShells", "rollingFlame"],
+    },
+  ];
+  var UPGRADE_ICONS = {
+    swiftBoots: `
+      <svg
+        class="upgrade-card__icon"
+        color="#9B1B1B"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 128 128"
+        focusable="false"
+        aria-hidden="true"
+      >
+        <path
+          fill="currentColor"
+          fill-rule="evenodd"
+          clip-rule="evenodd"
+          d="
+            M16.6 74.4L16.7 75.4L17.5 75.9L29.9 75.9L30.6 75.4L30.8 74.9L30.6 74.1L29.7 73.6L17.7 73.6L16.9 73.9Z
+            M11.0 63.6L11.1 64.5L11.9 65.1L31.1 65.1L31.6 64.9L32.2 64.1L31.9 63.3L31.1 62.8L11.9 62.8L11.6 62.9Z
+            M16.5 53.1L16.8 53.9L17.8 54.3L30.4 54.3L31.0 54.1L31.5 53.4L31.3 52.4L30.7 52.0L17.4 52.0L16.7 52.5Z
+            M37.0 25.1L35.0 27.0L33.9 28.6L33.0 30.4L32.6 32.3L33.9 38.7L35.9 50.3L37.2 59.4L37.7 65.2L37.7 71.9L36.2 77.8L35.7 80.8L35.8 85.2L36.3 87.7L36.7 88.7L36.3 89.5L36.2 90.2L41.2 103.4L41.9 103.8L55.3 103.8L55.7 103.6L56.0 103.0L56.0 98.2L56.7 97.6L57.6 97.8L59.1 98.6L64.7 102.7L67.4 104.0L71.0 105.0L75.6 105.5L83.7 105.4L90.3 104.5L98.1 102.6L102.4 101.2L106.2 99.5L106.7 98.9L106.9 98.3L106.7 95.9L106.5 95.4L105.6 94.7L105.6 93.9L105.0 92.3L104.1 91.3L102.3 90.5L96.9 90.5L92.7 89.9L88.7 88.7L85.6 87.3L82.1 85.0L79.3 82.8L75.6 78.9L74.0 76.6L72.9 74.5L71.7 71.5L70.8 68.2L70.5 65.8L70.4 61.7L71.2 50.9L72.7 39.6L73.9 32.7L73.9 31.2L73.6 30.0L73.0 28.7L71.3 26.3L69.8 24.8L67.2 23.0L64.5 21.7L62.3 21.0L58.1 20.3L57.9 19.3L57.3 18.7L56.7 18.5L47.7 18.6L47.0 19.2L46.7 19.6L46.7 20.5L46.5 20.7L44.8 21.1L41.4 22.4L38.8 23.8Z
+            M38.6 90.9L39.8 90.8L49.4 92.0L55.5 93.1L57.9 93.9L60.1 95.0L65.1 98.4L68.4 100.1L71.5 101.2L75.1 101.8L80.3 102.0L84.2 101.8L88.2 101.3L95.3 99.7L100.5 98.2L104.5 96.8L105.0 97.0L105.0 98.0L104.3 98.5L97.6 100.8L89.7 102.8L82.5 103.7L75.1 103.7L70.6 103.1L67.8 102.2L65.7 101.2L59.9 97.0L57.1 95.6L53.3 94.6L53.1 102.0L42.8 102.0Z
+            M39.3 73.9L45.3 78.0L48.2 79.3L50.6 80.1L52.3 80.4L52.7 80.7L52.8 90.5L38.9 88.8L38.3 87.4L37.8 85.3L37.6 82.1L38.0 78.9Z
+            M54.6 81.1L55.4 81.0L58.1 81.5L61.6 81.5L63.5 81.1L65.5 80.2L66.8 78.9L67.4 77.4L67.4 75.1L66.8 72.7L66.9 71.0L67.9 68.9L68.6 68.1L68.9 68.1L70.1 72.9L71.1 75.3L72.7 78.1L74.1 80.1L76.2 82.6L80.0 85.9L84.4 88.8L87.2 90.1L90.0 91.2L94.8 92.2L102.5 92.5L103.5 93.4L103.9 95.0L101.7 95.9L95.6 97.8L90.4 99.0L86.9 99.6L83.3 100.0L77.8 100.1L74.4 99.8L71.6 99.2L69.2 98.4L67.2 97.4L62.0 93.9L58.7 92.2L54.8 90.9Z
+            M46.6 28.0L47.0 28.1L47.2 33.9L47.6 35.5L48.1 36.3L49.1 37.4L50.0 37.9L51.3 38.3L51.5 38.9L52.5 71.6L52.5 78.5L49.6 77.8L46.7 76.6L43.9 74.8L39.6 71.6L39.6 65.5L39.1 59.4L38.0 50.6L35.6 35.6L37.1 33.6L38.8 31.8L40.1 30.8L42.8 29.3Z
+            M39.0 36.0L39.0 36.3L41.1 39.1L42.2 41.2L42.6 42.9L42.5 45.6L42.1 46.9L41.1 48.5L40.5 50.3L40.5 53.7L40.9 55.0L41.9 56.5L43.0 57.7L44.4 58.6L44.7 58.6L44.6 58.2L43.4 56.7L42.2 54.5L41.6 52.5L41.9 50.4L43.6 46.6L44.0 44.8L43.9 42.6L43.2 40.4L43.3 40.1L44.1 40.7L44.9 41.9L46.0 44.3L46.4 46.3L46.2 49.3L45.7 50.9L44.7 53.0L43.8 54.3L43.7 54.8L44.2 55.0L46.4 54.1L47.7 54.0L48.4 55.8L48.4 57.2L48.0 58.8L47.5 59.8L45.1 63.0L44.5 64.1L44.0 65.6L43.9 67.2L44.3 68.9L45.1 70.4L46.6 72.0L48.3 72.9L48.4 72.6L46.2 69.9L45.3 67.5L45.3 66.0L45.7 64.7L48.8 60.2L49.3 59.1L49.7 57.5L49.7 55.5L48.9 53.2L48.4 52.7L46.5 52.6L47.5 50.0L47.8 48.3L47.8 46.1L47.5 44.4L46.1 41.2L45.1 39.8L43.6 38.3L41.1 36.7Z
+            M58.0 27.6L61.4 28.2L63.7 29.0L65.8 30.1L67.9 31.6L69.2 33.0L71.0 35.5L68.9 55.1L68.6 60.5L68.6 65.2L66.6 67.5L65.8 68.6L65.0 70.5L64.8 72.5L65.5 75.6L65.5 76.8L65.1 77.9L64.6 78.5L63.4 79.2L61.0 79.6L57.8 79.5L54.8 79.1L54.5 78.9L53.6 38.4L55.8 37.4L57.0 36.2L57.5 35.3L57.8 34.1L57.8 29.1Z
+            M66.6 35.7L65.1 36.0L63.4 36.8L60.8 38.9L59.2 41.1L58.3 43.1L57.8 45.0L57.6 46.6L57.8 49.0L58.4 51.1L59.2 53.0L57.4 53.0L57.0 53.3L56.4 54.5L56.2 56.7L56.5 58.3L57.5 60.3L58.3 61.4L60.2 63.4L58.7 66.4L58.2 68.8L58.2 70.1L58.4 71.5L59.0 73.0L59.4 73.6L60.9 75.0L61.1 74.7L60.2 73.1L59.6 71.1L59.5 68.9L59.8 67.4L60.4 65.8L61.6 64.0L62.2 63.4L62.2 63.1L59.8 61.1L58.4 59.2L57.7 57.2L57.7 55.3L58.1 54.3L59.9 54.6L61.7 55.3L62.2 55.1L62.2 54.6L60.7 52.8L59.6 50.5L59.0 48.1L59.0 45.8L59.3 44.3L60.2 42.1L61.8 39.9L62.4 39.5L62.5 39.9L62.0 41.0L61.7 42.5L61.7 45.1L62.4 47.4L64.5 51.1L64.9 52.5L65.0 53.9L64.6 55.5L63.9 56.8L61.8 58.5L61.8 59.0L63.1 59.8L64.0 60.7L64.6 62.4L64.3 64.4L61.9 68.6L61.9 69.2L62.7 68.6L64.6 66.4L65.5 64.8L65.9 63.1L65.9 62.2L65.5 60.6L65.0 59.8L63.9 58.8L63.9 58.6L65.0 57.5L65.8 56.1L66.3 53.9L66.2 52.4L65.6 50.3L63.3 46.0L63.0 44.8L63.0 42.6L63.3 41.2L64.0 39.5L65.1 37.7L66.7 35.8Z
+            M46.9 22.9L46.7 26.0L43.7 26.8L40.5 28.3L38.0 30.0L36.0 31.8L34.9 33.3L34.6 33.2L34.4 31.8L35.2 30.0L36.7 28.0L38.3 26.5L40.3 25.1L43.0 23.8L46.1 22.8Z
+            M58.0 22.5L58.9 22.4L63.6 23.5L66.4 24.8L68.1 25.9L70.1 27.9L71.2 29.4L72.2 31.4L72.0 33.0L71.7 33.1L70.7 31.8L68.7 29.8L65.8 27.9L62.1 26.3L59.9 25.8L58.1 25.6L57.9 25.4Z
+            M48.8 20.4L56.0 20.5L55.8 34.1L55.3 35.1L54.6 35.8L53.5 36.3L51.9 36.4L50.8 36.1L49.6 35.1L49.2 34.3L48.8 24.8Z
+          "
+        />
+      </svg>
+    `,
+    steadyHand: upgradeIcon(
+      '<circle cx="32" cy="32" r="16"/>' +
+        '<circle cx="32" cy="32" r="4" fill="currentColor" stroke="none"/>' +
+        '<path d="M32 9v10M32 45v10M9 32h10M45 32h10"/>' +
+        '<path fill="currentColor" stroke="none" opacity=".16" d="M43 15l8-2-2 8-7 7-6-6 7-7Z"/>' +
+        '<path d="M43 15l8-2-2 8-7 7-6-6 7-7Z"/>'
+    ),
+    quickReload: upgradeIcon(
+      '<path d="M51 18a24 24 0 1 0 4 27"/>' +
+        '<path d="M51 8v12H39"/>' +
+        '<path fill="currentColor" opacity=".16" stroke="none" d="M28 19h8l4 6v23l-4 5h-8l-4-5V25l4-6Z"/>' +
+        '<path d="M28 19h8l4 6v23l-4 5h-8l-4-5V25l4-6Z"/>' +
+        '<path d="M25 29h14M25 41h14M32 20v32"/>'
+    ),
+    hairTrigger: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M13 27h28l10 7-4 7H33l-6 12H15l7-12h-8c-4 0-7-3-7-7s3-7 6-7Z"/>' +
+        '<path d="M13 27h28l10 7-4 7H33l-6 12H15l7-12h-8c-4 0-7-3-7-7s3-7 6-7Z"/>' +
+        '<path d="M17 34h19M35 27l5-8M43 25l8-5"/>' +
+        '<path d="M33 41c0 7-5 12-13 12M25 41c2 4 1 8-3 11"/>' +
+        '<path fill="currentColor" stroke="none" d="M53 8l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5Z"/>'
+    ),
+    scavengerLuck: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M13 26l19-10 19 10v23L32 58 13 49V26Z"/>' +
+        '<path d="M13 26l19 9 19-9M32 35v22M13 26v23l19 9 19-9V26L32 16 13 26Z"/>' +
+        '<path d="M23 21l18 9M50 8v8M46 12h8M14 9l2 4 4 2-4 2-2 4-2-4-4-2 4-2 2-4Z"/>'
+    ),
+    grit: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M32 7l20 7v16c0 14-8 24-20 29-12-5-20-15-20-29V14l20-7Z"/>' +
+        '<path d="M32 7l20 7v16c0 14-8 24-20 29-12-5-20-15-20-29V14l20-7Z"/>' +
+        '<path fill="currentColor" stroke="none" d="M32 43s-12-6-12-15c0-5 6-8 10-4l2 2 2-2c4-4 10-1 10 4 0 9-12 15-12 15Z"/>'
+    ),
+    desertMender: upgradeIcon(
+      '<path fill="currentColor" opacity=".13" stroke="none" d="M24 15h16l3 7v5l6 5v18c0 4-3 7-7 7H22c-4 0-7-3-7-7V32l6-5v-5l3-7Z"/>' +
+        '<path d="M24 15h16l3 7v5l6 5v18c0 4-3 7-7 7H22c-4 0-7-3-7-7V32l6-5v-5l3-7Z"/>' +
+        '<path d="M24 15v-5h16v5M22 27h20M32 35v14M25 42h14"/>' +
+        '<path d="M50 9v9M45 14h10M12 16l4 4M8 28h7M14 40H8"/>'
+    ),
+    luckyMagnet: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M18 15h10v14c0 4 1 6 4 6s4-2 4-6V15h10v16c0 12-6 21-14 21S18 43 18 31V15Z"/>' +
+        '<path d="M18 15v16c0 12 6 21 14 21s14-9 14-21V15"/>' +
+        '<path d="M18 15h10v14c0 4 1 6 4 6s4-2 4-6V15h10M16 53h10M38 53h10"/>' +
+        '<circle cx="8" cy="40" r="3" fill="currentColor" stroke="none"/><circle cx="56" cy="37" r="3" fill="currentColor" stroke="none"/>'
+    ),
+    xpHunger: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M32 8l18 14-18 34-18-34 18-14Z"/>' +
+        '<path d="M32 8l18 14-18 34-18-34 18-14Z"/>' +
+        '<path d="M14 22h36M23 22l9 34 9-34M32 8l-9 14M32 8l9 14"/>' +
+        '<path d="M9 42c11 10 34 10 46 0M49 38l6 4-7 3"/>'
+    ),
+    longReach: upgradeIcon(
+      '<path d="M9 35h34M17 25h17M17 45h17"/>' +
+        '<path fill="currentColor" opacity=".18" stroke="none" d="M42 25l13 10-13 10V25Z"/>' +
+        '<path d="M42 25l13 10-13 10V25Z"/>' +
+        '<path d="M50 17c7 5 7 31 0 36"/>'
+    ),
+    ricochetRounds: upgradeIcon(
+      '<circle cx="12" cy="18" r="4" fill="currentColor" stroke="none"/><circle cx="20" cy="44" r="4" fill="currentColor" stroke="none"/><circle cx="49" cy="50" r="4" fill="currentColor" stroke="none"/>' +
+        '<path d="M15 20l15 9-11 13 28 7"/>' +
+        '<path d="M46 41l7 9-11 3M29 28l3 9 8-5"/>'
+    ),
+    moreRicochets: upgradeIcon(
+      '<path d="M9 50l13-28 15 12 16-19"/>' +
+        '<circle cx="9" cy="50" r="4" fill="currentColor" stroke="none"/><circle cx="22" cy="22" r="4" fill="currentColor" stroke="none"/><circle cx="37" cy="34" r="4" fill="currentColor" stroke="none"/><circle cx="53" cy="15" r="4" fill="currentColor" stroke="none"/>' +
+        '<path d="M49 44v12M43 50h12"/>'
+    ),
+    softAim: upgradeIcon(
+      '<path fill="currentColor" opacity=".12" stroke="none" d="M12 32l40-18v36L12 32Z"/>' +
+        '<path d="M12 32l40-18M12 32l40 18"/>' +
+        '<path d="M15 42c19-3 28-11 34-24"/>' +
+        '<path d="M45 18l8-4-2 9"/><circle cx="42" cy="32" r="5"/>'
+    ),
+    fanTheHammer: upgradeIcon(
+      '<circle cx="25" cy="36" r="10"/><circle cx="25" cy="36" r="3" fill="currentColor" stroke="none"/>' +
+        '<path d="M38 34l16-14M40 39l19 2M36 44l13 15"/>' +
+        '<path d="M51 18l5-4M58 41h-6M48 60l4-5"/>' +
+        '<path fill="currentColor" opacity=".14" stroke="none" d="M16 31h18v10H16z"/>'
+    ),
+    trickShot: upgradeIcon(
+      '<path d="M8 46l15-21 12 10 20-22"/>' +
+        '<path d="M49 13h8v8"/>' +
+        '<path fill="currentColor" stroke="none" d="M20 8l3 7 7 3-7 3-3 7-3-7-7-3 7-3 3-7Z"/>' +
+        '<circle cx="35" cy="35" r="4" fill="currentColor" stroke="none"/>'
+    ),
+    duelistFocus: upgradeIcon(
+      '<path fill="currentColor" opacity=".12" stroke="none" d="M8 32s9-15 24-15 24 15 24 15-9 15-24 15S8 32 8 32Z"/>' +
+        '<path d="M8 32s9-15 24-15 24 15 24 15-9 15-24 15S8 32 8 32Z"/>' +
+        '<circle cx="32" cy="32" r="7"/><path d="M32 8v7M32 49v7M8 32h7M49 32h7"/>'
+    ),
+    killReload: upgradeIcon(
+      '<path d="M11 15l8 8M19 15l-8 8M26 15l8 8M34 15l-8 8M41 15l8 8M49 15l-8 8"/>' +
+        '<path fill="currentColor" opacity=".16" stroke="none" d="M23 34h18l5 6v11l-5 5H23l-5-5V40l5-6Z"/>' +
+        '<path d="M23 34h18l5 6v11l-5 5H23l-5-5V40l5-6Z"/>' +
+        '<path d="M20 45h24M12 44H7M57 44h-5"/>'
+    ),
+    silverBullet: upgradeIcon(
+      '<path fill="currentColor" opacity=".18" stroke="none" d="M17 36c11-15 23-23 36-24 1 13-8 25-24 36L17 36Z"/>' +
+        '<path d="M17 36c11-15 23-23 36-24 1 13-8 25-24 36L17 36Z"/>' +
+        '<path d="M27 44l-8 8M18 35l-7 7M43 8l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5ZM49 31l6 3"/>'
+    ),
+    executioner: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M34 7l16 12-8 31-10 6-10-6 8-31 4-12Z"/>' +
+        '<path d="M34 7l16 12-8 31-10 6-10-6 8-31 4-12Z"/>' +
+        '<path d="M18 54h28M21 21h27M32 13l-2 35"/>'
+    ),
+    biggerCaliber: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M15 25h28l10 7-10 7H15c-4 0-7-3-7-7s3-7 7-7Z"/>' +
+        '<path d="M15 25h28l10 7-10 7H15c-4 0-7-3-7-7s3-7 7-7Z"/>' +
+        '<path d="M15 21v22M27 25v14"/><circle cx="49" cy="32" r="11"/><circle cx="49" cy="32" r="18" opacity=".38"/>'
+    ),
+    heavyRupture: upgradeIcon(
+      '<path d="M10 32h30"/>' +
+        '<path fill="currentColor" opacity=".18" stroke="none" d="M37 22l14 10-14 10V22Z"/>' +
+        '<path d="M37 22l14 10-14 10V22Z"/>' +
+        '<path d="M48 17c8 8 8 22 0 30M54 10c12 12 12 32 0 44M12 22l-5-5M12 42l-5 5"/>'
+    ),
+    leadBloom: upgradeIcon(
+      '<path d="M13 32h26"/>' +
+        '<path fill="currentColor" opacity=".18" stroke="none" d="M37 24l12 8-12 8V24Z"/>' +
+        '<path d="M37 24l12 8-12 8V24Z"/>' +
+        '<path d="M33 32c-8-6-14-10-23-12M33 32c-8 6-14 10-23 12M12 16l-5 3 5 3M12 48l-5-3 5-3"/>'
+    ),
+    throughAndThrough: upgradeIcon(
+      '<path d="M7 32h45"/>' +
+        '<path fill="currentColor" opacity=".18" stroke="none" d="M48 24l10 8-10 8V24Z"/>' +
+        '<path d="M48 24l10 8-10 8V24Z"/>' +
+        '<path d="M18 18v28M31 14v36M44 18v28M18 24h8M18 40h8M31 20h8M31 44h8"/>'
+    ),
+    extendedTube: upgradeIcon(
+      '<path d="M9 35h39"/><path d="M13 26h35"/><path fill="currentColor" opacity=".16" stroke="none" d="M46 23l11 8-11 8V23Z"/><path d="M46 23l11 8-11 8V23Z"/><path d="M17 44h26M19 50h22"/>'
+    ),
+    trailLoader: upgradeIcon(
+      '<path d="M12 21h24l10 8-10 8H12"/><path d="M16 43h9M30 43h9M44 43h9"/><path d="M15 49h9M29 49h9M43 49h9"/><path d="M48 13v12M42 19h12"/>'
+    ),
+    chainLightning: upgradeIcon(
+      '<path fill="currentColor" opacity=".18" stroke="none" d="M35 5L14 34h15l-4 25 25-34H35l0-20Z"/><path d="M35 5L14 34h15l-4 25 25-34H35l0-20Z"/><circle cx="11" cy="48" r="3" fill="currentColor" stroke="none"/><circle cx="53" cy="14" r="3" fill="currentColor" stroke="none"/>'
+    ),
+    stormTempo: upgradeIcon(
+      '<path d="M14 36h18l-3 16 20-25H33l3-15-22 24Z"/><path d="M10 17c11-7 32-7 43 0M11 48c11 7 31 7 42 0"/><path d="M48 12l6 5-7 4"/>'
+    ),
+    snapTraps: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M15 38c0-10 8-18 17-18s17 8 17 18H15Z"/><path d="M15 38c0-10 8-18 17-18s17 8 17 18"/><path d="M15 38h34M21 38l-7 9M28 38l-3 11M36 38l3 11M43 38l7 9M25 20V9M39 20V9"/>'
+    ),
+    baitedTrap: upgradeIcon(
+      '<path d="M18 42h28M22 42l-7 8M42 42l7 8M21 34c2-6 7-10 11-10s9 4 11 10"/><path d="M8 19c8-6 15-6 22 0M34 19c7-6 14-6 22 0"/><circle cx="32" cy="36" r="4" fill="currentColor" stroke="none"/>'
+    ),
+    trailLayer: upgradeIcon(
+      '<path d="M11 43h42M19 36l-6 7 6 7M45 36l6 7-6 7"/><path d="M24 21c3-5 13-5 16 0l5 11H19l5-11Z"/><path d="M32 8v9M25 14l7 7 7-7"/>'
+    ),
+    quickerTrail: upgradeIcon(
+      '<path d="M13 42h38M21 34l-8 8 8 8M43 34l8 8-8 8"/><path d="M21 22h13l-4 11 14-17H31l4-9-14 15Z"/>'
+    ),
+    powderTrap: upgradeIcon(
+      '<path d="M17 40h30M23 40l-7 9M41 40l7 9"/><path d="M32 14l3 8 8 3-8 3-3 8-3-8-8-3 8-3 3-8Z"/><path d="M11 21l4 4M53 21l-4 4M32 6v6"/>'
+    ),
+    salvagedTrap: upgradeIcon(
+      '<path d="M16 40h32M22 40l-7 8M42 40l7 8"/><path d="M24 17h16l5 7v9H19v-9l5-7Z"/><path d="M24 25h16M28 12h8M51 14l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5Z"/>'
+    ),
+    clusterCharge: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M21 18h22l7 8-3 14-15 9-15-9-3-14 7-8Z"/><path d="M21 18h22l7 8-3 14-15 9-15-9-3-14 7-8Z"/><circle cx="32" cy="34" r="5" fill="currentColor" stroke="none"/><path d="M15 13l-6-5M49 13l6-5M12 52l-6 4M52 52l6 4M18 49l-9 7M46 49l9 7"/>'
+    ),
+    moreBomblets: upgradeIcon(
+      '<circle cx="20" cy="24" r="6"/><circle cx="42" cy="24" r="6"/><circle cx="31" cy="43" r="6"/><path d="M20 18l-5-7M42 18l5-7M31 37v-8M50 47v11M44 53h12"/><path fill="currentColor" stroke="none" d="M20 24h.1M42 24h.1M31 43h.1"/>'
+    ),
+    chainDetonation: upgradeIcon(
+      '<circle cx="13" cy="32" r="5"/><circle cx="32" cy="18" r="6"/><circle cx="50" cy="35" r="7"/><path d="M17 29l10-7M37 22l8 8M22 42l-6 10M41 48l8 7"/><path d="M31 6v7M50 18l5-5M9 20l-5-4"/>'
+    ),
+    moreChainDetonations: upgradeIcon(
+      '<path d="M10 48l10-19 12 10 12-21 10 9"/><circle cx="10" cy="48" r="4" fill="currentColor" stroke="none"/><circle cx="20" cy="29" r="4" fill="currentColor" stroke="none"/><circle cx="32" cy="39" r="4" fill="currentColor" stroke="none"/><circle cx="44" cy="18" r="4" fill="currentColor" stroke="none"/><circle cx="54" cy="27" r="4" fill="currentColor" stroke="none"/><path d="M50 46v12M44 52h12"/>'
+    ),
+    heavyPayload: upgradeIcon(
+      '<path fill="currentColor" opacity=".18" stroke="none" d="M17 18h25l11 12-4 18-17 8-17-8-4-18 6-12Z"/><path d="M17 18h25l11 12-4 18-17 8-17-8-4-18 6-12Z"/><path d="M21 18l7-10h9l5 10M17 33h30M22 45h20"/><path d="M52 11l3 6 6 3-6 3-3 6-3-6-6-3 6-3 3-6Z"/>'
+    ),
+    fullSalvo: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M15 22h34l6 8v16l-6 8H15l-6-8V30l6-8Z"/><path d="M15 22h34l6 8v16l-6 8H15l-6-8V30l6-8Z"/><path d="M17 32h30M17 44h30M24 17v10M32 17v10M40 17v10"/><path d="M53 8v10M48 13h10"/>'
+    ),
+    shrapnelRain: upgradeIcon(
+      '<path d="M32 8l-6 17 6 4 6-4-6-17Z"/><path d="M17 18l2 17 6 2 3-6-11-13ZM47 18l-11 13 3 6 6-2 2-17Z"/><path d="M12 51l12-9M32 56V42M52 51l-12-9"/><path fill="currentColor" stroke="none" d="M12 51h.1M32 56h.1M52 51h.1"/>'
+    ),
+    powderEcho: upgradeIcon(
+      '<circle cx="25" cy="34" r="12"/><circle cx="39" cy="34" r="12" opacity=".55"/><path d="M25 22V11M17 27l-8-8M39 22l5-9M51 30l8-5M20 46l-7 8M44 46l7 8"/><path fill="currentColor" stroke="none" d="M25 34h.1M39 34h.1"/>'
+    ),
+    madmansJourney: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M12 44c11-22 26-31 45-30-3 18-14 31-33 39l-12-9Z"/>' +
+        '<path d="M12 44c11-22 26-31 45-30-3 18-14 31-33 39l-12-9Z"/>' +
+        '<circle cx="27" cy="38" r="6"/>' +
+        '<path d="M20 30l-7-7M37 31l12-10M42 46l12 5M12 52H5M16 58H7M53 10l5-6M58 16h-8"/>' +
+        '<path d="M27 27v-8M23 22h8M27 44v-3" />'
+    ),
+    napalmShells: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M32 8c10 11 16 20 16 31 0 10-7 17-16 17s-16-7-16-17c0-9 6-15 10-20 0 7 4 10 8 12 0-8-2-13-2-23Z"/><path d="M32 8c10 11 16 20 16 31 0 10-7 17-16 17s-16-7-16-17c0-9 6-15 10-20 0 7 4 10 8 12 0-8-2-13-2-23Z"/><path d="M32 37c4 5 6 8 6 12 0 4-3 7-7 7s-7-3-7-7c0-5 4-8 8-12Z"/>'
+    ),
+    rollingFlame: upgradeIcon(
+      '<path d="M9 45c11-10 21-10 31-1 6 5 11 5 16-1"/><path fill="currentColor" opacity=".16" stroke="none" d="M18 34c5-9 12-14 21-22-1 8 5 11 7 18 2 8-4 17-14 17-8 0-15-5-14-13Z"/><path d="M18 34c5-9 12-14 21-22-1 8 5 11 7 18 2 8-4 17-14 17-8 0-15-5-14-13Z"/><path d="M31 28c5 6 6 10 2 17"/>'
+    ),
+    fireproofPowder: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M32 7l19 8v15c0 13-7 23-19 28-12-5-19-15-19-28V15l19-8Z"/><path d="M32 7l19 8v15c0 13-7 23-19 28-12-5-19-15-19-28V15l19-8Z"/><path d="M31 22c7 8 10 14 10 20 0 6-4 10-9 10s-9-4-9-10c0-5 4-9 7-13 0 4 2 6 5 8 0-5-2-8-4-15Z"/><path d="M47 47l7 7M54 47l-7 7"/>'
+    ),
+    longBurn: upgradeIcon(
+      '<path d="M18 47c0-7 5-11 8-16 0 5 3 7 6 9-1-8 1-14 6-21 6 8 10 16 10 24 0 9-6 14-15 14-8 0-15-4-15-10Z"/><path d="M12 14h40M12 14l5-6M52 14l-5-6M17 14c2 6 2 12 0 18M47 14c-2 6-2 12 0 18"/>'
+    ),
+    hotterFire: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M32 7c12 13 18 23 18 33 0 11-8 18-18 18s-18-7-18-18c0-8 5-13 10-20 1 8 5 11 10 13-1-9-5-15-2-26Z"/><path d="M32 7c12 13 18 23 18 33 0 11-8 18-18 18s-18-7-18-18c0-8 5-13 10-20 1 8 5 11 10 13-1-9-5-15-2-26Z"/><path d="M54 12v12M48 18h12"/>'
+    ),
+    scorchedEarth: upgradeIcon(
+      '<path d="M9 48c12-5 26-5 46 0"/><path d="M14 54c13-4 24-4 36 0"/><path fill="currentColor" opacity=".16" stroke="none" d="M26 38c0-5 4-8 6-13 1 5 4 7 6 11 2 6-2 11-7 11-4 0-5-3-5-9Z"/><path d="M26 38c0-5 4-8 6-13 1 5 4 7 6 11 2 6-2 11-7 11-4 0-5-3-5-9Z"/><path d="M18 20l28-8M21 30l26-8"/>'
+    ),
+    thermiteCore: upgradeIcon(
+      '<circle cx="32" cy="36" r="18"/><circle cx="32" cy="36" r="7" fill="currentColor" stroke="none"/><path d="M32 7v13M19 12l6 11M45 12l-6 11M10 31l12 3M54 31l-12 3"/><path d="M23 51l-8 7M41 51l8 7"/>'
+    ),
+    backdraft: upgradeIcon(
+      '<path d="M32 14c8 8 13 14 13 22 0 8-6 14-13 14s-13-6-13-14c0-6 5-11 9-16 0 6 3 8 6 10 0-6-3-11-2-16Z"/><path d="M32 6v8M32 50v8M8 32h9M47 32h9M14 14l7 7M50 14l-7 7M14 50l7-7M50 50l-7-7"/>'
+    ),
+    crossfireShells: upgradeIcon(
+      '<path d="M32 8v28"/>' +
+        '<path fill="currentColor" opacity=".16" stroke="none" d="M23 17h18l5 7v15l-14 8-14-8V24l5-7Z"/>' +
+        '<path d="M23 17h18l5 7v15l-14 8-14-8V24l5-7Z"/>' +
+        '<path d="M16 42H5M48 42h11M13 35l-8 7 8 7M51 35l8 7-8 7"/>' +
+        '<path d="M16 54c0-5 4-8 7-12 0 5 3 7 6 9M48 54c0-5-4-8-7-12 0 5-3 7-6 9"/>' +
+        '<path d="M32 47c5 5 8 9 8 14M32 47c-5 5-8 9-8 14"/>'
+    ),
+    default: upgradeIcon(
+      '<path fill="currentColor" opacity=".16" stroke="none" d="M32 8l7 15 16 2-12 11 3 16-14-8-14 8 3-16L9 25l16-2 7-15Z"/>' +
+        '<path d="M32 8l7 15 16 2-12 11 3 16-14-8-14 8 3-16L9 25l16-2 7-15Z"/>'
+    ),
   };
   var WEAPON_ICONS = {
     revolver:
@@ -261,6 +1240,10 @@
       '</g>',
     launcher:
       '<g fill="currentColor" fill-rule="evenodd" transform="translate(1.2 2.5) scale(0.101)"><path d="M18 129L18 139L19 140L19 143L20 144L20 151L21 152L21 156L22 157L22 163L23 164L23 168L24 169L25 184L26 185L26 189L27 190L27 198L28 199L28 204L29 205L29 216L30 217L30 223L31 224L31 236L32 237L32 248L33 249L33 313L34 314L34 317L35 319L38 322L40 323L43 323L44 324L52 324L53 323L70 323L74 321L79 316L81 316L88 312L94 312L95 313L95 318L99 322L110 322L111 321L113 321L116 319L118 319L122 317L125 314L125 310L126 309L125 308L124 304L122 302L122 296L133 290L135 290L156 279L158 279L163 276L165 276L167 274L169 274L189 264L191 264L196 261L198 261L205 257L207 257L210 255L212 255L217 252L219 252L231 246L233 246L236 244L238 244L246 240L251 239L254 237L262 235L265 233L268 233L269 232L271 232L275 230L278 230L281 228L286 228L287 227L291 227L292 226L349 226L351 225L355 221L355 219L356 218L356 214L358 211L359 207L361 205L363 201L373 191L379 188L381 188L382 187L391 187L392 188L392 194L391 195L391 199L392 200L392 202L394 206L394 221L393 222L393 224L390 230L381 241L379 245L375 249L374 252L372 253L371 256L368 259L368 260L364 265L363 268L360 271L360 273L358 275L351 289L351 291L349 294L349 296L348 297L348 299L346 303L346 308L345 309L345 313L344 314L344 319L346 322L346 324L351 328L354 328L355 329L357 329L358 330L362 330L363 331L367 331L371 333L375 333L376 334L382 335L386 337L390 337L394 339L402 340L406 342L410 342L411 343L413 343L414 344L418 344L422 346L428 346L432 344L434 342L435 336L433 332L433 323L436 317L441 312L446 310L448 308L448 303L447 302L447 292L448 291L448 289L454 283L459 281L459 276L457 273L457 264L459 262L459 260L464 255L466 254L469 254L472 252L479 252L483 255L485 255L488 257L491 257L492 258L564 258L565 257L610 257L611 256L616 256L617 257L617 263L618 264L618 272L619 273L619 283L620 284L620 291L621 292L621 295L622 297L625 300L625 312L626 313L626 315L628 319L631 322L635 324L638 324L639 325L645 325L646 326L662 326L663 327L671 327L672 328L689 328L690 329L699 329L700 330L717 330L718 331L737 331L738 332L747 332L750 334L757 334L758 335L768 335L769 334L777 334L778 333L787 333L788 332L792 332L793 331L801 331L802 330L812 330L813 329L818 329L819 328L829 328L830 327L836 327L837 326L845 326L846 325L852 325L853 324L861 324L862 323L867 323L868 322L874 322L875 321L877 321L879 319L883 317L883 316L886 312L887 306L888 305L888 282L889 281L889 220L894 213L894 187L895 186L921 186L923 190L923 194L926 198L951 198L952 199L952 217L954 219L958 221L964 221L965 220L965 217L966 216L979 216L980 217L980 221L994 221L994 217L995 216L1007 216L1008 217L1008 221L1022 221L1022 217L1023 216L1036 216L1037 217L1037 220L1038 221L1051 221L1051 217L1052 216L1065 216L1066 217L1066 220L1067 221L1080 221L1081 220L1081 217L1082 216L1094 216L1095 217L1095 221L1103 221L1109 216L1109 214L1108 213L1108 197L1109 196L1109 193L1108 192L1108 187L1109 186L1171 186L1172 185L1174 185L1176 183L1178 179L1178 177L1179 176L1179 165L1180 164L1180 158L1181 157L1181 116L1180 115L1180 107L1179 106L1179 98L1178 97L1178 93L1177 92L1177 90L1172 86L1152 86L1151 85L1151 79L1152 78L1152 70L1151 69L1151 63L1150 62L1150 46L1149 45L1149 25L1146 22L1123 22L1121 25L1121 39L1120 40L1120 45L1119 46L1119 61L1118 62L1115 62L1114 63L1093 63L1091 65L1090 65L1090 66L1088 68L1088 85L1087 86L904 86L903 85L903 53L901 50L901 48L899 46L897 45L893 45L892 44L892 37L891 37L884 32L873 32L873 37L872 38L855 38L854 37L854 33L853 32L835 32L835 35L833 38L817 38L816 37L816 32L796 32L796 37L795 38L776 38L775 37L775 32L755 32L754 34L754 37L753 38L737 38L736 37L736 33L735 32L716 32L715 33L715 37L714 38L697 38L696 37L696 32L677 32L677 37L676 38L659 38L658 37L658 33L657 32L640 32L639 33L639 37L638 38L622 38L621 37L621 32L613 32L611 34L606 36L604 38L604 42L603 43L587 43L586 44L576 44L575 45L568 45L567 46L563 46L562 47L556 47L555 48L552 48L551 49L545 49L544 50L541 50L540 51L532 51L524 47L522 47L520 45L520 14L519 13L514 13L513 14L507 14L506 13L503 13L500 17L500 19L497 25L495 27L492 34L490 36L487 43L485 45L482 51L482 65L481 66L476 66L475 65L463 65L459 67L455 71L454 71L454 72L451 75L449 76L446 76L444 79L435 79L435 80L433 82L433 84L434 85L449 85L450 86L450 103L448 105L446 105L445 106L437 108L434 110L428 111L425 113L422 113L419 115L416 115L413 117L410 117L407 119L402 120L400 121L400 123L398 127L392 127L391 126L391 121L390 119L386 117L377 117L376 118L373 118L372 119L367 119L366 120L361 120L357 122L352 122L351 123L349 123L348 124L344 124L340 126L335 126L334 127L330 127L329 128L326 128L325 129L318 129L317 130L304 130L303 129L297 129L296 128L294 128L293 127L291 127L290 126L288 126L287 125L285 125L284 124L282 124L278 122L65 122L62 119L41 119L40 120L27 120L21 123Z M832 312L832 317L829 319L825 319L824 320L813 320L812 321L808 321L807 322L798 322L797 323L791 323L790 322L752 322L751 323L748 323L747 324L735 324L734 323L713 323L712 322L693 322L692 321L682 321L681 320L663 320L662 319L653 319L652 318L652 313L653 312L820 312L822 311L824 308L829 308Z M120 306L120 311L117 314L115 314L114 315L112 315L108 317L102 317L101 316L101 311L103 309L108 308L113 305L119 305Z M635 303L640 303L641 304L641 307L644 311L644 315L643 316L637 316L634 312L634 304Z M44 293L45 292L52 292L53 291L65 291L66 292L66 302L65 303L46 303L44 301Z M44 271L46 269L64 269L66 271L66 280L65 281L45 281L44 280Z M824 252L828 252L829 253L829 273L828 274L824 274L823 273L823 253Z M44 249L45 248L63 248L64 249L64 258L63 259L45 259L44 258Z M42 229L46 227L61 227L63 229L63 236L61 238L43 238L42 237Z M41 212L42 211L59 210L61 212L61 219L60 220L42 220L41 219Z M522 211L532 201L578 201L579 202L579 235L578 236L578 239L577 241L572 247L564 251L526 251L525 250L525 242L520 236L519 232L518 231L518 219Z M486 203L490 202L491 201L506 201L508 204L508 214L507 215L507 223L508 224L508 229L512 237L518 243L522 244L523 245L523 250L522 251L491 251L488 249L486 249L479 242L479 241L476 237L475 231L474 230L474 221L475 220L476 214L478 212L478 211Z M40 200L41 199L59 199L60 200L60 206L59 207L42 207L40 205Z M38 185L41 183L57 183L59 185L59 192L56 195L39 195L38 194Z M391 182L393 180L398 180L400 182L400 186L398 188L392 188L391 187Z M824 169L828 169L829 170L829 185L828 186L824 186L823 185L823 170Z M35 164L37 162L56 162L58 165L58 171L56 174L37 174L35 172Z M33 143L35 141L54 141L56 143L56 150L54 152L34 152L33 151Z M463 79L465 77L473 77L476 80L476 87L473 90L465 90L462 86L462 81Z M601 86L601 68L604 64L655 64L656 63L835 63L836 64L836 72L835 73L832 73L829 77L824 77L820 73L646 73L644 74L641 78L641 83L640 84L640 91L639 92L634 92L633 91L623 91L619 94L609 94L608 93L606 93L604 91L604 89Z M540 132 H682 Q691 132 691 141 Q691 150 682 150 H540 Q531 150 531 141 Q531 132 540 132 Z M529 174 H706 Q716 174 716 184 Q716 194 706 194 H529 Q519 194 519 184 Q519 174 529 174 Z M540 218 H682 Q691 218 691 227 Q691 236 682 236 H540 Q531 236 531 227 Q531 218 540 218 Z"/></g>',
+    incendiaryShell:
+      '<g fill="none" stroke="currentColor" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round"><path fill="currentColor" opacity=".18" stroke="none" d="M16 34h43l15 10-15 10H16c-7 0-12-4-12-10s5-10 12-10Z"/><path d="M16 34h43l15 10-15 10H16c-7 0-12-4-12-10s5-10 12-10Z"/><path d="M22 27v34M40 34v20M61 34l10-12"/><path fill="currentColor" opacity=".2" stroke="none" d="M91 7c15 15 23 27 23 40 0 11-9 18-22 18-12 0-21-7-21-18 0-9 8-16 14-24 1 8 6 12 13 14-4-11-8-20-7-30Z"/><path d="M91 7c15 15 23 27 23 40 0 11-9 18-22 18-12 0-21-7-21-18 0-9 8-16 14-24 1 8 6 12 13 14-4-11-8-20-7-30Z"/><path d="M91 39c5 6 7 10 7 15 0 5-4 9-9 9s-9-4-9-9c0-5 5-10 11-15Z"/></g>',
+    rifleTrap:
+      '<g fill="none" stroke="currentColor" stroke-width="5.8" stroke-linecap="round" stroke-linejoin="round"><path fill="currentColor" opacity=".15" stroke="none" d="M26 42c0-17 17-29 38-29s38 12 38 29H26Z"/><path d="M26 42c0-17 17-29 38-29s38 12 38 29"/><path d="M24 42h80"/><path d="M35 42l-14 16M50 42l-5 17M78 42l5 17M93 42l14 16"/><path d="M41 28V9M54 23V7M74 23V7M87 28V9"/><path d="M43 42c5 8 16 11 21 2 5 9 16 6 21-2"/><circle cx="64" cy="39" r="7" fill="currentColor" stroke="none"/></g>',
   };
 
   var state = {
@@ -271,6 +1254,9 @@
     kills: 0,
     shotsFired: 0,
     spawnLeft: 0,
+    waveSpawnTarget: 0,
+    waveElapsed: 0,
+    waveLowRemainingTimer: 0,
     spawnTimer: 0,
     spawnInterval: 1,
     nextWaveTimer: 0,
@@ -281,6 +1267,7 @@
     particles: [],
     flashes: [],
     shockwaves: [],
+    lightningBolts: [],
     decals: [],
     lightFlashes: [],
     smokePuffs: [],
@@ -288,12 +1275,83 @@
     debris: [],
     acidProjectiles: [],
     acidPuddles: [],
+    firePatches: [],
+    delayedExplosions: [],
     xpOrbs: [],
+    rifleTraps: [],
     level: 1,
     xp: 0,
     xpToNext: 20,
     totalXp: 0,
     levelUps: 0,
+    playerClass: null,
+    classChoicePending: false,
+    classChoiceOffered: false,
+    revolverUpgrade: null,
+    revolverUpgradePending: false,
+    revolverUpgradeOffered: false,
+    rifleUpgrade: null,
+    rifleUpgradePending: false,
+    rifleUpgradeOffered: false,
+    launcherUpgrade: null,
+    launcherUpgradePending: false,
+    launcherUpgradeOffered: false,
+    standardUpgradePending: false,
+    standardUpgradeLevel: 0,
+    standardUpgradeChoices: [],
+    pendingStandardUpgradeLevels: [],
+    standardUpgradesChosen: 0,
+    upgradeCounts: {},
+    moveSpeedBonus: 0,
+    globalDamageBonus: 0,
+    reloadSpeedBonus: 0,
+    fireRateBonus: 0,
+    ammoPickupBonus: 0,
+    maxHpBonus: 0,
+    hpRegen: 0,
+    xpPickupRadiusBonus: 0,
+    xpGainBonus: 0,
+    attackRangeBonus: 0,
+    fanTheHammerTimer: 0,
+    duelistFocus: 0,
+    dualKillReloadCounter: 0,
+    bigIronShotsFired: 0,
+    bigIronRuptures: 0,
+    leadBloomShots: 0,
+    dualShotSide: -1,
+    lastDualShotSide: 0,
+    rifleMagazineMultiplier: 1,
+    launcherMagazineMultiplier: 1,
+    rifleShotsFired: 0,
+    rifleKillReloadCounter: 0,
+    rifleLightningStrikes: 0,
+    rifleStormTempoTimer: 0,
+    rifleAutoTrapTimer: 0,
+    rifleAutoTrapFrequency: 0,
+    rifleTrapTriggers: 0,
+    rifleTrapAmmoRestored: 0,
+    rifleTrapBonusXp: 0,
+    launcherShotsFired: 0,
+    launcherChainDetonations: 0,
+    launcherBomblets: 0,
+    launcherShrapnelShots: 0,
+    launcherPowderEchoes: 0,
+    launcherAmmoRefills: 0,
+    launcherMadmanStacks: 0,
+    launcherMadmanTriggers: 0,
+    launcherFireKills: 0,
+    launcherFireBonusXp: 0,
+    launcherBackdrafts: 0,
+    launcherThermitePatches: 0,
+    launcherFreeShots: 0,
+    launcherCrossfireShards: 0,
+    launcherFireBuffActive: false,
+    launcherFireAmmoAccumulator: 0,
+    launcherExplosionSpreadSamples: [],
+    revolverDamageMultiplier: 1,
+    revolverMagazineBonus: 0,
+    revolverAmmoPickupBonus: 0,
+    rifleAmmoPickupBonus: 0,
     weapon: "revolver",
     ownedWeapons: { revolver: true, rifle: false, launcher: false },
     ammo: {},
@@ -302,9 +1360,12 @@
     ammoCrates: [],
     ammoCrateTimer: 0,
     zombieTeleports: 0,
+    zombieSpawnSideCursor: 0,
+    zombieTeleportSideCursor: 2,
     pointerWorld: { x: 0, z: 6 },
   };
 
+  initClassWeaponIcons();
   initMaterials();
   initLights();
   buildEnvironment();
@@ -402,6 +1463,74 @@
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     });
+    mats.fireGround = new THREE.MeshBasicMaterial({
+      color: 0xff6a16,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.fireGlow = new THREE.MeshBasicMaterial({
+      color: 0xff8f24,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.fireCore = new THREE.MeshBasicMaterial({
+      color: 0xff8626,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.fireHot = new THREE.MeshBasicMaterial({
+      color: 0xffb94a,
+      transparent: true,
+      opacity: 0.26,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.fireBlockHot = new THREE.MeshBasicMaterial({
+      color: 0xffa02a,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+    });
+    mats.fireBlockCore = new THREE.MeshBasicMaterial({
+      color: 0xff8a22,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+    });
+    mats.fireBlockRed = new THREE.MeshBasicMaterial({
+      color: 0xc93a18,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+    });
+    mats.fireOrange = new THREE.MeshBasicMaterial({
+      color: 0xff7b24,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.fireRed = new THREE.MeshBasicMaterial({
+      color: 0xc43a16,
+      transparent: true,
+      opacity: 0.64,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.fireSmoke = new THREE.MeshBasicMaterial({
+      color: 0x33231b,
+      transparent: true,
+      opacity: 0.26,
+      depthWrite: false,
+    });
     mats.bullet = material(0xffdc67, 0.25, 0.2, 0xffb52f, 0.45);
     mats.rifleTracer = material(0xf8f5d7, 0.2, 0.25, 0xffe27a, 0.35);
     mats.grenade = material(0x293226, 0.62, 0.22);
@@ -435,6 +1564,30 @@
       transparent: true,
       opacity: 0.45,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.lightning = new THREE.MeshBasicMaterial({
+      color: 0x86f3ff,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.rifleElectricGlow = new THREE.MeshBasicMaterial({
+      color: 0x53e7ff,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.trapMetal = material(0x2c2a24, 0.42, 0.48);
+    mats.trapWood = material(0x6a3a1e, 0.72, 0.04);
+    mats.trapGlow = new THREE.MeshBasicMaterial({
+      color: 0xffd36b,
+      transparent: true,
+      opacity: 0.46,
+      depthWrite: false,
+      side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     });
     mats.scorch = new THREE.MeshBasicMaterial({
@@ -2077,6 +3230,9 @@
     state.kills = 0;
     state.shotsFired = 0;
     state.spawnLeft = 0;
+    state.waveSpawnTarget = 0;
+    state.waveElapsed = 0;
+    state.waveLowRemainingTimer = 0;
     state.spawnTimer = 0;
     state.spawnInterval = 1;
     state.nextWaveTimer = 0;
@@ -2086,6 +3242,7 @@
     state.particles = [];
     state.flashes = [];
     state.shockwaves = [];
+    state.lightningBolts = [];
     state.decals = [];
     state.lightFlashes = [];
     state.smokePuffs = [];
@@ -2093,12 +3250,83 @@
     state.debris = [];
     state.acidProjectiles = [];
     state.acidPuddles = [];
+    state.firePatches = [];
+    state.delayedExplosions = [];
     state.xpOrbs = [];
+    state.rifleTraps = [];
     state.level = 1;
     state.xp = 0;
     state.xpToNext = getXpToNextLevel(state.level);
     state.totalXp = 0;
     state.levelUps = 0;
+    state.playerClass = null;
+    state.classChoicePending = false;
+    state.classChoiceOffered = false;
+    state.revolverUpgrade = null;
+    state.revolverUpgradePending = false;
+    state.revolverUpgradeOffered = false;
+    state.rifleUpgrade = null;
+    state.rifleUpgradePending = false;
+    state.rifleUpgradeOffered = false;
+    state.launcherUpgrade = null;
+    state.launcherUpgradePending = false;
+    state.launcherUpgradeOffered = false;
+    state.standardUpgradePending = false;
+    state.standardUpgradeLevel = 0;
+    state.standardUpgradeChoices = [];
+    state.pendingStandardUpgradeLevels = [];
+    state.standardUpgradesChosen = 0;
+    state.upgradeCounts = {};
+    state.moveSpeedBonus = 0;
+    state.globalDamageBonus = 0;
+    state.reloadSpeedBonus = 0;
+    state.fireRateBonus = 0;
+    state.ammoPickupBonus = 0;
+    state.maxHpBonus = 0;
+    state.hpRegen = 0;
+    state.xpPickupRadiusBonus = 0;
+    state.xpGainBonus = 0;
+    state.attackRangeBonus = 0;
+    state.fanTheHammerTimer = 0;
+    state.duelistFocus = 0;
+    state.dualKillReloadCounter = 0;
+    state.bigIronShotsFired = 0;
+    state.bigIronRuptures = 0;
+    state.leadBloomShots = 0;
+    state.dualShotSide = -1;
+    state.lastDualShotSide = 0;
+    state.rifleMagazineMultiplier = 1;
+    state.launcherMagazineMultiplier = 1;
+    state.rifleShotsFired = 0;
+    state.rifleKillReloadCounter = 0;
+    state.rifleLightningStrikes = 0;
+    state.rifleStormTempoTimer = 0;
+    state.rifleAutoTrapTimer = 0;
+    state.rifleAutoTrapFrequency = 0;
+    state.rifleTrapTriggers = 0;
+    state.rifleTrapAmmoRestored = 0;
+    state.rifleTrapBonusXp = 0;
+    state.launcherShotsFired = 0;
+    state.launcherChainDetonations = 0;
+    state.launcherBomblets = 0;
+    state.launcherShrapnelShots = 0;
+    state.launcherPowderEchoes = 0;
+    state.launcherAmmoRefills = 0;
+    state.launcherMadmanStacks = 0;
+    state.launcherMadmanTriggers = 0;
+    state.launcherFireKills = 0;
+    state.launcherFireBonusXp = 0;
+    state.launcherBackdrafts = 0;
+    state.launcherThermitePatches = 0;
+    state.launcherFreeShots = 0;
+    state.launcherCrossfireShards = 0;
+    state.launcherFireBuffActive = false;
+    state.launcherFireAmmoAccumulator = 0;
+    state.launcherExplosionSpreadSamples = [];
+    state.revolverDamageMultiplier = 1;
+    state.revolverMagazineBonus = 0;
+    state.revolverAmmoPickupBonus = 0;
+    state.rifleAmmoPickupBonus = 0;
     state.ammoCrates = [];
     state.ammoCrateTimer = state.mode === "playing" ? rand(7, 11) : 0;
     state.zombieTeleports = 0;
@@ -2113,9 +3341,9 @@
       x: PLAYER_START.x,
       z: PLAYER_START.z,
       radius: 0.72,
-      hp: 120,
-      maxHp: 120,
-      speed: 8.3,
+      hp: BASE_PLAYER_HP,
+      maxHp: BASE_PLAYER_HP,
+      speed: BASE_PLAYER_SPEED,
       cooldown: 0,
       invuln: 0,
       aimAngle: 0,
@@ -2138,6 +3366,11 @@
     if (state.mode === "playing") startWave(1);
     setPanel(menu, state.mode === "menu");
     setPanel(gameOverPanel, false);
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    setPanel(levelUpPanel, false);
     updateHud();
   }
 
@@ -2173,6 +3406,16 @@
       rememberBase(addBox(weaponRig, 0.16, 0.16, 0.8, mats.metal, 0.12, 0.03, 0.46)),
       rememberBase(addBox(weaponRig, 0.24, 0.24, 0.28, mats.black, 0.08, 0, 0.08)),
     ];
+    var offhandWeaponRig = new THREE.Group();
+    offhandWeaponRig.position.set(-0.76, 1.27, 0.28);
+    rememberBase(offhandWeaponRig);
+    g.add(offhandWeaponRig);
+    var leftHand = rememberBase(addBox(offhandWeaponRig, 0.36, 0.26, 0.32, mats.playerSkin, -0.1, 0, 0.2));
+    var offhandRevolverParts = [
+      leftHand,
+      rememberBase(addBox(offhandWeaponRig, 0.16, 0.16, 0.8, mats.metal, -0.12, 0.03, 0.46)),
+      rememberBase(addBox(offhandWeaponRig, 0.24, 0.24, 0.28, mats.black, -0.08, 0, 0.08)),
+    ];
     var rifleParts = [
       rememberBase(addBox(weaponRig, 0.16, 0.14, 1.42, mats.metal, 0.11, 0.06, 0.82)),
       rememberBase(addBox(weaponRig, 0.32, 0.2, 0.56, mats.wood, 0.01, -0.01, 0.12)),
@@ -2191,6 +3434,7 @@
       revolver: revolverParts,
       rifle: rifleParts,
       launcher: launcherParts,
+      dualRevolvers: offhandRevolverParts,
     };
     g.userData.animParts = {
       leftLeg: leftLeg,
@@ -2208,32 +3452,52 @@
       rightEye: rightEye,
       moustache: moustache,
       rightHand: rightHand,
+      leftHand: leftHand,
       belt: belt,
       scarf: scarf,
       leftHolster: leftHolster,
       rightHolster: rightHolster,
     };
     g.userData.weaponRig = weaponRig;
+    g.userData.offhandWeaponRig = offhandWeaponRig;
     setWeaponMeshes(g, "revolver");
     return g;
   }
 
   function startWave(wave) {
     state.wave = wave;
-    state.spawnLeft = 5 + wave * 2;
+    state.waveSpawnTarget = getWaveZombieCount(wave);
+    state.waveElapsed = 0;
+    state.waveLowRemainingTimer = 0;
+    state.spawnLeft = state.waveSpawnTarget;
     state.spawnTimer = 0.2;
     state.spawnInterval = Math.max(0.42, 1.02 - wave * 0.055);
+    state.zombieSpawnSideCursor = Math.max(0, Math.floor(Number(wave) || 1) - 1) % 4;
+    state.zombieTeleportSideCursor = (state.zombieSpawnSideCursor + 2) % 4;
     state.nextWaveTimer = 0;
     updateHud();
+  }
+
+  function getWaveZombieCount(wave) {
+    var lvl = Math.max(1, Math.floor(Number(wave) || 1));
+    return (5 + lvl * 2) * getWaveZombieMultiplier(lvl);
+  }
+
+  function getWaveZombieMultiplier(wave) {
+    var lvl = Math.max(1, Math.floor(Number(wave) || 1));
+    if (lvl > 15) return ZOMBIES_PER_WAVE_AFTER_15_MULTIPLIER;
+    if (lvl > 9) return ZOMBIES_PER_WAVE_AFTER_9_MULTIPLIER;
+    return ZOMBIES_PER_WAVE_MULTIPLIER;
   }
 
   function spawnZombie() {
     var type = chooseZombieType();
     var zombie = makeZombie(type);
-    var spawn = findZombieSpawnPoint(zombie.radius);
+    var spawn = findZombieSpawnPoint(zombie.radius, { preferredSides: chooseZombieSurroundSides("spawn") });
     zombie.x = spawn.x;
     zombie.z = spawn.z;
     zombie.spawnSide = spawn.side;
+    rememberZombieSurroundSide("spawn", spawn.side);
     zombie.group.position.set(zombie.x, 0, zombie.z);
     state.enemies.push(zombie);
     dynamicRoot.add(zombie.group);
@@ -2251,39 +3515,43 @@
 
   function findZombieSpawnPoint(radius, options) {
     var strict = options && options.strict;
+    var sideOrder = getZombieSpawnSideOrder(options);
     var rect = getCurrentVisibleGroundRect();
     var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
     var minZ = -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxZ = ARENA_D / 2 + ENEMY_BOUNDS_EXTRA - radius;
     var outsidePad = Math.max(3.65, radius + 0.65);
-    for (var attempt = 0; attempt < 140; attempt++) {
-      var side = Math.floor(rng() * 4);
-      var margin = rand(ZOMBIE_SPAWN_VIEW_MARGIN_MIN, ZOMBIE_SPAWN_VIEW_MARGIN_MAX);
-      var x = 0;
-      var z = 0;
-      if (side === 0) {
-        x = rand(rect.minX + radius, rect.maxX - radius);
-        z = rect.minZ - margin;
-      } else if (side === 1) {
-        x = rand(rect.minX + radius, rect.maxX - radius);
-        z = rect.maxZ + margin;
-      } else if (side === 2) {
-        x = rect.minX - margin;
-        z = rand(rect.minZ + radius, rect.maxZ - radius);
-      } else {
-        x = rect.maxX + margin;
-        z = rand(rect.minZ + radius, rect.maxZ - radius);
+    var attemptsPerSide = 44;
+    for (var orderIndex = 0; orderIndex < sideOrder.length; orderIndex++) {
+      var side = sideOrder[orderIndex];
+      for (var attempt = 0; attempt < attemptsPerSide; attempt++) {
+        var margin = rand(ZOMBIE_SPAWN_VIEW_MARGIN_MIN, ZOMBIE_SPAWN_VIEW_MARGIN_MAX);
+        var x = 0;
+        var z = 0;
+        if (side === 0) {
+          x = rand(rect.minX + radius, rect.maxX - radius);
+          z = rect.minZ - margin;
+        } else if (side === 1) {
+          x = rand(rect.minX + radius, rect.maxX - radius);
+          z = rect.maxZ + margin;
+        } else if (side === 2) {
+          x = rect.minX - margin;
+          z = rand(rect.minZ + radius, rect.maxZ - radius);
+        } else {
+          x = rect.maxX + margin;
+          z = rand(rect.minZ + radius, rect.maxZ - radius);
+        }
+        x = clamp(x, minX, maxX);
+        z = clamp(z, minZ, maxZ);
+        if (!isSafeZombieSpawnPoint(x, z, radius, rect, outsidePad)) continue;
+        return { x: x, z: z, side: side };
       }
-      x = clamp(x, minX, maxX);
-      z = clamp(z, minZ, maxZ);
-      if (!isSafeZombieSpawnPoint(x, z, radius, rect, outsidePad)) continue;
-      return { x: x, z: z, side: side };
     }
-    return findFallbackZombieSpawnPoint(radius, rect, strict);
+    return findFallbackZombieSpawnPoint(radius, rect, strict, sideOrder);
   }
 
-  function findFallbackZombieSpawnPoint(radius, rect, strict) {
+  function findFallbackZombieSpawnPoint(radius, rect, strict, sideOrder) {
     var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
     var minZ = -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius;
@@ -2295,12 +3563,77 @@
       { x: minX, z: clamp((rect.minZ + rect.maxZ) / 2, minZ, maxZ), side: 2 },
       { x: maxX, z: clamp((rect.minZ + rect.maxZ) / 2, minZ, maxZ), side: 3 },
     ];
-    for (var i = 0; i < candidates.length; i++) {
-      var c = candidates[i];
+    var order = sideOrder && sideOrder.length ? sideOrder : getZombieSpawnSideOrder(null);
+    for (var i = 0; i < order.length; i++) {
+      var c = candidates[order[i]];
       if (isSafeZombieSpawnPoint(c.x, c.z, radius, rect, outsidePad)) return c;
     }
     if (strict) return null;
-    return candidates[Math.floor(rng() * candidates.length)];
+    return candidates[order[0]];
+  }
+
+  function getZombieSpawnSideOrder(options) {
+    var order = [];
+    if (options && Array.isArray(options.preferredSides)) {
+      for (var i = 0; i < options.preferredSides.length; i++) {
+        var side = Math.floor(Number(options.preferredSides[i]));
+        if (side >= 0 && side < 4 && order.indexOf(side) === -1) order.push(side);
+      }
+    }
+    if (order.length === 0) {
+      var preferredSide = options && typeof options.preferredSide === "number" ? Math.floor(options.preferredSide) : Math.floor(rng() * 4);
+      preferredSide = ((preferredSide % 4) + 4) % 4;
+      for (var j = 0; j < 4; j++) order.push((preferredSide + j) % 4);
+    } else {
+      for (var fill = 0; fill < 4; fill++) {
+        if (order.indexOf(fill) === -1) order.push(fill);
+      }
+    }
+    return order.slice(0, 4);
+  }
+
+  function chooseZombieSurroundSide(kind, ignoreEnemy) {
+    return chooseZombieSurroundSides(kind, ignoreEnemy)[0];
+  }
+
+  function chooseZombieSurroundSides(kind, ignoreEnemy) {
+    var rect = getCurrentVisibleGroundRect();
+    var counts = getZombieSurroundSideCounts(rect, ignoreEnemy);
+    var key = kind === "teleport" ? "zombieTeleportSideCursor" : "zombieSpawnSideCursor";
+    var start = Math.max(0, Math.floor(state[key] || 0)) % 4;
+    return [0, 1, 2, 3].sort(function (a, b) {
+      if (counts[a] !== counts[b]) return counts[a] - counts[b];
+      return getCircularSideOffset(a, start) - getCircularSideOffset(b, start);
+    });
+  }
+
+  function rememberZombieSurroundSide(kind, side) {
+    var key = kind === "teleport" ? "zombieTeleportSideCursor" : "zombieSpawnSideCursor";
+    state[key] = (((Math.floor(Number(side)) || 0) + 1) % 4 + 4) % 4;
+  }
+
+  function getCircularSideOffset(side, start) {
+    return (side - start + 4) % 4;
+  }
+
+  function getZombieSurroundSideCounts(rect, ignoreEnemy) {
+    var counts = [0, 0, 0, 0];
+    var r = rect || getCurrentVisibleGroundRect();
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (enemy === ignoreEnemy) continue;
+      var side = enemy.spawnSide === undefined || enemy.spawnSide === null ? getZombieSideForPoint(enemy.x, enemy.z, r) : enemy.spawnSide;
+      counts[side] += 1;
+    }
+    return counts;
+  }
+
+  function getZombieSideForPoint(x, z, rect) {
+    var r = rect || getCurrentVisibleGroundRect();
+    var dx = x - r.targetX;
+    var dz = z - r.targetZ;
+    if (Math.abs(dz) >= Math.abs(dx)) return dz < 0 ? 0 : 1;
+    return dx < 0 ? 2 : 3;
   }
 
   function getCurrentVisibleGroundRect() {
@@ -2443,13 +3776,18 @@
     }
 
     updateReloads(dt);
+    updateRifleTimers(dt);
     updatePlayer(dt);
     updateXpOrbs(dt);
     updateAmmoCrates(dt);
     updateSpawning(dt);
+    updateRifleTraps(dt);
     updateEnemies(dt);
+    updateRifleTraps(0);
     updateAcidProjectiles(dt);
     updateAcidPuddles(dt);
+    updateFirePatches(dt);
+    updateDelayedExplosions(dt);
     updateBullets(dt);
     updateParticles(dt);
     updateVisualEffects(dt);
@@ -2462,8 +3800,10 @@
     state.ammoReserve = {};
     state.reloadTimers = {};
     Object.keys(WEAPONS).forEach(function (id) {
-      state.ammo[id] = WEAPONS[id].magazine;
-      state.ammoReserve[id] = Math.max(0, (WEAPONS[id].reserveStart || 0) - WEAPONS[id].magazine);
+      var weapon = WEAPONS[id];
+      var magazine = getWeaponMagazine(weapon);
+      state.ammo[id] = magazine;
+      state.ammoReserve[id] = Math.max(0, (weapon.reserveStart || 0) - magazine);
       state.reloadTimers[id] = 0;
     });
   }
@@ -2478,28 +3818,36 @@
 
   function buildAmmoRack(weapon, current) {
     if (!ammoCartridgeRack) return;
+    var magazine = getWeaponMagazine(weapon);
     ammoCartridgeRack.innerHTML = "";
     ammoCartridgeRack.dataset.weapon = weapon.id;
-    ammoCartridgeRack.dataset.magazine = String(weapon.magazine);
-    for (var i = 0; i < weapon.magazine; i++) {
+    ammoCartridgeRack.dataset.magazine = String(magazine);
+    ammoCartridgeRack.dataset.largeMagazine = weapon.id === "launcher" && magazine > WEAPONS.launcher.magazine ? "true" : "false";
+    ammoCartridgeRack.dataset.layout = isDualRevolverAmmoRack(weapon, magazine) ? "dual" : "single";
+    for (var i = 0; i < magazine; i++) {
       var round = document.createElement("span");
       round.className = "ammo-round";
       round.dataset.index = String(i);
+      if (isDualRevolverAmmoRack(weapon, magazine)) {
+        round.dataset.row = i < Math.ceil(magazine / 2) ? "top" : "bottom";
+      }
       var live = document.createElement("span");
       live.className = "ammo-round-live";
       round.appendChild(live);
-      if (i >= current) round.classList.add("is-spent");
+      if (isAmmoSlotSpent(weapon, magazine, current, i)) round.classList.add("is-spent");
+      round.classList.toggle("is-silver-bullet", isSilverBulletAmmoSlot(weapon, magazine, i));
       ammoCartridgeRack.appendChild(round);
     }
     ammoVisualState.weapon = weapon.id;
-    ammoVisualState.magazine = weapon.magazine;
+    ammoVisualState.magazine = magazine;
     ammoVisualState.current = current;
   }
 
   function syncAmmoRack(weapon, ammo) {
     if (!ammoCartridgeRack) return;
-    var current = Math.round(clamp(ammo.current, 0, weapon.magazine));
-    var needsRebuild = ammoVisualState.weapon !== weapon.id || ammoVisualState.magazine !== weapon.magazine || ammoCartridgeRack.children.length !== weapon.magazine;
+    var magazine = ammo.magazine;
+    var current = Math.round(clamp(ammo.current, 0, magazine));
+    var needsRebuild = ammoVisualState.weapon !== weapon.id || ammoVisualState.magazine !== magazine || ammoCartridgeRack.children.length !== magazine;
     if (needsRebuild) {
       buildAmmoRack(weapon, current);
       return;
@@ -2508,15 +3856,60 @@
     var previous = ammoVisualState.current == null ? current : ammoVisualState.current;
     var slots = Array.prototype.slice.call(ammoCartridgeRack.children);
     slots.forEach(function (slot, index) {
-      slot.classList.toggle("is-spent", index >= current);
+      slot.classList.toggle("is-spent", isAmmoSlotSpent(weapon, magazine, current, index));
+      slot.classList.toggle("is-silver-bullet", isSilverBulletAmmoSlot(weapon, magazine, index));
     });
 
     if (current < previous) {
-      for (var i = current; i < previous; i++) triggerAmmoDrop(slots[i], i);
+      getAmmoSlotChanges(weapon, magazine, previous, current).forEach(function (index) {
+        triggerAmmoDrop(slots[index], index);
+      });
     } else if (current > previous) {
-      for (var j = previous; j < current; j++) triggerAmmoRefill(slots[j], j);
+      getAmmoSlotChanges(weapon, magazine, previous, current).forEach(function (index) {
+        triggerAmmoRefill(slots[index], index);
+      });
     }
     ammoVisualState.current = current;
+  }
+
+  function isDualRevolverAmmoRack(weapon, magazine) {
+    return weapon && weapon.id === "revolver" && state.revolverUpgrade === "dualRevolvers" && magazine > WEAPONS.revolver.magazine;
+  }
+
+  function getAmmoSpendOrder(weapon, magazine) {
+    if (!isDualRevolverAmmoRack(weapon, magazine)) {
+      var normal = [];
+      for (var i = magazine - 1; i >= 0; i--) normal.push(i);
+      return normal;
+    }
+
+    var order = [];
+    var columns = Math.ceil(magazine / 2);
+    for (var col = columns - 1; col >= 0; col--) {
+      order.push(col);
+      var lower = columns + col;
+      if (lower < magazine) order.push(lower);
+    }
+    return order;
+  }
+
+  function isAmmoSlotSpent(weapon, magazine, current, index) {
+    var spent = Math.max(0, magazine - Math.round(clamp(current, 0, magazine)));
+    var order = getAmmoSpendOrder(weapon, magazine);
+    return order.indexOf(index) >= 0 && order.indexOf(index) < spent;
+  }
+
+  function isSilverBulletAmmoSlot(weapon, magazine, index) {
+    return weapon && weapon.id === "revolver" && state.revolverUpgrade === "bigIron" && hasUpgrade("silverBullet") && index === 0 && magazine > 0;
+  }
+
+  function getAmmoSlotChanges(weapon, magazine, previous, current) {
+    var order = getAmmoSpendOrder(weapon, magazine);
+    var previousSpent = Math.max(0, magazine - Math.round(clamp(previous, 0, magazine)));
+    var currentSpent = Math.max(0, magazine - Math.round(clamp(current, 0, magazine)));
+    var from = Math.min(previousSpent, currentSpent);
+    var to = Math.max(previousSpent, currentSpent);
+    return order.slice(from, to);
   }
 
   function triggerAmmoDrop(slot, index) {
@@ -2554,8 +3947,9 @@
       if (state.reloadTimers[id] <= 0) {
         state.reloadTimers[id] = 0;
         var weapon = WEAPONS[id];
-        var current = clamp(state.ammo[id] || 0, 0, weapon.magazine);
-        var needed = Math.max(0, weapon.magazine - current);
+        var magazine = getWeaponMagazine(weapon);
+        var current = clamp(state.ammo[id] || 0, 0, magazine);
+        var needed = Math.max(0, magazine - current);
         var reserve = Math.max(0, state.ammoReserve[id] || 0);
         var loaded = Math.min(needed, reserve);
         state.ammo[id] = current + loaded;
@@ -2567,25 +3961,62 @@
   function startReload(id) {
     var weapon = WEAPONS[id];
     if (!weapon || state.reloadTimers[id] > 0) return;
-    var current = clamp(state.ammo[id] || 0, 0, weapon.magazine);
-    if (current >= weapon.magazine) return;
+    var magazine = getWeaponMagazine(weapon);
+    var current = clamp(state.ammo[id] || 0, 0, magazine);
+    if (current >= magazine) return;
     if ((state.ammoReserve[id] || 0) <= 0) return;
-    state.reloadTimers[id] = weapon.reloadTime;
+    state.reloadTimers[id] = getWeaponReloadTime(weapon);
     if (state.player) state.player.cooldown = Math.max(state.player.cooldown, 0.08);
   }
 
   function getAmmoState(id) {
     var weapon = WEAPONS[id] || WEAPONS.revolver;
+    var magazine = getWeaponMagazine(weapon);
     var remaining = state.reloadTimers[weapon.id] || 0;
+    var current = state.ammo[weapon.id] == null ? magazine : clamp(state.ammo[weapon.id], 0, magazine);
+    var reserve = Math.max(0, state.ammoReserve[weapon.id] || 0);
     return {
-      current: state.ammo[weapon.id] == null ? weapon.magazine : state.ammo[weapon.id],
-      magazine: weapon.magazine,
-      reserve: Math.max(0, state.ammoReserve[weapon.id] || 0),
-      total: (state.ammo[weapon.id] == null ? weapon.magazine : state.ammo[weapon.id]) + Math.max(0, state.ammoReserve[weapon.id] || 0),
+      current: current,
+      magazine: magazine,
+      reserve: reserve,
+      total: current + reserve,
       reloading: remaining > 0,
       reloadRemaining: remaining,
-      reloadProgress: remaining > 0 ? clamp(1 - remaining / weapon.reloadTime, 0, 1) : 0,
+      reloadProgress: remaining > 0 ? clamp(1 - remaining / getWeaponReloadTime(weapon), 0, 1) : 0,
     };
+  }
+
+  function getWeaponMagazine(weapon) {
+    if (!weapon) return 0;
+    if (weapon.id === "revolver") return weapon.magazine + (state.revolverMagazineBonus || 0);
+    if (weapon.id === "rifle") return Math.round(weapon.magazine * Math.max(1, state.rifleMagazineMultiplier || 1));
+    if (weapon.id === "launcher") return Math.round(weapon.magazine * Math.max(1, state.launcherMagazineMultiplier || 1));
+    return weapon.magazine;
+  }
+
+  function getWeaponReloadTime(weapon) {
+    if (!weapon) return 0;
+    return weapon.reloadTime / (1 + Math.max(0, state.reloadSpeedBonus || 0));
+  }
+
+  function getWeaponCooldown(weapon) {
+    if (!weapon) return 0;
+    var cooldown = weapon.cooldown / (1 + Math.max(0, state.fireRateBonus || 0));
+    if (weapon.id === "launcher") {
+      cooldown /= getLauncherMadmanFireRateMultiplier();
+    }
+    if (weapon.id === "revolver" && state.revolverUpgrade === "dualRevolvers" && state.fanTheHammerTimer > 0) {
+      cooldown *= 0.55;
+    }
+    if (weapon.id === "rifle" && state.rifleStormTempoTimer > 0) {
+      cooldown *= 0.68;
+    }
+    return cooldown;
+  }
+
+  function getLauncherMadmanFireRateMultiplier() {
+    if (state.launcherUpgrade !== "bombardier" || !hasUpgrade("madmansJourney")) return 1;
+    return Math.min(2.5, 1 + Math.max(0, state.launcherMadmanStacks || 0) * LAUNCHER_MADMAN_STACK_BONUS);
   }
 
   function updatePlayer(dt) {
@@ -2619,9 +4050,24 @@
     p.walkPhase += dt * (7.5 + p.speed * 0.5) * p.moveAmount;
     p.cooldown = Math.max(0, p.cooldown - dt);
     p.invuln = Math.max(0, p.invuln - dt);
+    if (state.hpRegen > 0 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + state.hpRegen * dt);
+    state.fanTheHammerTimer = Math.max(0, state.fanTheHammerTimer - dt);
+    updateDuelistFocus(dt, p.moveAmount);
     p.group.position.set(p.x, 0, p.z);
 
     if ((pointerDown || touchFire.active) && p.cooldown <= 0) shoot();
+  }
+
+  function updateDuelistFocus(dt, moveAmount) {
+    if (state.revolverUpgrade !== "dualRevolvers" || !hasUpgrade("duelistFocus")) {
+      state.duelistFocus = 0;
+      return;
+    }
+    if (moveAmount > 0.28) {
+      state.duelistFocus = Math.min(1, state.duelistFocus + dt * DUELIST_FOCUS_GAIN_RATE);
+    } else {
+      state.duelistFocus = Math.max(0, state.duelistFocus - dt * DUELIST_FOCUS_DECAY_RATE);
+    }
   }
 
   function updateAmmoCrates(dt) {
@@ -2759,9 +4205,26 @@
 
   function getAmmoPickupAmounts() {
     return Object.keys(WEAPONS).reduce(function (acc, id) {
-      if (state.ownedWeapons[id]) acc[id] = WEAPONS[id].reserveStart || 0;
+      if (state.ownedWeapons[id]) {
+        var bonus = 0;
+        if (id === "revolver") bonus = state.revolverAmmoPickupBonus || 0;
+        if (id === "rifle") bonus = state.rifleAmmoPickupBonus || 0;
+        if (id === "launcher") bonus = getLauncherAmmoPickupBonus();
+        acc[id] = Math.max(1, Math.round(((WEAPONS[id].reserveStart || 0) + bonus) * getAmmoPickupMultiplier()));
+      }
       return acc;
     }, {});
+  }
+
+  function getLauncherAmmoPickupBonus() {
+    var bonus = LAUNCHER_AMMO_CRATE_BONUS;
+    if (state.launcherUpgrade) bonus += LAUNCHER_BRANCH_AMMO_CRATE_BONUS;
+    if (state.launcherUpgrade === "bombardier") bonus += LAUNCHER_BOMBARDIER_AMMO_CRATE_BONUS;
+    return bonus;
+  }
+
+  function getAmmoPickupMultiplier() {
+    return 1 + Math.max(0, state.ammoPickupBonus || 0);
   }
 
   function addAmmoPickupBurst(x, z) {
@@ -2866,22 +4329,33 @@
     var p = state.player;
     var weapon = WEAPONS[state.weapon] || WEAPONS.revolver;
     var ammo = getAmmoState(weapon.id);
-    if (ammo.reloading) {
+    var freeLauncherShot = weapon.id === "launcher" && isLauncherFireBuffActive();
+    if (freeLauncherShot) {
+      state.reloadTimers.launcher = 0;
+    }
+    if (ammo.reloading && !freeLauncherShot) {
       p.cooldown = Math.max(p.cooldown, 0.08);
       return false;
     }
-    if (ammo.current <= 0) {
+    if (ammo.current <= 0 && !freeLauncherShot) {
       startReload(weapon.id);
       if ((state.ammoReserve[weapon.id] || 0) <= 0) p.cooldown = Math.max(p.cooldown, 0.16);
       return false;
     }
     var shot = getWeaponShotPlan(weapon, p);
     var dir = shot.dir;
-    var start = new THREE.Vector3(
-      p.x + dir.x * weapon.muzzleDistance,
-      weapon.muzzleY,
-      p.z + dir.z * weapon.muzzleDistance
-    );
+    var bigIronShot = isBigIronShot(weapon);
+    var silverBullet = false;
+    if (bigIronShot && hasUpgrade("silverBullet")) {
+      state.bigIronShotsFired += 1;
+      silverBullet = state.bigIronShotsFired % 6 === 0;
+    }
+    var projectileSpeed = getWeaponProjectileSpeed(weapon, silverBullet);
+    var projectileLife = getWeaponProjectileLife(weapon);
+    var projectileVisualSize = getWeaponProjectileVisualSize(weapon, silverBullet);
+    var projectileHitRadius = getWeaponProjectileHitRadius(weapon, silverBullet);
+    var muzzleSide = getDualMuzzleSide(weapon);
+    var start = getWeaponMuzzleStart(weapon, p, dir, muzzleSide);
     shot.start = start;
     if (shot.target) {
       var tx = shot.target.x - start.x;
@@ -2890,11 +4364,27 @@
       dir.x = tx / travelDistance;
       dir.z = tz / travelDistance;
       shot.travelDistance = travelDistance;
-      shot.life = travelDistance / weapon.speed;
+      shot.life = travelDistance / projectileSpeed;
       shot.angle = Math.atan2(dir.x, dir.z);
     }
-    var bulletMesh = createProjectileMesh(weapon, start, p.aimAngle);
+    var rifleShotNumber = 0;
+    var rifleChainLightning = false;
+    var launcherShotNumber = 0;
+    if (weapon.id === "rifle") {
+      state.rifleShotsFired += 1;
+      rifleShotNumber = state.rifleShotsFired;
+      rifleChainLightning = hasUpgrade("chainLightning") && rifleShotNumber % RIFLE_LIGHTNING_SHOT_INTERVAL === 0;
+    }
+    if (weapon.id === "launcher") {
+      state.launcherShotsFired += 1;
+      launcherShotNumber = state.launcherShotsFired;
+    }
+    var bulletMesh = createProjectileMesh(weapon, start, p.aimAngle, projectileVisualSize, {
+      electric: rifleChainLightning,
+    });
     state.shotsFired += 1;
+    var damage = getWeaponDamage(weapon);
+    if (silverBullet) damage *= 3;
     state.bullets.push({
       type: weapon.id,
       x: start.x,
@@ -2902,23 +4392,58 @@
       z: start.z,
       dirX: dir.x,
       dirZ: dir.z,
-      speed: weapon.speed,
-      life: shot.life || weapon.life,
-      maxLife: shot.life || weapon.life,
+      speed: projectileSpeed,
+      life: shot.life || projectileLife,
+      maxLife: shot.life || projectileLife,
       age: 0,
-      damage: weapon.damage,
-      hitRadius: weapon.hitRadius,
-      blastRadius: weapon.blastRadius || 0,
-      blastDamage: weapon.blastDamage || 0,
+      baseDamage: damage,
+      damage: damage,
+      hitRadius: projectileHitRadius,
+      visualWidth: projectileVisualSize.width,
+      visualLength: projectileVisualSize.length,
+      piercing: bigIronShot,
+      piercedEnemies: [],
+      hitEnemies: [],
+      muzzleSide: muzzleSide,
+      rifleShotNumber: rifleShotNumber,
+      chainLightning: rifleChainLightning,
+      lightningTargets: rifleChainLightning ? getRifleLightningTargetCount() : 0,
+      launcherShotNumber: launcherShotNumber,
+      powderEcho: weapon.id === "launcher" && hasUpgrade("powderEcho") && launcherShotNumber % 3 === 0,
+      airburstLanding: weapon.id === "launcher" && hasHeavyPayloadAirburst(),
+      rollingFlame: weapon.id === "launcher" && hasUpgrade("rollingFlame"),
+      fireTrailTimer: 0,
+      plantsTrap: weapon.id === "rifle" && hasUpgrade("snapTraps"),
+      ricochetRemaining: weapon.id === "revolver" ? getDualRicochetLimit() : 0,
+      ricochetDepth: 0,
+      homing: weapon.id === "revolver" ? getDualSoftAimStrength() : 0,
+      silverBullet: silverBullet,
+      executioner: bigIronShot && hasUpgrade("executioner"),
+      heavyRupture: bigIronShot && hasUpgrade("heavyRupture"),
+      leadBloom: bigIronShot && hasUpgrade("leadBloom"),
+      throughAndThrough: bigIronShot && hasUpgrade("throughAndThrough"),
+      blastRadius: weapon.id === "launcher" ? getLauncherBlastRadius() : weapon.blastRadius || 0,
+      blastDamage: weapon.id === "launcher" ? getLauncherBlastDamage() : weapon.blastDamage || 0,
       targetX: shot.target ? shot.target.x : null,
       targetZ: shot.target ? shot.target.z : null,
       targetRadius: shot.target ? Math.max(0.12, weapon.hitRadius * 0.7) : 0,
       trailTimer: 0,
       mesh: bulletMesh,
     });
-    state.ammo[weapon.id] = Math.max(0, ammo.current - 1);
-    if (state.ammo[weapon.id] <= 0) startReload(weapon.id);
-    p.cooldown = weapon.cooldown;
+    if (freeLauncherShot) {
+      state.launcherFreeShots += 1;
+    } else {
+      state.ammo[weapon.id] = Math.max(0, ammo.current - 1);
+      if (state.ammo[weapon.id] <= 0) startReload(weapon.id);
+    }
+    if (weapon.id === "launcher" && hasPyrotechnicianThermiteCore()) {
+      spawnThermitePlayerFirePatch(p.x, p.z);
+    }
+    if (muzzleSide) {
+      state.lastDualShotSide = muzzleSide;
+      state.dualShotSide = -muzzleSide;
+    }
+    p.cooldown = getWeaponCooldown(weapon);
     p.shootKick = weapon.id === "launcher" ? 1 : weapon.id === "rifle" ? 0.72 : 0.55;
     state.shake = Math.min(1.2, state.shake + weapon.shake);
     addLightFlash(start.x, start.y, start.z, weapon.id === "launcher" ? 0xff7a24 : 0xffd36b, weapon.id === "launcher" ? 3.2 : 1.7, weapon.id === "launcher" ? 8 : 5, weapon.id === "launcher" ? 0.16 : 0.08);
@@ -2941,6 +4466,20 @@
     return true;
   }
 
+  function getDualMuzzleSide(weapon) {
+    if (!weapon || weapon.id !== "revolver" || state.revolverUpgrade !== "dualRevolvers") return 0;
+    return state.dualShotSide < 0 ? -1 : 1;
+  }
+
+  function getWeaponMuzzleStart(weapon, player, dir, muzzleSide) {
+    var sideOffset = muzzleSide ? 0.58 * muzzleSide : 0;
+    return new THREE.Vector3(
+      player.x + dir.x * weapon.muzzleDistance + dir.z * sideOffset,
+      weapon.muzzleY,
+      player.z + dir.z * weapon.muzzleDistance - dir.x * sideOffset
+    );
+  }
+
   function getWeaponShotPlan(weapon, player) {
     var aimX = state.pointerWorld.x - player.x;
     var aimZ = state.pointerWorld.z - player.z;
@@ -2953,7 +4492,7 @@
     var dir = new THREE.Vector3(aimX / aimDistance, 0, aimZ / aimDistance);
     if (weapon.id !== "launcher") return { dir: dir };
 
-    var maxRange = weapon.range || weapon.speed * weapon.life;
+    var maxRange = (weapon.range || weapon.speed * weapon.life) * getWeaponRangeMultiplier(weapon);
     var targetDistance = clamp(aimDistance, weapon.muzzleDistance + 0.25, maxRange);
     return {
       dir: dir,
@@ -2964,7 +4503,140 @@
     };
   }
 
-  function createProjectileMesh(weapon, start, angle) {
+  function isBigIronShot(weapon) {
+    return weapon && weapon.id === "revolver" && state.revolverUpgrade === "bigIron";
+  }
+
+  function getWeaponProjectileSpeed(weapon, silverBullet) {
+    var speed = weapon.speed;
+    if (isBigIronShot(weapon)) speed *= 0.62;
+    if (silverBullet) speed *= SILVER_BULLET_SPEED_MULTIPLIER;
+    return speed;
+  }
+
+  function getWeaponProjectileLife(weapon) {
+    var life = weapon.life * getWeaponRangeMultiplier(weapon);
+    if (isBigIronShot(weapon)) return life * 1.7;
+    return life;
+  }
+
+  function getWeaponRangeMultiplier(weapon) {
+    return 1 + Math.max(0, state.attackRangeBonus || 0);
+  }
+
+  function getLauncherBlastRadius() {
+    var radius = WEAPONS.launcher.blastRadius * LAUNCHER_BLAST_RADIUS_MULTIPLIER;
+    if (state.launcherUpgrade === "bombardier" && hasUpgrade("heavyPayload")) radius *= 1.34;
+    return radius;
+  }
+
+  function getLauncherBlastDamage() {
+    var damage = WEAPONS.launcher.blastDamage;
+    if (state.launcherUpgrade === "bombardier" && hasUpgrade("heavyPayload")) damage += 2;
+    return damage * (1 + Math.max(0, state.globalDamageBonus || 0));
+  }
+
+  function hasHeavyPayloadAirburst() {
+    return state.playerClass === "demolitionist" && state.launcherUpgrade === "bombardier" && hasUpgrade("heavyPayload");
+  }
+
+  function getLauncherChainDetonationLimit() {
+    if (state.launcherUpgrade !== "bombardier" || !hasUpgrade("chainDetonation")) return 0;
+    return Math.min(LAUNCHER_CHAIN_MAX_EXPLOSIONS, LAUNCHER_CHAIN_BASE_EXPLOSIONS + getUpgradeCount("moreChainDetonations"));
+  }
+
+  function getLauncherFireRadius() {
+    return FIRE_PATCH_BASE_RADIUS * (hasUpgrade("thermiteCore") ? 1.2 : 1);
+  }
+
+  function getLauncherFireLife() {
+    return FIRE_PATCH_BASE_LIFE + getUpgradeCount("longBurn") * 2.1;
+  }
+
+  function getLauncherFireDamage() {
+    return 1 + getUpgradeCount("hotterFire") + (hasUpgrade("thermiteCore") ? 1 : 0);
+  }
+
+  function hasPyrotechnicianFirePuddles() {
+    return state.playerClass === "demolitionist" && state.launcherUpgrade === "pyrotechnician";
+  }
+
+  function hasPyrotechnicianFireBuff() {
+    return state.playerClass === "demolitionist" && state.launcherUpgrade === "pyrotechnician";
+  }
+
+  function hasPyrotechnicianThermiteCore() {
+    return state.playerClass === "demolitionist" && state.launcherUpgrade === "pyrotechnician" && hasUpgrade("thermiteCore");
+  }
+
+  function hasPyrotechnicianCrossfireShells() {
+    return state.playerClass === "demolitionist" && state.launcherUpgrade === "pyrotechnician" && hasUpgrade("crossfireShells");
+  }
+
+  function getLauncherCrossfireRange() {
+    return WEAPONS.launcher.range * getWeaponRangeMultiplier(WEAPONS.launcher) * LAUNCHER_CROSSFIRE_RANGE_MULTIPLIER;
+  }
+
+  function getLauncherCrossfireTrailRadius() {
+    return getLauncherFireRadius() * 0.46;
+  }
+
+  function getLauncherCrossfireTrailLife() {
+    return getLauncherFireLife() * 0.58;
+  }
+
+  function spawnThermitePlayerFirePatch(x, z) {
+    state.launcherThermitePatches += 1;
+    return spawnFirePatch(x, z, {
+      radius: getLauncherFireRadius(),
+      life: getLauncherFireLife(),
+      damage: getLauncherFireDamage(),
+      thermite: true,
+      damageDelay: 0.08,
+    });
+  }
+
+  function hasLauncherUpgradeOrStarter(id) {
+    if ((id === "napalmShells" || id === "fireproofPowder") && state.launcherUpgrade === "pyrotechnician") return true;
+    return hasUpgrade(id);
+  }
+
+  function getWeaponProjectileVisualSize(weapon, silverBullet) {
+    if (isBigIronShot(weapon)) {
+      var caliber = 1 + getUpgradeCount("biggerCaliber") * 0.18;
+      var silverScale = silverBullet ? SILVER_BULLET_SIZE_MULTIPLIER : 1;
+      return {
+        width: weapon.width * 1.8 * caliber * silverScale,
+        length: weapon.length * 1.55 * caliber * silverScale,
+      };
+    }
+    return {
+      width: weapon.width,
+      length: weapon.length,
+    };
+  }
+
+  function getWeaponProjectileHitRadius(weapon, silverBullet) {
+    if (!weapon) return 0;
+    if (isBigIronShot(weapon)) {
+      var radius = weapon.hitRadius + getUpgradeCount("biggerCaliber") * 0.08;
+      return radius * (silverBullet ? SILVER_BULLET_SIZE_MULTIPLIER : 1);
+    }
+    return weapon.hitRadius;
+  }
+
+  function getDualRicochetLimit() {
+    if (state.revolverUpgrade !== "dualRevolvers" || !hasUpgrade("ricochetRounds")) return 0;
+    return 1 + getUpgradeCount("moreRicochets");
+  }
+
+  function getDualSoftAimStrength() {
+    if (state.revolverUpgrade !== "dualRevolvers" || !hasUpgrade("softAim")) return 0;
+    return DUAL_SOFT_AIM_BASE + state.duelistFocus * DUELIST_FOCUS_SOFT_AIM_BONUS;
+  }
+
+  function createProjectileMesh(weapon, start, angle, visualSize, options) {
+    options = options || {};
     if (weapon.id === "launcher") {
       var grenade = new THREE.Group();
       grenade.position.set(start.x, start.y, start.z);
@@ -2976,19 +4648,116 @@
       return grenade;
     }
 
+    if (weapon.id === "rifle" && options.electric) {
+      return createElectricRifleProjectileMesh(start, angle, visualSize || getWeaponProjectileVisualSize(weapon));
+    }
+
     var mat = weapon.id === "rifle" ? mats.rifleTracer : mats.bullet;
-    var mesh = addSharedBox(effectRoot, weapon.width, weapon.width, weapon.length, mat, start.x, start.y, start.z);
+    var size = visualSize || getWeaponProjectileVisualSize(weapon);
+    var mesh = addSharedBox(effectRoot, size.width, size.width, size.length, mat, start.x, start.y, start.z);
     mesh.rotation.y = angle;
     return mesh;
   }
 
-  function explodeGrenade(x, z, radius, damage) {
-    var blastRadius = radius || WEAPONS.launcher.blastRadius;
-    var blastDamage = damage || WEAPONS.launcher.blastDamage;
-    addShockwave(x, z, blastRadius, 0.5, 0xffe0a0);
+  function createElectricRifleProjectileMesh(start, angle, visualSize) {
+    var size = visualSize || getWeaponProjectileVisualSize(WEAPONS.rifle);
+    var group = new THREE.Group();
+    group.position.set(start.x, start.y, start.z);
+    group.rotation.y = angle;
+    group.userData.electricProjectile = true;
+    group.userData.electricParts = { bolts: [], rings: [] };
+    effectRoot.add(group);
+
+    addSharedBox(group, size.width * 1.35, size.width * 1.35, size.length * 1.12, mats.rifleTracer, 0, 0, 0);
+
+    var glowMat = mats.rifleElectricGlow.clone();
+    glowMat.opacity = 0.34;
+    var glow = new THREE.Mesh(
+      getSharedGeometry("rifle-electric-projectile-glow", function () {
+        return new THREE.SphereGeometry(1, 12, 8);
+      }),
+      glowMat
+    );
+    glow.userData.disposeGeometry = false;
+    glow.userData.disposeMaterial = true;
+    glow.userData.startOpacity = glowMat.opacity;
+    glow.castShadow = false;
+    glow.receiveShadow = false;
+    glow.scale.set(size.width * 4.25, size.width * 3.1, size.length * 0.98);
+    group.add(glow);
+    group.userData.electricParts.glow = glow;
+
+    for (var r = 0; r < 2; r++) {
+      var ringMat = mats.lightning.clone();
+      ringMat.opacity = r === 0 ? 0.56 : 0.38;
+      var ring = new THREE.Mesh(
+        getSharedGeometry("rifle-electric-projectile-ring", function () {
+          return new THREE.RingGeometry(0.26, 0.36, 42);
+        }),
+        ringMat
+      );
+      ring.userData.disposeGeometry = false;
+      ring.userData.disposeMaterial = true;
+      ring.userData.startOpacity = ringMat.opacity;
+      ring.userData.phase = r * Math.PI * 0.5;
+      ring.castShadow = false;
+      ring.receiveShadow = false;
+      ring.rotation.x = Math.PI / 2;
+      ring.rotation.z = r * Math.PI * 0.5;
+      ring.scale.setScalar(r === 0 ? 1.12 : 0.86);
+      group.add(ring);
+      group.userData.electricParts.rings.push(ring);
+    }
+
+    for (var i = 0; i < 6; i++) {
+      var boltMat = mats.lightning.clone();
+      boltMat.opacity = 0.86;
+      var bolt = addSharedBox(group, size.width * 0.2, size.width * 0.2, size.length * rand(0.42, 0.72), boltMat, 0, 0, 0);
+      bolt.castShadow = false;
+      bolt.receiveShadow = false;
+      bolt.userData.disposeMaterial = true;
+      bolt.userData.phase = (Math.PI * 2 * i) / 6;
+      bolt.userData.radiusX = size.width * rand(1.45, 2.05);
+      bolt.userData.radiusY = size.width * rand(1.1, 1.65);
+      bolt.userData.baseZ = rand(-size.length * 0.42, size.length * 0.42);
+      bolt.userData.startOpacity = boltMat.opacity;
+      bolt.rotation.x = rand(-0.6, 0.6);
+      bolt.rotation.y = rand(-0.7, 0.7);
+      bolt.rotation.z = bolt.userData.phase;
+      group.userData.electricParts.bolts.push(bolt);
+    }
+
+    updateElectricProjectileVisual({ mesh: group, age: 0, visualWidth: size.width, visualLength: size.length }, 0);
+    return group;
+  }
+
+  function createLauncherFireShardMesh(x, z, angle) {
+    var group = new THREE.Group();
+    group.position.set(x, 0.56, z);
+    group.rotation.y = angle;
+    group.userData.noDebris = true;
+    effectRoot.add(group);
+    addSharedBox(group, 0.26, 0.18, 0.8, mats.fireCore, 0, 0, 0);
+    addSharedBox(group, 0.18, 0.14, 0.44, mats.fireHot, 0, 0.04, 0.25);
+    addSharedBox(group, 0.34, 0.08, 0.34, mats.fireOrange, 0, -0.08, -0.24);
+    return group;
+  }
+
+  function explodeGrenade(x, z, radius, damage, options) {
+    options = options || {};
+    var blastRadius = radius || getLauncherBlastRadius();
+    var blastDamage = damage || getLauncherBlastDamage();
+    var source = {
+      type: "launcherExplosion",
+      kind: options.kind || "main",
+      bullet: options.bullet || null,
+      chainContext: options.chainContext || null,
+      killedEnemies: [],
+    };
+    addShockwave(x, z, blastRadius, options.kind === "chain" ? 0.38 : 0.5, options.kind === "chain" ? 0xffb347 : 0xffe0a0);
     addScorchMark(x, z, blastRadius * 0.62);
-    addLightFlash(x, 1.2, z, 0xff7a22, 5.8, 12, 0.28);
-    for (var s = 0; s < 12; s++) {
+    addLightFlash(x, 1.2, z, options.kind === "chain" ? 0xffb347 : 0xff7a22, options.kind === "chain" ? 4.6 : 5.8, 12, 0.28);
+    for (var s = 0; s < (options.kind === "cluster" ? 7 : 12); s++) {
       addSmokePuff(x + rand(-0.8, 0.8), rand(0.45, 1.25), z + rand(-0.8, 0.8), rand(0.48, 0.95), rand(0.55, 1.05));
     }
     var victims = state.enemies.slice();
@@ -2996,15 +4765,16 @@
       var enemy = victims[i];
       if (state.enemies.indexOf(enemy) === -1) continue;
       var dist = Math.hypot(enemy.x - x, enemy.z - z);
-      if (dist > blastRadius) continue;
-      var ratio = 1 - dist / blastRadius;
-      var dealt = Math.max(1, Math.ceil(blastDamage * ratio + 0.5));
-      damageEnemy(enemy, dealt, x, z);
+      if (dist > blastRadius + enemy.radius * 0.28) continue;
+      var ratio = 1 - clamp(dist / blastRadius, 0, 1);
+      var falloff = hasUpgrade("airburstFuse") ? 0.78 + ratio * 0.42 : ratio;
+      var dealt = Math.max(1, Math.ceil(blastDamage * falloff + 0.5));
+      damageEnemy(enemy, dealt, x, z, source);
     }
 
-    for (var p = 0; p < 34; p++) {
+    for (var p = 0; p < (options.kind === "cluster" ? 22 : 34); p++) {
       var angle = rand(0, Math.PI * 2);
-      var speed = rand(1.4, 7.2);
+      var speed = rand(1.4, options.kind === "cluster" ? 5.4 : 7.2);
       spawnParticle(
         x + Math.cos(angle) * rand(0, 0.5),
         rand(0.35, 1.35),
@@ -3017,7 +4787,349 @@
         p % 4 === 0 ? mats.flash : mats.explosion
       );
     }
-    state.shake = Math.min(1.4, state.shake + 0.75);
+    state.shake = Math.min(1.4, state.shake + (options.kind === "cluster" ? 0.46 : 0.75));
+    handleLauncherExplosionAftermath(x, z, blastRadius, blastDamage, source, options);
+    return source;
+  }
+
+  function handleLauncherExplosionAftermath(x, z, radius, damage, source, options) {
+    var killedCount = source.killedEnemies.length;
+    if (hasPyrotechnicianFirePuddles() && !options.noFire) {
+      spawnFirePatch(x, z, {
+        radius: getLauncherFireRadius(),
+        life: getLauncherFireLife(),
+        damage: getLauncherFireDamage(),
+      });
+    }
+    if (hasPyrotechnicianCrossfireShells() && source.kind === "main" && options.bullet && !options.noCrossfire) {
+      spawnLauncherCrossfireShards(x, z, options.bullet);
+    }
+    if (state.playerClass === "demolitionist" && state.launcherUpgrade === "bombardier") {
+      var spreadContext = getLauncherSpreadContext(options, x, z);
+      if (hasUpgrade("chainDetonation") && !options.chainContext) {
+        options.chainContext = {
+          remaining: getLauncherChainDetonationLimit(),
+          triggered: 0,
+        };
+        source.chainContext = options.chainContext;
+      }
+      tryTriggerLauncherFullSalvo(killedCount, source);
+      maybeRampMadmansJourney(killedCount, source, options);
+      if (hasUpgrade("shrapnelRain") && !options.noShrapnel) {
+        spawnLauncherShrapnel(x, z, 8 + getUpgradeCount("moreBomblets"));
+      }
+      if (hasUpgrade("clusterCharge") && !options.noCluster && source.kind === "main") {
+        spawnLauncherBomblets(x, z, radius, damage, options, spreadContext);
+      }
+      if (options.bullet && options.bullet.powderEcho && source.kind === "main" && !options.echoed) {
+        spawnLauncherPowderEchoes(x, z, radius, damage, options, spreadContext);
+      }
+      maybeTriggerLauncherChainDetonations(source, options, x, z, radius, damage, spreadContext);
+    }
+  }
+
+  function maybeRampMadmansJourney(killedCount, source, options) {
+    if (!hasUpgrade("madmansJourney")) return;
+    if (!source || source.kind !== "main" || !options || !options.bullet) return;
+    if (killedCount <= 1) return;
+    var before = state.launcherMadmanStacks || 0;
+    state.launcherMadmanStacks = Math.min(LAUNCHER_MADMAN_MAX_STACKS, before + 1);
+    if (state.launcherMadmanStacks > before) {
+      state.launcherMadmanTriggers = (state.launcherMadmanTriggers || 0) + 1;
+      addLightFlash(state.player ? state.player.x : options.bullet.x, 1.25, state.player ? state.player.z : options.bullet.z, 0xffc45f, 2.8, 7.5, 0.2);
+    }
+  }
+
+  function tryTriggerLauncherFullSalvo(killCount, context) {
+    if (state.playerClass !== "demolitionist" || state.launcherUpgrade !== "bombardier" || !hasUpgrade("fullSalvo")) return 0;
+    if (killCount < LAUNCHER_FULL_SALVO_KILL_THRESHOLD) return 0;
+    var triggerContext = context || {};
+    if (triggerContext.fullSalvoTriggered) return 0;
+    triggerContext.fullSalvoTriggered = true;
+    var restored = restoreWeaponAmmo("launcher", getWeaponMagazine(WEAPONS.launcher));
+    if (restored > 0) state.launcherAmmoRefills += 1;
+    return restored;
+  }
+
+  function spawnLauncherCrossfireShards(x, z, bullet) {
+    var dirX = bullet && isFinite(bullet.dirX) ? bullet.dirX : 0;
+    var dirZ = bullet && isFinite(bullet.dirZ) ? bullet.dirZ : 0;
+    var len = Math.hypot(dirX, dirZ);
+    if (len < 0.001 && state.player) {
+      dirX = x - state.player.x;
+      dirZ = z - state.player.z;
+      len = Math.hypot(dirX, dirZ);
+    }
+    if (len < 0.001) {
+      dirX = 0;
+      dirZ = 1;
+      len = 1;
+    }
+    dirX /= len;
+    dirZ /= len;
+    var sideDirs = [
+      { x: -dirZ, z: dirX },
+      { x: dirZ, z: -dirX },
+    ];
+    for (var i = 0; i < sideDirs.length; i++) {
+      spawnLauncherFireShard(x, z, sideDirs[i].x, sideDirs[i].z);
+    }
+  }
+
+  function spawnLauncherFireShard(x, z, dirX, dirZ) {
+    var len = Math.hypot(dirX, dirZ);
+    if (len < 0.001) return;
+    dirX /= len;
+    dirZ /= len;
+    var range = getLauncherCrossfireRange();
+    var speed = LAUNCHER_CROSSFIRE_SPEED;
+    var life = range / speed;
+    var startX = x + dirX * 0.38;
+    var startZ = z + dirZ * 0.38;
+    var angle = Math.atan2(dirX, dirZ);
+    var mesh = createLauncherFireShardMesh(startX, startZ, angle);
+    state.launcherCrossfireShards += 1;
+    state.bullets.push({
+      type: "launcherFireShard",
+      x: startX,
+      y: 0.56,
+      z: startZ,
+      dirX: dirX,
+      dirZ: dirZ,
+      speed: speed,
+      life: life,
+      maxLife: life,
+      age: 0,
+      baseDamage: 0,
+      damage: 0,
+      hitRadius: 0.18,
+      visualWidth: 0.3,
+      visualLength: 0.8,
+      piercing: false,
+      piercedEnemies: [],
+      hitEnemies: [],
+      ricochetRemaining: 0,
+      ricochetDepth: 0,
+      homing: 0,
+      blastRadius: 0,
+      blastDamage: 0,
+      targetX: null,
+      targetZ: null,
+      targetRadius: 0,
+      fireShard: true,
+      fireTrailTimer: 0,
+      trailTimer: 0,
+      mesh: mesh,
+    });
+  }
+
+  function getLauncherSpreadContext(options, x, z) {
+    options.spreadContext = options.spreadContext || {
+      points: [],
+    };
+    if (!options.spreadContext.seeded) {
+      reserveLauncherSpreadPoint(options.spreadContext, x, z);
+      options.spreadContext.seeded = true;
+    }
+    return options.spreadContext;
+  }
+
+  function reserveLauncherSpreadPoint(context, x, z) {
+    if (!context || !context.points) return;
+    context.points.push({ x: x, z: z });
+    if (context.points.length > 80) context.points.shift();
+  }
+
+  function pointTooCloseToLauncherSpread(context, x, z, minDistance) {
+    if (!context || !context.points) return false;
+    for (var i = 0; i < context.points.length; i++) {
+      var point = context.points[i];
+      if (Math.hypot(point.x - x, point.z - z) < minDistance) return true;
+    }
+    return false;
+  }
+
+  function getLauncherSpreadPoint(originX, originZ, desiredX, desiredZ, radius, minDistance, context, index) {
+    var baseAngle = Math.atan2(desiredZ - originZ, desiredX - originX);
+    if (!isFinite(baseAngle)) baseAngle = rand(0, Math.PI * 2);
+    var desiredDistance = Math.max(radius * 0.58, Math.hypot(desiredX - originX, desiredZ - originZ));
+    var candidates = [
+      { x: desiredX, z: desiredZ },
+    ];
+    for (var i = 0; i < 12; i++) {
+      var side = i % 2 === 0 ? 1 : -1;
+      var angle = baseAngle + side * (0.28 + i * 0.17) + index * 0.11;
+      var distance = desiredDistance + radius * (0.16 + i * 0.08);
+      candidates.push({
+        x: originX + Math.cos(angle) * distance,
+        z: originZ + Math.sin(angle) * distance,
+      });
+    }
+    for (var c = 0; c < candidates.length; c++) {
+      var candidate = candidates[c];
+      if (!pointTooCloseToLauncherSpread(context, candidate.x, candidate.z, minDistance)) {
+        reserveLauncherSpreadPoint(context, candidate.x, candidate.z);
+        return candidate;
+      }
+    }
+    var fallbackAngle = baseAngle + index * 0.72 + rand(-0.22, 0.22);
+    var fallbackDistance = desiredDistance + radius * 1.15;
+    var fallback = {
+      x: originX + Math.cos(fallbackAngle) * fallbackDistance,
+      z: originZ + Math.sin(fallbackAngle) * fallbackDistance,
+    };
+    reserveLauncherSpreadPoint(context, fallback.x, fallback.z);
+    return fallback;
+  }
+
+  function recordLauncherExplosionSample(x, z, radius, options) {
+    if (!options || (options.kind !== "cluster" && options.kind !== "chain" && options.kind !== "echo")) return;
+    state.launcherExplosionSpreadSamples.push({
+      x: x,
+      z: z,
+      radius: radius,
+      kind: options.kind,
+    });
+    if (state.launcherExplosionSpreadSamples.length > 80) state.launcherExplosionSpreadSamples.shift();
+  }
+
+  function spawnLauncherBomblets(x, z, radius, damage, options, spreadContext) {
+    var count = 3 + getUpgradeCount("moreBomblets");
+    for (var i = 0; i < count; i++) {
+      var angle = (Math.PI * 2 * i) / count + rand(-0.22, 0.22);
+      var distance = rand(radius * 0.62, radius * 1.02);
+      var point = getLauncherSpreadPoint(x, z, x + Math.cos(angle) * distance, z + Math.sin(angle) * distance, radius, radius * 0.42, spreadContext, i);
+      state.launcherBomblets += 1;
+      scheduleDelayedExplosion(point.x, point.z, radius * 0.48, damage * 0.58, 0.08 + i * 0.035, {
+        bullet: options.bullet || null,
+        kind: "cluster",
+        chainContext: options.chainContext || null,
+        spreadContext: spreadContext,
+        noCluster: true,
+      });
+    }
+  }
+
+  function spawnLauncherPowderEchoes(x, z, radius, damage, options, spreadContext) {
+    var baseAngle = rand(0, Math.PI * 2);
+    for (var i = 0; i < LAUNCHER_POWDER_ECHO_COUNT; i++) {
+      var angle = baseAngle + (Math.PI * 2 * i) / LAUNCHER_POWDER_ECHO_COUNT + rand(-0.14, 0.14);
+      var distance = radius * rand(0.72, 0.98);
+      var point = getLauncherSpreadPoint(x, z, x + Math.cos(angle) * distance, z + Math.sin(angle) * distance, radius, radius * 0.46, spreadContext, i + 20);
+      state.launcherPowderEchoes += 1;
+      scheduleDelayedExplosion(point.x, point.z, radius * 0.38, damage * 0.45, 0.22 + i * 0.055, {
+        bullet: options.bullet,
+        kind: "echo",
+        chainContext: options.chainContext || null,
+        spreadContext: spreadContext,
+        noCluster: true,
+        noShrapnel: true,
+        echoed: true,
+      });
+    }
+  }
+
+  function maybeTriggerLauncherChainDetonations(source, options, originX, originZ, radius, damage, spreadContext) {
+    if (!hasUpgrade("chainDetonation") || !source.killedEnemies.length) return;
+    var context = source.chainContext || options.chainContext || {
+      remaining: getLauncherChainDetonationLimit(),
+      triggered: 0,
+    };
+    source.chainContext = context;
+    options.chainContext = context;
+    if (context.remaining <= 0) return;
+    var killed = source.killedEnemies.slice();
+    for (var i = 0; i < killed.length && context.remaining > 0; i++) {
+      var kill = killed[i];
+      context.remaining -= 1;
+      context.triggered += 1;
+      state.launcherChainDetonations += 1;
+      var killDx = kill.x - originX;
+      var killDz = kill.z - originZ;
+      var killDist = Math.hypot(killDx, killDz);
+      var angle = killDist > 0.001 ? Math.atan2(killDz, killDx) : rand(0, Math.PI * 2);
+      var desiredDistance = Math.max(radius * 0.72, killDist + radius * 0.34);
+      var desiredX = originX + Math.cos(angle) * desiredDistance;
+      var desiredZ = originZ + Math.sin(angle) * desiredDistance;
+      var point = getLauncherSpreadPoint(originX, originZ, desiredX, desiredZ, radius, radius * 0.5, spreadContext, i + context.triggered);
+      scheduleDelayedExplosion(point.x, point.z, radius * 0.56, damage * 0.62, 0.06 + i * 0.035, {
+        bullet: options.bullet || null,
+        kind: "chain",
+        chainContext: context,
+        spreadContext: spreadContext,
+        noCluster: true,
+      });
+    }
+  }
+
+  function scheduleDelayedExplosion(x, z, radius, damage, delay, options) {
+    recordLauncherExplosionSample(x, z, radius, options || {});
+    state.delayedExplosions.push({
+      x: x,
+      z: z,
+      radius: radius,
+      damage: damage,
+      delay: delay,
+      options: options || {},
+    });
+  }
+
+  function updateDelayedExplosions(dt) {
+    for (var i = state.delayedExplosions.length - 1; i >= 0; i--) {
+      var explosion = state.delayedExplosions[i];
+      explosion.delay -= dt;
+      if (explosion.delay > 0) continue;
+      explodeGrenade(explosion.x, explosion.z, explosion.radius, explosion.damage, explosion.options);
+      state.delayedExplosions.splice(i, 1);
+    }
+  }
+
+  function spawnLauncherShrapnel(x, z, count) {
+    var amount = Math.max(4, Math.round(count || 8));
+    var fullSalvoContext = {
+      kills: 0,
+      fullSalvoTriggered: false,
+    };
+    for (var i = 0; i < amount; i++) {
+      var angle = (Math.PI * 2 * i) / amount + rand(-0.12, 0.12);
+      var start = new THREE.Vector3(x + Math.sin(angle) * 0.38, WEAPONS.revolver.muzzleY, z + Math.cos(angle) * 0.38);
+      var mesh = createProjectileMesh(WEAPONS.revolver, start, angle, {
+        width: 0.08,
+        length: 0.54,
+      });
+      state.launcherShrapnelShots += 1;
+      state.bullets.push({
+        type: "launcherShrapnel",
+        x: start.x,
+        y: start.y,
+        z: start.z,
+        dirX: Math.sin(angle),
+        dirZ: Math.cos(angle),
+        speed: 26,
+        life: 0.42,
+        maxLife: 0.42,
+        age: 0,
+        baseDamage: 1.2,
+        damage: 1.2,
+        hitRadius: 0.12,
+        visualWidth: 0.08,
+        visualLength: 0.54,
+        piercing: false,
+        piercedEnemies: [],
+        hitEnemies: [],
+        ricochetRemaining: 0,
+        ricochetDepth: 0,
+        homing: 0,
+        blastRadius: 0,
+        blastDamage: 0,
+        targetX: null,
+        targetZ: null,
+        targetRadius: 0,
+        trailTimer: 0,
+        fullSalvoContext: fullSalvoContext,
+        mesh: mesh,
+      });
+    }
   }
 
   function updateSpawning(dt) {
@@ -3037,8 +5149,10 @@
       var e = state.enemies[i];
       e.attackCooldown = Math.max(0, e.attackCooldown - dt);
       if (e.type === "spitter") e.acidCooldown = Math.max(0, (e.acidCooldown || 0) - dt);
+      e.fireSlowTimer = Math.max(0, (e.fireSlowTimer || 0) - dt);
       e.hitPulse = Math.max(0, e.hitPulse - dt * 5);
       e.spitPulse = Math.max(0, (e.spitPulse || 0) - dt * 2.7);
+      var enemySpeed = e.speed * (e.fireSlowTimer > 0 ? 0.62 : 1);
 
       var dx = p.x - e.x;
       var dz = p.z - e.z;
@@ -3086,23 +5200,23 @@
         var steer = null;
         if (e.type === "spitter" && dist < ACID_SPIT_MIN_RANGE) {
           steer = chooseClearZombieDirection(e, -nx, -nz, dt);
-          moveX = steer.x * e.speed * 0.74;
-          moveZ = steer.z * e.speed * 0.74;
+          moveX = steer.x * enemySpeed * 0.74;
+          moveZ = steer.z * enemySpeed * 0.74;
           faceX = nx;
           faceZ = nz;
         } else if (e.type === "spitter" && dist <= ACID_SPIT_RANGE * 0.92) {
           if (!spitterBusy) {
             var side = e.avoidSide || 1;
             steer = chooseClearZombieDirection(e, -nz * side, nx * side, dt);
-            moveX = steer.x * e.speed * 0.26;
-            moveZ = steer.z * e.speed * 0.26;
+            moveX = steer.x * enemySpeed * 0.26;
+            moveZ = steer.z * enemySpeed * 0.26;
           }
           faceX = nx;
           faceZ = nz;
         } else {
           steer = chooseZombieDirection(e, p, nx, nz, dist, dt);
-          moveX = steer.x * e.speed;
-          moveZ = steer.z * e.speed;
+          moveX = steer.x * enemySpeed;
+          moveZ = steer.z * enemySpeed;
           faceX = steer.x;
           faceZ = steer.z;
         }
@@ -3115,8 +5229,8 @@
       resolveMoverPosition(e, e.radius, ENEMY_BOUNDS_EXTRA);
       var moved = Math.hypot(e.x - oldX, e.z - oldZ);
       updateZombieStuckState(e, moved, dist, dt);
-      e.moveAmount += (clamp(moved / Math.max(0.001, e.speed * dt), 0, 1) - e.moveAmount) * Math.min(1, dt * 10);
-      e.walkPhase += dt * (4.6 + e.speed * 1.1) * e.moveAmount;
+      e.moveAmount += (clamp(moved / Math.max(0.001, enemySpeed * dt), 0, 1) - e.moveAmount) * Math.min(1, dt * 10);
+      e.walkPhase += dt * (4.6 + enemySpeed * 1.1) * e.moveAmount;
 
       e.group.position.set(e.x, 0, e.z);
       e.group.rotation.y = Math.atan2(faceX, faceZ);
@@ -3464,12 +5578,354 @@
     state.acidPuddles.splice(index, 1);
   }
 
+  function spawnFirePatch(x, z, options) {
+    options = options || {};
+    if (pointHitsObstacle(x, z, 0.38)) {
+      var safe = findNearestClearGroundPoint(x, z, 0.48);
+      x = safe.x;
+      z = safe.z;
+    }
+    var radius = options.radius || getLauncherFireRadius();
+    var life = options.life || getLauncherFireLife();
+    var visual = createFirePatchVisual(x, z, radius, !!options.trail);
+    state.firePatches.push({
+      x: x,
+      z: z,
+      radius: radius,
+      life: life,
+      startLife: life,
+      damage: options.damage || getLauncherFireDamage(),
+      damageTimer: options.damageDelay || 0.05,
+      emberTimer: 0,
+      trail: !!options.trail,
+      thermite: !!options.thermite,
+      backdraft: !!options.backdraft,
+      splinter: !!options.splinter,
+      mesh: visual.group,
+      glow: visual.glow,
+      surface: visual.surface,
+      core: visual.core,
+      hotCore: visual.hotCore,
+      smoke: visual.smoke,
+      ring: visual.ring,
+      innerRing: visual.innerRing,
+      flames: visual.flames,
+      cinders: visual.cinders,
+    });
+    addLightFlash(x, 0.75, z, 0xff7b24, options.trail ? 2.0 : 3.6, options.trail ? 6 : 9, 0.22);
+    if (!options.trail) addShockwave(x, z, radius * 0.72, 0.26, 0xff8a2a);
+    for (var i = 0; i < (options.trail ? 14 : 30); i++) {
+      var angle = rand(0, Math.PI * 2);
+      var speed = rand(0.6, options.trail ? 2.9 : 4.8);
+      spawnParticle(
+        x + Math.cos(angle) * rand(0, radius * 0.28),
+        rand(0.18, 0.75),
+        z + Math.sin(angle) * rand(0, radius * 0.28),
+        Math.cos(angle) * speed,
+        rand(0.75, 3.2),
+        Math.sin(angle) * speed,
+        rand(0.18, 0.38),
+        rand(0.045, 0.12),
+        i % 7 === 0 ? mats.fireHot : i % 4 === 0 ? mats.fireCore : mats.fireOrange
+      );
+    }
+    trimEffects(state.firePatches, MAX_FIRE_PATCHES, removeFirePatch);
+    return state.firePatches[state.firePatches.length - 1];
+  }
+
+  function createFirePatchVisual(x, z, radius, trail) {
+    var group = new THREE.Group();
+    group.position.set(x, 0, z);
+    effectRoot.add(group);
+
+    var glow = addPuddleCircle(group, mats.fireGlow.clone(), radius * rand(1.16, 1.34), radius * rand(0.86, 1.1), 0.096, 3, rand(0, Math.PI * 2));
+    var surface = addPuddleCircle(group, mats.fireGround.clone(), radius * rand(0.92, 1.15), radius * rand(0.72, 1.02), 0.106, 4, rand(0, Math.PI * 2));
+    var core = addPuddleCircle(group, mats.fireCore.clone(), radius * rand(0.4, 0.6), radius * rand(0.22, 0.4), 0.122, 6, rand(0, Math.PI * 2));
+    var hotCore = addPuddleCircle(group, mats.fireHot.clone(), radius * rand(0.2, 0.32), radius * rand(0.12, 0.22), 0.138, 7, rand(0, Math.PI * 2));
+    var smoke = addPuddleCircle(group, mats.fireSmoke.clone(), radius * rand(0.84, 1.1), radius * rand(0.62, 0.92), 0.082, -1, rand(0, Math.PI * 2));
+    var ring = addFireRing(group, radius * 0.78, 0.13, mats.fireOrange, 0.52);
+    var innerRing = addFireRing(group, radius * 0.43, 0.142, mats.fireHot, 0.58);
+
+    var flames = [];
+    var flameCount = trail ? 7 : 14;
+    for (var i = 0; i < flameCount; i++) {
+      var angle = rand(0, Math.PI * 2);
+      var distance = rand(0.08, radius * (trail ? 0.5 : 0.78));
+      flames.push(addFireFlame(group, Math.cos(angle) * distance, Math.sin(angle) * distance, rand(0.34, trail ? 0.72 : 1.05), i, trail));
+    }
+    var cinders = [];
+    var cinderCount = trail ? 5 : 10;
+    for (var c = 0; c < cinderCount; c++) {
+      var cinderAngle = rand(0, Math.PI * 2);
+      var cinderDistance = rand(radius * 0.18, radius * (trail ? 0.62 : 0.9));
+      cinders.push(addFireCinder(group, Math.cos(cinderAngle) * cinderDistance, Math.sin(cinderAngle) * cinderDistance, rand(0.18, trail ? 0.32 : 0.48), c));
+    }
+    return { group: group, glow: glow, surface: surface, core: core, hotCore: hotCore, smoke: smoke, ring: ring, innerRing: innerRing, flames: flames, cinders: cinders };
+  }
+
+  function addFireRing(parent, radius, y, sourceMaterial, opacity) {
+    var mat = (sourceMaterial || mats.fireOrange).clone();
+    mat.opacity = opacity == null ? 0.5 : opacity;
+    var mesh = new THREE.Mesh(getSharedGeometry("fire-patch-ring", function () {
+      return new THREE.RingGeometry(0.58, 1, 42);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = true;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = y;
+    mesh.scale.set(radius, radius * 0.82, 1);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = 6;
+    rememberBase(mesh);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function addFireFlame(parent, x, z, size, index, trail) {
+    var stack = new THREE.Group();
+    stack.userData.noDebris = true;
+    stack.userData.flamePhase = rand(0, Math.PI * 2);
+    stack.userData.baseY = 0;
+    stack.position.set(x, 0, z);
+    stack.rotation.y = rand(0, Math.PI * 2);
+
+    var tiers = trail ? 2 : 3;
+    for (var i = 0; i < tiers; i++) {
+      var materialSource = i === tiers - 1 ? mats.fireBlockHot : i === 0 && index % 3 === 2 ? mats.fireBlockRed : i === 0 ? mats.fireBlockCore : mats.fireBlockHot;
+      var mat = materialSource.clone();
+      var mesh = new THREE.Mesh(getSharedGeometry("fire-flame-block", function () {
+        return new THREE.BoxGeometry(1, 1, 1);
+      }), mat);
+      mesh.userData.disposeGeometry = false;
+      mesh.userData.disposeMaterial = true;
+      mesh.userData.noDebris = true;
+      mesh.userData.baseOpacity = mat.opacity;
+      var tierScale = 1 - i * 0.23;
+      mesh.position.set(rand(-0.06, 0.06) * size, 0.18 + i * size * 0.42, rand(-0.06, 0.06) * size);
+      mesh.rotation.set(rand(-0.18, 0.18), rand(0, Math.PI * 2), rand(-0.18, 0.18));
+      mesh.scale.set(size * (0.46 + tierScale * 0.2), size * (0.46 + tierScale * 0.48), size * (0.34 + tierScale * 0.16));
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.renderOrder = 8 + i * 0.05;
+      rememberBase(mesh);
+      stack.add(mesh);
+    }
+    rememberBase(stack);
+    parent.add(stack);
+    return stack;
+  }
+
+  function addFireCinder(parent, x, z, size, index) {
+    var mat = (index % 3 === 0 ? mats.fireBlockRed : index % 3 === 1 ? mats.fireBlockCore : mats.fireBlockHot).clone();
+    mat.opacity *= 0.72;
+    var mesh = new THREE.Mesh(getSharedGeometry("fire-cinder-block", function () {
+      return new THREE.BoxGeometry(1, 1, 1);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = true;
+    mesh.userData.noDebris = true;
+    mesh.userData.cinderPhase = rand(0, Math.PI * 2);
+    mesh.userData.baseOpacity = mat.opacity;
+    mesh.position.set(x, 0.105, z);
+    mesh.rotation.set(0, rand(0, Math.PI * 2), 0);
+    mesh.scale.set(size * rand(0.9, 1.45), 0.035, size * rand(0.55, 1.1));
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = 5;
+    rememberBase(mesh);
+    parent.add(mesh);
+    return mesh;
+  }
+
+  function updateFirePatches(dt) {
+    var playerInFire = false;
+    for (var i = state.firePatches.length - 1; i >= 0; i--) {
+      var patch = state.firePatches[i];
+      patch.life -= dt;
+      patch.damageTimer = Math.max(0, patch.damageTimer - dt);
+      patch.emberTimer -= dt;
+      updateFirePatchVisual(patch, i, dt);
+      if (patch.damageTimer <= 0) {
+        patch.damageTimer = FIRE_PATCH_DAMAGE_INTERVAL;
+        damageEnemiesInFirePatch(patch);
+      }
+      if (state.player && Math.hypot(state.player.x - patch.x, state.player.z - patch.z) <= patch.radius + state.player.radius * 0.35) {
+        playerInFire = true;
+      }
+      if (patch.emberTimer <= 0) {
+        patch.emberTimer = patch.trail ? 0.16 : 0.09;
+        spawnFirePatchEmber(patch);
+      }
+      if (patch.life <= 0) removeFirePatch(i);
+    }
+    updateLauncherFireBuff(dt, playerInFire);
+  }
+
+  function updateFirePatchVisual(patch, index, dt) {
+    var fade = clamp(patch.life / patch.startLife, 0, 1);
+    var pulse = 1 + Math.sin(state.time * 8.5 + index) * 0.075;
+    if (patch.glow) {
+      var glowPulse = 1 + Math.sin(state.time * 5.6 + index * 0.7) * 0.12;
+      patch.glow.material.opacity = 0.28 * Math.min(1, fade * 1.35) * (0.76 + Math.sin(state.time * 11 + index) * 0.18);
+      patch.glow.rotation.z -= dt * 0.045;
+      scaleFromBase(patch.glow, glowPulse, 1 - (glowPulse - 1) * 0.32, 1);
+    }
+    if (patch.surface) {
+      patch.surface.material.opacity = 0.5 * Math.min(1, fade * 1.45) * (0.84 + Math.sin(state.time * 10 + index) * 0.16);
+      patch.surface.rotation.z += dt * (patch.trail ? 0.24 : 0.14);
+      scaleFromBase(patch.surface, pulse, 1 - (pulse - 1) * 0.46, 1);
+    }
+    if (patch.core) {
+      patch.core.material.opacity = 0.38 * Math.min(1, fade * 1.85) * (0.7 + Math.sin(state.time * 16 + index) * 0.3);
+      patch.core.rotation.z -= dt * 0.42;
+      scaleFromBase(patch.core, 1 + Math.sin(state.time * 12 + index) * 0.18, 1 + Math.cos(state.time * 9 + index) * 0.12, 1);
+    }
+    if (patch.hotCore) {
+      var hotPulse = 1 + Math.sin(state.time * 20 + index * 0.6) * 0.22;
+      patch.hotCore.material.opacity = 0.14 * Math.min(1, fade * 2.25) * (0.72 + Math.sin(state.time * 28 + index) * 0.24);
+      patch.hotCore.rotation.z += dt * 0.7;
+      scaleFromBase(patch.hotCore, hotPulse, 1 + Math.cos(state.time * 17 + index) * 0.14, 1);
+    }
+    if (patch.smoke) {
+      patch.smoke.material.opacity = 0.23 * Math.min(1, fade * 1.25) * (0.82 + Math.sin(state.time * 4 + index) * 0.12);
+      patch.smoke.rotation.z += dt * 0.07;
+    }
+    if (patch.ring) {
+      var ringPulse = 1 + ((state.time * 0.95 + index * 0.23) % 1) * 0.36;
+      patch.ring.material.opacity = 0.42 * fade * (2 - ringPulse);
+      scaleFromBase(patch.ring, ringPulse, ringPulse * 0.82, 1);
+    }
+    if (patch.innerRing) {
+      var innerPulse = 1 + ((state.time * 1.35 + index * 0.31) % 1) * 0.48;
+      patch.innerRing.material.opacity = 0.46 * fade * (2 - innerPulse);
+      patch.innerRing.rotation.z -= dt * 0.22;
+      scaleFromBase(patch.innerRing, innerPulse, innerPulse * 0.78, 1);
+    }
+    var flames = patch.flames || [];
+    for (var i = 0; i < flames.length; i++) {
+      var flame = flames[i];
+      var phase = flame.userData.flamePhase || 0;
+      var flicker = 1 + Math.sin(state.time * 18 + phase) * 0.24 + Math.sin(state.time * 34 + phase) * 0.1;
+      flame.rotation.y += dt * (0.55 + (i % 4) * 0.18);
+      flame.position.y = Math.max(0, Math.sin(state.time * 12 + phase)) * 0.12;
+      scaleFromBase(flame, flicker * 0.92, 0.9 + flicker * 0.18, flicker * 0.92);
+      flame.children.forEach(function (block, blockIndex) {
+        var blockFlicker = clamp(flicker + Math.sin(state.time * (22 + blockIndex * 5) + phase) * 0.16, 0.52, 1.48);
+        block.material.opacity = (block.userData.baseOpacity || 0.65) * Math.min(1, fade * 2.15) * blockFlicker;
+        block.rotation.y += dt * (0.9 + blockIndex * 0.28);
+        scaleFromBase(block, blockFlicker * 0.92, 0.82 + blockFlicker * 0.28, blockFlicker * 0.92);
+      });
+    }
+    var cinders = patch.cinders || [];
+    for (var c = 0; c < cinders.length; c++) {
+      var cinder = cinders[c];
+      var cinderPhase = cinder.userData.cinderPhase || 0;
+      var cinderGlow = 0.7 + Math.max(0, Math.sin(state.time * 7.2 + cinderPhase)) * 0.4;
+      cinder.material.opacity = (cinder.userData.baseOpacity || 0.34) * Math.min(1, fade * 1.5) * cinderGlow;
+      cinder.rotation.y += dt * 0.04;
+      scaleFromBase(cinder, cinderGlow, 1, 0.78 + cinderGlow * 0.22);
+    }
+  }
+
+  function damageEnemiesInFirePatch(patch) {
+    var victims = state.enemies.slice();
+    for (var i = 0; i < victims.length; i++) {
+      var enemy = victims[i];
+      if (state.enemies.indexOf(enemy) === -1) continue;
+      var dist = Math.hypot(enemy.x - patch.x, enemy.z - patch.z);
+      if (dist > patch.radius + enemy.radius * 0.3) continue;
+      if (hasUpgrade("scorchedEarth")) enemy.fireSlowTimer = Math.max(enemy.fireSlowTimer || 0, 0.55);
+      var ratio = 1 - clamp(dist / patch.radius, 0, 1);
+      var damage = patch.damage;
+      if (hasUpgrade("thermiteCore") && ratio > 0.58) damage += 1;
+      damageEnemy(enemy, Math.max(1, Math.ceil(damage * (0.72 + ratio * 0.55))), patch.x, patch.z, {
+        type: "launcherFire",
+        firePatch: patch,
+      });
+    }
+  }
+
+  function spawnFirePatchEmber(patch) {
+    var angle = rand(0, Math.PI * 2);
+    var distance = rand(0, patch.radius * 0.72);
+    spawnParticle(
+      patch.x + Math.cos(angle) * distance,
+      rand(0.18, 0.75),
+      patch.z + Math.sin(angle) * distance,
+      Math.cos(angle) * rand(0.15, 0.8),
+      rand(0.8, 2.8),
+      Math.sin(angle) * rand(0.15, 0.8),
+      rand(0.18, 0.34),
+      rand(0.035, 0.09),
+      rng() < 0.18 ? mats.fireHot : rng() < 0.5 ? mats.fireCore : mats.fireOrange
+    );
+  }
+
+  function updateLauncherFireBuff(dt, playerInFire) {
+    var active = hasPyrotechnicianFireBuff() && !!playerInFire;
+    state.launcherFireBuffActive = active;
+    if (!active || !state.player) {
+      state.launcherFireAmmoAccumulator = 0;
+      return;
+    }
+    state.player.hp = Math.min(state.player.maxHp, state.player.hp + FIREPROOF_HP_REGEN * dt);
+    state.launcherFireAmmoAccumulator += FIREPROOF_AMMO_RESTORE_RATE * dt;
+    while (state.launcherFireAmmoAccumulator >= 1) {
+      state.launcherFireAmmoAccumulator -= 1;
+      if (!restoreWeaponAmmo("launcher", 1)) break;
+    }
+    if ((state.ammo.launcher || 0) > 0) state.reloadTimers.launcher = 0;
+  }
+
+  function isLauncherFireBuffActive() {
+    return hasPyrotechnicianFireBuff() && isPlayerInFriendlyFire();
+  }
+
+  function isPlayerInFriendlyFire() {
+    if (!state.player) return false;
+    for (var i = 0; i < state.firePatches.length; i++) {
+      var patch = state.firePatches[i];
+      if (Math.hypot(state.player.x - patch.x, state.player.z - patch.z) <= patch.radius + state.player.radius * 0.35) return true;
+    }
+    return false;
+  }
+
+  function getFirePatchVisualPartCount(patch) {
+    var flameParts = 0;
+    var flames = patch.flames || [];
+    for (var i = 0; i < flames.length; i++) {
+      flameParts += flames[i].children && flames[i].children.length ? flames[i].children.length : 1;
+    }
+    return (
+      (patch.glow ? 1 : 0) +
+      (patch.surface ? 1 : 0) +
+      (patch.core ? 1 : 0) +
+      (patch.hotCore ? 1 : 0) +
+      (patch.smoke ? 1 : 0) +
+      (patch.ring ? 1 : 0) +
+      (patch.innerRing ? 1 : 0) +
+      flameParts +
+      (patch.cinders ? patch.cinders.length : 0)
+    );
+  }
+
+  function removeFirePatch(index) {
+    var patch = state.firePatches[index];
+    if (!patch) return;
+    removeObject3D(patch.mesh);
+    state.firePatches.splice(index, 1);
+  }
+
   function maybeTeleportDistantZombie(enemy, player, dist, visibleGround) {
     if (dist < ZOMBIE_CATCHUP_DISTANCE) return false;
     if (state.time < (enemy.catchupReadyAt || 0)) return false;
     if (!pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + ZOMBIE_CATCHUP_VISIBLE_PAD, visibleGround)) return false;
 
-    var spawn = findZombieSpawnPoint(enemy.radius, { strict: true });
+    var spawn = findZombieSpawnPoint(enemy.radius, {
+      strict: true,
+      preferredSides: chooseZombieSurroundSides("teleport", enemy),
+    });
     if (!spawn) {
       enemy.catchupReadyAt = state.time + ZOMBIE_CATCHUP_COOLDOWN;
       return false;
@@ -3483,6 +5939,7 @@
     enemy.x = spawn.x;
     enemy.z = spawn.z;
     enemy.spawnSide = spawn.side;
+    rememberZombieSurroundSide("teleport", spawn.side);
     enemy.navGoal = null;
     enemy.stuckTimer = 0;
     enemy.attackCooldown = Math.max(enemy.attackCooldown, 0.25);
@@ -3709,6 +6166,7 @@
     if (p.invuln > 0 || state.mode !== "playing") return;
     p.hp = Math.max(0, p.hp - amount);
     p.invuln = 0.36;
+    state.duelistFocus = 0;
     state.shake = Math.min(1.2, state.shake + 0.45);
     for (var i = 0; i < 10; i++) {
       spawnParticle(p.x, 1.1, p.z, rand(-3, 3), rand(1.5, 4.5), rand(-3, 3), 0.35, rand(0.08, 0.18), mats.zombieBlood);
@@ -3721,6 +6179,7 @@
     for (var i = state.bullets.length - 1; i >= 0; i--) {
       var b = state.bullets[i];
       b.age += dt;
+      if (b.targetX == null && b.targetZ == null) applyBulletHoming(b, dt);
       if (b.targetX != null && b.targetZ != null) {
         var toTargetX = b.targetX - b.x;
         var toTargetZ = b.targetZ - b.z;
@@ -3746,35 +6205,83 @@
         b.y = 0.68 + Math.sin(progress * Math.PI) * 1.15;
         b.mesh.rotation.x += dt * 7.5;
         b.mesh.rotation.z += dt * 5.2;
+        if (b.rollingFlame) {
+          b.fireTrailTimer -= dt;
+          if (b.fireTrailTimer <= 0) {
+            b.fireTrailTimer = 0.13;
+            spawnFirePatch(b.x, b.z, {
+              radius: getLauncherFireRadius() * 0.58,
+              life: getLauncherFireLife() * 0.72,
+              damage: Math.max(1, getLauncherFireDamage() - 1),
+              trail: true,
+              damageDelay: 0.08,
+            });
+          }
+        }
+      } else if (b.type === "launcherFireShard") {
+        var shardProgress = clamp(b.age / b.maxLife, 0, 1);
+        b.y = 0.48 + Math.sin(shardProgress * Math.PI) * 0.42;
+        b.mesh.rotation.x += dt * 9.5;
+        b.mesh.rotation.z += dt * 6.5;
+        b.fireTrailTimer -= dt;
+        if (b.fireTrailTimer <= 0) {
+          b.fireTrailTimer = LAUNCHER_CROSSFIRE_TRAIL_INTERVAL;
+          spawnFirePatch(b.x, b.z, {
+            radius: getLauncherCrossfireTrailRadius(),
+            life: getLauncherCrossfireTrailLife(),
+            damage: getLauncherFireDamage(),
+            trail: true,
+            splinter: true,
+            damageDelay: 0.08,
+          });
+        }
       }
+      updateElectricProjectileVisual(b, dt);
       b.mesh.position.set(b.x, b.y, b.z);
       b.trailTimer -= dt;
       if (b.trailTimer <= 0) {
-        b.trailTimer = b.type === "launcher" ? 0.045 : 0.035;
+        b.trailTimer = b.type === "launcher" ? 0.045 : b.chainLightning ? 0.022 : 0.035;
         if (b.type === "launcher") {
           addSmokePuff(b.x - b.dirX * 0.2, b.y, b.z - b.dirZ * 0.2, 0.22, 0.42);
+        } else if (b.type === "launcherFireShard") {
+          spawnParticle(b.x - b.dirX * 0.18, b.y, b.z - b.dirZ * 0.18, rand(-0.25, 0.25), rand(0.25, 0.8), rand(-0.25, 0.25), 0.13, 0.055, state.shotsFired % 2 ? mats.fireHot : mats.fireOrange);
+        } else if (b.chainLightning) {
+          spawnElectricBulletSpark(b);
         } else {
           spawnParticle(b.x - b.dirX * 0.2, b.y, b.z - b.dirZ * 0.2, 0, 0.2, 0, 0.12, 0.05, b.type === "rifle" ? mats.rifleTracer : mats.flash);
         }
       }
 
       var hit = null;
-      for (var j = 0; j < state.enemies.length; j++) {
-        var e = state.enemies[j];
-        var d = Math.hypot(b.x - e.x, b.z - e.z);
-        if (d < e.radius + b.hitRadius) {
-          hit = e;
-          break;
+      if (!(b.type === "launcher" && b.airburstLanding) && b.type !== "launcherFireShard") {
+        for (var j = 0; j < state.enemies.length; j++) {
+          var e = state.enemies[j];
+          if (b.piercing && b.piercedEnemies && b.piercedEnemies.indexOf(e) !== -1) continue;
+          if (b.hitEnemies && b.hitEnemies.indexOf(e) !== -1) continue;
+          var d = Math.hypot(b.x - e.x, b.z - e.z);
+          if (d < e.radius + b.hitRadius) {
+            hit = e;
+            break;
+          }
         }
       }
 
       if (hit) {
         if (b.type === "launcher") {
-          explodeGrenade(b.x, b.z, b.blastRadius, b.blastDamage);
+          explodeGrenade(b.x, b.z, b.blastRadius, b.blastDamage, { bullet: b, kind: "main" });
         } else {
-          damageEnemy(hit, b.damage, b.x, b.z);
+          if (b.hitEnemies) b.hitEnemies.push(hit);
+          if (b.piercing) b.piercedEnemies.push(hit);
+          if (b.plantsTrap) spawnRifleTrap(hit.x, hit.z, "rifle-hit");
+          damageEnemy(hit, getBulletDamage(b), b.x, b.z, b);
+          if (b.chainLightning) triggerRifleChainLightning(b, hit);
+          if (b.throughAndThrough && b.piercing) b.damage *= 1.25;
         }
-        removeBullet(i);
+        if (b.type === "launcher") {
+          removeBullet(i);
+        } else if (!b.piercing && !tryRicochetBullet(b, hit)) {
+          removeBullet(i);
+        }
       } else {
         var obstacleHit = pointHitsObstacle(b.x, b.z, b.hitRadius * 0.7);
         var expired =
@@ -3786,24 +6293,477 @@
           b.z > ARENA_D / 2 + 5;
         if (!expired) continue;
         if (obstacleHit && b.type !== "launcher") addHitSpark(b.x, b.z);
-        if (b.type === "launcher") explodeGrenade(b.x, b.z, b.blastRadius, b.blastDamage);
+        if (b.type === "launcher") {
+          var explosionX = b.airburstLanding && b.life <= 0 && !obstacleHit && b.targetX != null ? b.targetX : b.x;
+          var explosionZ = b.airburstLanding && b.life <= 0 && !obstacleHit && b.targetZ != null ? b.targetZ : b.z;
+          explodeGrenade(explosionX, explosionZ, b.blastRadius, b.blastDamage, { bullet: b, kind: "main" });
+        } else if (b.type === "launcherFireShard" && b.life <= 0 && !obstacleHit) {
+          spawnFirePatch(b.x, b.z, {
+            radius: getLauncherCrossfireTrailRadius() * 1.18,
+            life: getLauncherCrossfireTrailLife(),
+            damage: getLauncherFireDamage(),
+            trail: true,
+            splinter: true,
+            damageDelay: 0.08,
+          });
+        }
+        if (b.heavyRupture) triggerHeavyRupture(b);
         removeBullet(i);
       }
     }
   }
 
-  function damageEnemy(enemy, damage, x, z) {
+  function updateElectricProjectileVisual(b, dt) {
+    if (!b || !b.mesh || !b.mesh.userData || !b.mesh.userData.electricProjectile) return;
+    var parts = b.mesh.userData.electricParts || {};
+    var t = (b.age || 0) * 18;
+    if (parts.glow) {
+      var pulse = 1 + Math.sin(t * 1.35) * 0.16;
+      parts.glow.scale.set((b.visualWidth || 0.16) * 4.25 * pulse, (b.visualWidth || 0.16) * 3.1 * (1 + Math.cos(t) * 0.1), (b.visualLength || 0.78) * 0.98 * pulse);
+      if (parts.glow.material) parts.glow.material.opacity = 0.24 + Math.sin(t * 1.7) * 0.08;
+    }
+    var rings = parts.rings || [];
+    for (var r = 0; r < rings.length; r++) {
+      var ring = rings[r];
+      var ringPhase = ring.userData.phase || 0;
+      var ringPulse = 1 + Math.sin(t * 1.6 + ringPhase) * 0.18;
+      ring.rotation.z += dt * (5.4 + r * 2.2);
+      ring.scale.setScalar((r === 0 ? 1.12 : 0.86) * ringPulse);
+      if (ring.material) ring.material.opacity = (ring.userData.startOpacity || 0.48) * (0.72 + Math.sin(t * 2.1 + ringPhase) * 0.22);
+    }
+    var bolts = parts.bolts || [];
+    for (var i = 0; i < bolts.length; i++) {
+      var bolt = bolts[i];
+      var phase = bolt.userData.phase || 0;
+      var wobble = t + phase;
+      bolt.position.x = Math.cos(wobble) * (bolt.userData.radiusX || 0.16);
+      bolt.position.y = Math.sin(wobble * 1.27) * (bolt.userData.radiusY || 0.12);
+      bolt.position.z = (bolt.userData.baseZ || 0) + Math.sin(wobble * 1.9) * 0.05;
+      bolt.rotation.x = Math.sin(wobble * 1.4) * 0.78;
+      bolt.rotation.y = Math.cos(wobble * 1.1) * 0.72;
+      bolt.rotation.z += dt * (8 + i * 1.7);
+      bolt.scale.z = 0.72 + Math.sin(wobble * 2.2) * 0.28;
+      if (bolt.material) bolt.material.opacity = (bolt.userData.startOpacity || 0.86) * (0.7 + Math.sin(wobble * 2.6) * 0.25);
+    }
+  }
+
+  function spawnElectricBulletSpark(b) {
+    var side = rand(-0.22, 0.22);
+    var back = rand(0.12, 0.34);
+    spawnParticle(
+      b.x - b.dirX * back + b.dirZ * side,
+      b.y + rand(-0.08, 0.12),
+      b.z - b.dirZ * back - b.dirX * side,
+      -b.dirX * rand(0.1, 1.2) + rand(-1.8, 1.8),
+      rand(0.35, 1.2),
+      -b.dirZ * rand(0.1, 1.2) + rand(-1.8, 1.8),
+      rand(0.11, 0.18),
+      rand(0.04, 0.085),
+      mats.lightning
+    );
+    if (rand(0, 1) > 0.45) {
+      spawnParticle(
+        b.x - b.dirX * (back + 0.08) - b.dirZ * side,
+        b.y + rand(-0.06, 0.16),
+        b.z - b.dirZ * (back + 0.08) + b.dirX * side,
+        rand(-2.4, 2.4),
+        rand(0.45, 1.5),
+        rand(-2.4, 2.4),
+        rand(0.08, 0.14),
+        rand(0.035, 0.07),
+        mats.xp
+      );
+    }
+  }
+
+  function applyBulletHoming(b, dt) {
+    if (!b.homing || b.type !== "revolver") return;
+    var target = findEnemyInBulletCone(b, 13.5, 0.78);
+    if (!target) return;
+    var dx = target.x - b.x;
+    var dz = target.z - b.z;
+    var dist = Math.hypot(dx, dz);
+    if (dist < 0.001) return;
+    var blend = Math.min(0.34, b.homing * dt * 3.2);
+    var nx = dx / dist;
+    var nz = dz / dist;
+    b.dirX = normalizeMix(b.dirX, nx, blend);
+    b.dirZ = normalizeMix(b.dirZ, nz, blend);
+    normalizeBulletDirection(b);
+  }
+
+  function findEnemyInBulletCone(b, maxDistance, minDot) {
+    var best = null;
+    var bestScore = Infinity;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) continue;
+      var dx = enemy.x - b.x;
+      var dz = enemy.z - b.z;
+      var dist = Math.hypot(dx, dz);
+      if (dist <= 0.001 || dist > maxDistance) continue;
+      var dot = (dx / dist) * b.dirX + (dz / dist) * b.dirZ;
+      if (dot < minDot) continue;
+      var score = dist - dot * 3;
+      if (score < bestScore) {
+        bestScore = score;
+        best = enemy;
+      }
+    }
+    return best;
+  }
+
+  function normalizeMix(a, b, blend) {
+    return a + (b - a) * blend;
+  }
+
+  function normalizeBulletDirection(b) {
+    var len = Math.hypot(b.dirX, b.dirZ);
+    if (len < 0.001) return;
+    b.dirX /= len;
+    b.dirZ /= len;
+    if (b.mesh) b.mesh.rotation.y = Math.atan2(b.dirX, b.dirZ);
+  }
+
+  function getBulletDamage(b) {
+    if (b.ricochetDepth > 0 && hasUpgrade("trickShot")) {
+      return b.baseDamage * (1 + b.ricochetDepth * 0.35);
+    }
+    return b.damage;
+  }
+
+  function tryRicochetBullet(b, hit) {
+    if (b.ricochetRemaining <= 0) return false;
+    var target = findRicochetTarget(b, hit, 18);
+    if (!target) return false;
+    var dx = target.x - b.x;
+    var dz = target.z - b.z;
+    var dist = Math.hypot(dx, dz);
+    if (dist < 0.001) return false;
+    b.ricochetRemaining -= 1;
+    b.ricochetDepth += 1;
+    b.dirX = dx / dist;
+    b.dirZ = dz / dist;
+    b.life = Math.max(b.life, Math.min(0.82, dist / Math.max(0.001, b.speed) + 0.12));
+    b.maxLife = Math.max(b.maxLife, b.age + b.life);
+    normalizeBulletDirection(b);
+    addHitSpark(b.x, b.z);
+    return true;
+  }
+
+  function findRicochetTarget(b, hit, maxDistance) {
+    var best = null;
+    var bestDist = maxDistance || Infinity;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (enemy === hit) continue;
+      if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) continue;
+      var dist = Math.hypot(enemy.x - b.x, enemy.z - b.z);
+      if (dist < bestDist) {
+        best = enemy;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  function getRifleLightningTargetCount() {
+    return RIFLE_LIGHTNING_BASE_TARGETS;
+  }
+
+  function getRifleLightningDamage() {
+    return 3;
+  }
+
+  function triggerRifleChainLightning(b, hit) {
+    var targetLimit = Math.max(1, b.lightningTargets || getRifleLightningTargetCount());
+    var targets = [hit];
+    var prevX = b.x;
+    var prevZ = b.z;
+    addLightFlash(hit.x, 1.45, hit.z, 0x86f3ff, 3.4, 8.5, 0.18);
+    addShockwave(hit.x, hit.z, 1.8, 0.28, 0x86f3ff);
+
+    for (var i = 0; i < targetLimit; i++) {
+      var target = targets[i];
+      if (!target) break;
+      addLightningBolt(prevX, prevZ, target.x, target.z);
+      if (state.enemies.indexOf(target) !== -1) {
+        damageEnemy(target, getRifleLightningDamage(), target.x, target.z, { type: "rifleLightning" });
+      }
+      prevX = target.x;
+      prevZ = target.z;
+      if (targets.length >= targetLimit) continue;
+      var next = findNextLightningTarget(targets, prevX, prevZ, 16);
+      if (next) targets.push(next);
+    }
+
+    state.rifleLightningStrikes += targets.length;
+    if (hasUpgrade("stormTempo")) state.rifleStormTempoTimer = Math.max(state.rifleStormTempoTimer, 1.65);
+  }
+
+  function findNextLightningTarget(existingTargets, x, z, maxDistance) {
+    var best = null;
+    var bestDist = maxDistance || Infinity;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (existingTargets.indexOf(enemy) !== -1) continue;
+      var dist = Math.hypot(enemy.x - x, enemy.z - z);
+      if (dist < bestDist) {
+        best = enemy;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  function addLightningBolt(x1, z1, x2, z2) {
+    var group = new THREE.Group();
+    group.name = "chain lightning";
+    effectRoot.add(group);
+    var points = [];
+    var segments = 7;
+    var dx = x2 - x1;
+    var dz = z2 - z1;
+    var len = Math.max(0.001, Math.hypot(dx, dz));
+    var nx = -dz / len;
+    var nz = dx / len;
+    for (var i = 0; i <= segments; i++) {
+      var t = i / segments;
+      var jitter = i === 0 || i === segments ? 0 : rand(-0.38, 0.38);
+      points.push({
+        x: x1 + dx * t + nx * jitter,
+        y: 1.16 + Math.sin(t * Math.PI) * 0.36 + rand(-0.05, 0.05),
+        z: z1 + dz * t + nz * jitter,
+      });
+    }
+
+    for (var s = 0; s < points.length - 1; s++) {
+      addLightningSegment(group, points[s], points[s + 1], s % 2 === 0 ? 0.12 : 0.085, 0.98);
+      if (s > 0 && s < points.length - 2) {
+        var branchSign = s % 2 === 0 ? 1 : -1;
+        var branchLength = rand(0.45, 0.8) * branchSign;
+        addLightningSegment(
+          group,
+          points[s],
+          {
+            x: points[s].x + nx * branchLength + dx / len * rand(-0.16, 0.16),
+            y: points[s].y + rand(-0.08, 0.12),
+            z: points[s].z + nz * branchLength + dz / len * rand(-0.16, 0.16),
+          },
+          0.045,
+          0.68
+        );
+      }
+    }
+    for (var p = 0; p < 10; p++) {
+      var angle = rand(0, Math.PI * 2);
+      spawnParticle(x2, rand(0.85, 1.6), z2, Math.cos(angle) * rand(1.4, 4.6), rand(0.8, 3.2), Math.sin(angle) * rand(1.4, 4.6), rand(0.13, 0.24), rand(0.045, 0.11), p % 2 ? mats.xpLight : mats.rifleTracer);
+    }
+    state.lightningBolts.push({ mesh: group, life: 0.32, startLife: 0.32 });
+    trimEffects(state.lightningBolts, MAX_LIGHTNING_BOLTS, removeLightningBolt);
+  }
+
+  function addLightningSegment(group, a, b, thickness, opacity) {
+    var dist = Math.max(0.001, Math.hypot(b.x - a.x, b.z - a.z));
+    var mesh = new THREE.Mesh(getSharedGeometry("lightning-segment", function () {
+      return new THREE.BoxGeometry(1, 1, 1);
+    }), mats.lightning.clone());
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = true;
+    mesh.userData.startOpacity = opacity == null ? 0.92 : opacity;
+    mesh.material.opacity = mesh.userData.startOpacity;
+    mesh.scale.set(thickness, thickness, dist);
+    mesh.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    mesh.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    group.add(mesh);
+
+    var glow = new THREE.Mesh(getSharedGeometry("lightning-ground-glow", function () {
+      return new THREE.BoxGeometry(1, 1, 1);
+    }), mats.lightning.clone());
+    glow.userData.disposeGeometry = false;
+    glow.userData.disposeMaterial = true;
+    glow.userData.startOpacity = 0.34;
+    glow.material.opacity = glow.userData.startOpacity;
+    glow.scale.set(thickness * 4.6, 0.018, dist);
+    glow.position.set((a.x + b.x) / 2, 0.085, (a.z + b.z) / 2);
+    glow.rotation.y = mesh.rotation.y;
+    glow.castShadow = false;
+    glow.receiveShadow = false;
+    glow.renderOrder = 2;
+    group.add(glow);
+  }
+
+  function updateRifleTimers(dt) {
+    state.rifleStormTempoTimer = Math.max(0, (state.rifleStormTempoTimer || 0) - dt);
+    if (state.playerClass !== "ranger" || state.rifleUpgrade !== "trailWarden" || !hasUpgrade("trailLayer") || !state.player) return;
+    state.rifleAutoTrapTimer -= dt;
+    if (state.rifleAutoTrapTimer <= 0) {
+      spawnRifleTrap(state.player.x, state.player.z, "trail-layer");
+      state.rifleAutoTrapTimer += getRifleAutoTrapInterval();
+    }
+  }
+
+  function getRifleAutoTrapInterval() {
+    return Math.max(RIFLE_AUTO_TRAP_MIN_INTERVAL, RIFLE_AUTO_TRAP_BASE_INTERVAL - (state.rifleAutoTrapFrequency || 0) * RIFLE_AUTO_TRAP_INTERVAL_STEP);
+  }
+
+  function spawnRifleTrap(x, z, source) {
+    if (pointHitsObstacle(x, z, 0.48)) return null;
+    var trap = {
+      x: x,
+      z: z,
+      source: source || "rifle",
+      age: 0,
+      life: Infinity,
+      permanent: true,
+      armTime: 0.12,
+      triggerRadius: 0.85,
+      blastRadius: hasUpgrade("powderTrap") ? RIFLE_TRAP_POWDER_BLAST_RADIUS : RIFLE_TRAP_BASE_BLAST_RADIUS,
+      damage: hasUpgrade("powderTrap") ? 5 : 3,
+      lure: hasUpgrade("baitedTrap"),
+      mesh: createRifleTrapMesh(x, z),
+    };
+    state.rifleTraps.push(trap);
+    trimEffects(state.rifleTraps, MAX_RIFLE_TRAPS, removeRifleTrap);
+    return trap;
+  }
+
+  function createRifleTrapMesh(x, z) {
+    var group = new THREE.Group();
+    group.name = "rifle trap";
+    group.position.set(x, 0, z);
+    effectRoot.add(group);
+    var ring = new THREE.Mesh(getSharedGeometry("rifle-trap-ring", function () {
+      return new THREE.RingGeometry(0.52, 0.68, 32);
+    }), mats.trapGlow.clone());
+    ring.userData.disposeGeometry = false;
+    ring.userData.disposeMaterial = true;
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.075;
+    ring.renderOrder = 1;
+    group.add(ring);
+    addSharedBox(group, 1.0, 0.12, 0.16, mats.trapMetal, 0, 0.14, 0).rotation.y = 0.28;
+    addSharedBox(group, 1.0, 0.12, 0.16, mats.trapMetal, 0, 0.14, 0).rotation.y = -0.28;
+    addSharedBox(group, 0.18, 0.1, 0.9, mats.trapWood, -0.32, 0.1, 0);
+    addSharedBox(group, 0.18, 0.1, 0.9, mats.trapWood, 0.32, 0.1, 0);
+    group.userData.ring = ring;
+    return group;
+  }
+
+  function updateRifleTraps(dt) {
+    for (var i = state.rifleTraps.length - 1; i >= 0; i--) {
+      var trap = state.rifleTraps[i];
+      trap.age += dt;
+      if (!trap.permanent) trap.life -= dt;
+      trap.armTime = Math.max(0, trap.armTime - dt);
+      updateRifleTrapVisual(trap);
+      if (trap.lure && dt > 0) lureEnemiesToTrap(trap, dt);
+      if (trap.armTime <= 0 && findEnemyNearTrap(trap)) {
+        triggerRifleTrap(i);
+        continue;
+      }
+      if (trap.life <= 0) removeRifleTrap(i);
+    }
+  }
+
+  function updateRifleTrapVisual(trap) {
+    if (!trap.mesh) return;
+    var pulse = 1 + Math.sin((state.time + trap.age) * 7) * 0.08;
+    trap.mesh.scale.setScalar(pulse);
+    var ring = trap.mesh.userData.ring;
+    if (ring && ring.material) {
+      ring.material.opacity = (trap.lure ? 0.62 : 0.42) * (0.75 + Math.sin(state.time * 8 + trap.age) * 0.25);
+    }
+  }
+
+  function lureEnemiesToTrap(trap, dt) {
+    var targets = state.enemies
+      .slice()
+      .sort(function (a, b) {
+        return Math.hypot(a.x - trap.x, a.z - trap.z) - Math.hypot(b.x - trap.x, b.z - trap.z);
+      })
+      .slice(0, 5);
+    for (var i = 0; i < targets.length; i++) {
+      var enemy = targets[i];
+      var dx = trap.x - enemy.x;
+      var dz = trap.z - enemy.z;
+      var dist = Math.hypot(dx, dz);
+      if (dist <= 0.001 || dist > 12) continue;
+      var pull = enemy.speed * (0.5 + (1 - Math.min(1, dist / 12)) * 0.45) * dt;
+      enemy.x += (dx / dist) * pull;
+      enemy.z += (dz / dist) * pull;
+    }
+  }
+
+  function findEnemyNearTrap(trap) {
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (Math.hypot(enemy.x - trap.x, enemy.z - trap.z) <= trap.triggerRadius + enemy.radius) return enemy;
+    }
+    return null;
+  }
+
+  function triggerRifleTrap(index) {
+    var trap = state.rifleTraps[index];
+    if (!trap) return;
+    state.rifleTrapTriggers += 1;
+    addShockwave(trap.x, trap.z, trap.blastRadius, 0.36, trap.lure ? 0xffd36b : 0xffb35f);
+    addLightFlash(trap.x, 0.9, trap.z, trap.lure ? 0xffd36b : 0xffb35f, 3.2, 7, 0.2);
+    var victims = state.enemies.slice();
+    for (var i = 0; i < victims.length; i++) {
+      var enemy = victims[i];
+      if (state.enemies.indexOf(enemy) === -1) continue;
+      var dist = Math.hypot(enemy.x - trap.x, enemy.z - trap.z);
+      if (dist > trap.blastRadius + enemy.radius * 0.35) continue;
+      var ratio = 1 - clamp(dist / trap.blastRadius, 0, 1);
+      damageEnemy(enemy, Math.max(1, Math.ceil(trap.damage * (0.65 + ratio * 0.55))), trap.x, trap.z, { type: "rifleTrap", trap: trap });
+    }
+    for (var p = 0; p < 18; p++) {
+      var angle = rand(0, Math.PI * 2);
+      spawnParticle(trap.x, rand(0.25, 1.1), trap.z, Math.cos(angle) * rand(1.4, 5), rand(0.8, 3.6), Math.sin(angle) * rand(1.4, 5), rand(0.18, 0.36), rand(0.055, 0.13), p % 2 ? mats.trapMetal : mats.flash);
+    }
+    removeRifleTrap(index);
+  }
+
+  function triggerHeavyRupture(b) {
+    if (!b.piercedEnemies || !b.piercedEnemies.length) return;
+    state.bigIronRuptures += 1;
+    var radius = 2.15;
+    addShockwave(b.x, b.z, radius, 0.36, 0xffc45f);
+    addLightFlash(b.x, 1.1, b.z, 0xffb347, 2.8, 6, 0.18);
+    var victims = state.enemies.slice();
+    for (var i = 0; i < victims.length; i++) {
+      var enemy = victims[i];
+      if (state.enemies.indexOf(enemy) === -1) continue;
+      var dist = Math.hypot(enemy.x - b.x, enemy.z - b.z);
+      if (dist > radius) continue;
+      damageEnemy(enemy, Math.max(1, Math.ceil(2.4 * (1 - dist / radius))), b.x, b.z, b);
+    }
+  }
+
+  function damageEnemy(enemy, damage, x, z, source) {
     enemy.hp -= damage;
+    if (source && source.executioner && enemy.hp > 0 && enemy.hp <= enemy.maxHp * 0.28) enemy.hp = 0;
     enemy.hitPulse = 1;
     addHitSpark(x, z);
     for (var i = 0; i < 6; i++) {
       spawnParticle(x, 1.05, z, rand(-2.5, 2.5), rand(0.8, 3.6), rand(-2.5, 2.5), 0.28, rand(0.08, 0.18), mats.zombieBlood);
     }
     state.shake = Math.min(1, state.shake + 0.1);
-    if (enemy.hp <= 0) killEnemy(enemy);
+    if (enemy.hp <= 0) killEnemy(enemy, source);
   }
 
-  function killEnemy(enemy) {
+  function killEnemy(enemy, source) {
+    if (source && source.killedEnemies) {
+      source.killedEnemies.push({
+        x: enemy.x,
+        z: enemy.z,
+        xp: enemy.xp || 1,
+        type: enemy.type,
+      });
+    }
     var idx = state.enemies.indexOf(enemy);
     if (idx !== -1) state.enemies.splice(idx, 1);
     createDeathDebris(enemy);
@@ -3816,6 +6776,141 @@
     for (var i = 0; i < 18; i++) {
       spawnParticle(enemy.x, rand(0.7, 2.1), enemy.z, rand(-4, 4), rand(1.4, 5.2), rand(-4, 4), rand(0.35, 0.7), rand(0.08, 0.22), i % 3 === 0 ? mats.zombieSkin : mats.zombieBlood);
     }
+    handleRevolverKillEffects(enemy, source);
+    handleRifleKillEffects(enemy, source);
+    handleLauncherKillEffects(enemy, source);
+  }
+
+  function handleRevolverKillEffects(enemy, source) {
+    if (state.revolverUpgrade === "dualRevolvers") {
+      if (hasUpgrade("fanTheHammer")) state.fanTheHammerTimer = Math.max(state.fanTheHammerTimer, 1.8);
+      if (hasUpgrade("killReload")) {
+        state.dualKillReloadCounter += 1;
+        if (state.dualKillReloadCounter >= 3) {
+          state.dualKillReloadCounter = 0;
+          state.ammo.revolver = Math.min(getWeaponMagazine(WEAPONS.revolver), (state.ammo.revolver || 0) + 3);
+          if (state.ammo.revolver > 0) state.reloadTimers.revolver = 0;
+        }
+      }
+    }
+    if (source && source.leadBloom && source.type === "revolver") spawnLeadBloom(enemy.x, enemy.z, source);
+  }
+
+  function handleRifleKillEffects(enemy, source) {
+    if (!source) return;
+    if ((source.type === "rifle" || source.type === "rifleLightning") && state.rifleUpgrade === "leverBarrage" && hasUpgrade("trailLoader")) {
+      state.rifleKillReloadCounter += 1;
+      if (state.rifleKillReloadCounter >= 3) {
+        state.rifleKillReloadCounter = 0;
+        restoreWeaponAmmo("rifle", 3);
+      }
+    }
+
+    if (source.type === "rifleTrap" && hasUpgrade("salvagedTrap")) {
+      var restored = restoreWeaponAmmo("rifle", 2);
+      state.rifleTrapAmmoRestored += restored;
+      var bonusXp = Math.max(2, Math.round((enemy.xp || 1) * 0.55));
+      state.rifleTrapBonusXp += bonusXp;
+      spawnXpOrb(enemy.x + rand(-0.18, 0.18), enemy.z + rand(-0.18, 0.18), bonusXp);
+    }
+  }
+
+  function handleLauncherKillEffects(enemy, source) {
+    if (!source) return;
+    if (source.type === "launcherShrapnel") {
+      var fullSalvoContext = source.fullSalvoContext || source;
+      fullSalvoContext.kills = (fullSalvoContext.kills || 0) + 1;
+      tryTriggerLauncherFullSalvo(fullSalvoContext.kills, fullSalvoContext);
+    }
+    if (source.type === "launcherFire") {
+      state.launcherFireKills += 1;
+      var bonusXp = Math.max(1, Math.round((enemy.xp || 1) * 2));
+      state.launcherFireBonusXp += bonusXp;
+      spawnXpOrb(enemy.x, enemy.z, bonusXp);
+      if (hasUpgrade("backdraft")) triggerLauncherBackdraft(enemy.x, enemy.z);
+    }
+  }
+
+  function triggerLauncherBackdraft(x, z) {
+    state.launcherBackdrafts += 1;
+    addShockwave(x, z, 2.25, 0.28, 0xff7b24);
+    addLightFlash(x, 0.95, z, 0xff8a2a, 2.4, 5.8, 0.17);
+    spawnFirePatch(x, z, {
+      radius: getLauncherFireRadius() * 1.24,
+      life: Math.max(1.4, getLauncherFireLife() * 0.42),
+      damage: Math.max(1, getLauncherFireDamage() - 1),
+      trail: true,
+      backdraft: true,
+      damageDelay: 0.12,
+    });
+    var victims = state.enemies.slice();
+    for (var i = 0; i < victims.length; i++) {
+      var enemy = victims[i];
+      if (state.enemies.indexOf(enemy) === -1) continue;
+      var dist = Math.hypot(enemy.x - x, enemy.z - z);
+      if (dist > 2.25 + enemy.radius * 0.25) continue;
+      damageEnemy(enemy, Math.max(1, Math.ceil(2.2 * (1 - clamp(dist / 2.25, 0, 1)) + 0.4)), x, z, { type: "launcherBackdraft" });
+    }
+  }
+
+  function restoreWeaponAmmo(id, amount) {
+    var weapon = WEAPONS[id];
+    if (!weapon) return 0;
+    var magazine = getWeaponMagazine(weapon);
+    var current = clamp(state.ammo[id] || 0, 0, magazine);
+    var restored = Math.min(Math.max(0, Math.round(amount || 0)), Math.max(0, magazine - current));
+    if (!restored) return 0;
+    state.ammo[id] = current + restored;
+    if (state.ammo[id] > 0) state.reloadTimers[id] = 0;
+    return restored;
+  }
+
+  function spawnLeadBloom(x, z, source) {
+    var baseAngle = Math.atan2(source.dirX, source.dirZ);
+    var angles = [baseAngle - Math.PI / 2, baseAngle + Math.PI / 2];
+    for (var i = 0; i < angles.length; i++) {
+      spawnLeadBloomBullet(x, z, angles[i]);
+    }
+  }
+
+  function spawnLeadBloomBullet(x, z, angle) {
+    var speed = WEAPONS.revolver.speed * 0.88;
+    var life = 0.42 * getWeaponRangeMultiplier(WEAPONS.revolver);
+    var width = WEAPONS.revolver.width * 0.9;
+    var length = WEAPONS.revolver.length * 0.72;
+    var start = new THREE.Vector3(x + Math.sin(angle) * 0.35, WEAPONS.revolver.muzzleY, z + Math.cos(angle) * 0.35);
+    var mesh = createProjectileMesh(WEAPONS.revolver, start, angle, { width: width, length: length });
+    state.leadBloomShots += 1;
+    state.bullets.push({
+      type: "leadBloom",
+      x: start.x,
+      y: start.y,
+      z: start.z,
+      dirX: Math.sin(angle),
+      dirZ: Math.cos(angle),
+      speed: speed,
+      life: life,
+      maxLife: life,
+      age: 0,
+      baseDamage: WEAPONS.revolver.damage,
+      damage: WEAPONS.revolver.damage,
+      hitRadius: WEAPONS.revolver.hitRadius * 0.72,
+      visualWidth: width,
+      visualLength: length,
+      piercing: false,
+      piercedEnemies: [],
+      hitEnemies: [],
+      ricochetRemaining: 0,
+      ricochetDepth: 0,
+      homing: 0,
+      blastRadius: 0,
+      blastDamage: 0,
+      targetX: null,
+      targetZ: null,
+      targetRadius: 0,
+      trailTimer: 0,
+      mesh: mesh,
+    });
   }
 
   function updateEnemyHealthBar(enemy) {
@@ -3864,6 +6959,21 @@
       wave.mesh.material.opacity = wave.startOpacity * (1 - t);
       if (wave.life <= 0) {
         removeShockwave(i);
+      }
+    }
+
+    for (var lb = state.lightningBolts.length - 1; lb >= 0; lb--) {
+      var bolt = state.lightningBolts[lb];
+      bolt.life -= dt;
+      var boltFade = clamp(bolt.life / bolt.startLife, 0, 1);
+      bolt.mesh.traverse(function (child) {
+        if (child.material && child.material.opacity != null) {
+          var startOpacity = child.userData && child.userData.startOpacity != null ? child.userData.startOpacity : 0.92;
+          child.material.opacity = startOpacity * boltFade;
+        }
+      });
+      if (bolt.life <= 0) {
+        removeLightningBolt(lb);
       }
     }
 
@@ -3955,6 +7065,20 @@
     state.shockwaves.splice(index, 1);
   }
 
+  function removeLightningBolt(index) {
+    var bolt = state.lightningBolts[index];
+    if (!bolt) return;
+    removeObject3D(bolt.mesh);
+    state.lightningBolts.splice(index, 1);
+  }
+
+  function removeRifleTrap(index) {
+    var trap = state.rifleTraps[index];
+    if (!trap) return;
+    removeObject3D(trap.mesh);
+    state.rifleTraps.splice(index, 1);
+  }
+
   function removeDecal(index) {
     var decal = state.decals[index];
     if (!decal) return;
@@ -3988,15 +7112,46 @@
   }
 
   function updateWaveProgress(dt) {
-    if (state.spawnLeft > 0 || state.enemies.length > 0) return;
-    if (state.nextWaveTimer <= 0) {
-      state.nextWaveTimer = 1.8;
+    state.waveElapsed += dt;
+    if (state.waveElapsed + 0.0001 >= WAVE_HARD_LIMIT) {
+      startWave(state.wave + 1);
       return;
     }
-    state.nextWaveTimer -= dt;
-    if (state.nextWaveTimer <= 0) {
-      startWave(state.wave + 1);
+
+    var remaining = getWaveRemainingCount();
+    if (remaining <= 0) {
+      state.waveLowRemainingTimer = 0;
+      if (state.nextWaveTimer <= 0) {
+        state.nextWaveTimer = WAVE_CLEAR_DELAY;
+        return;
+      }
+      state.nextWaveTimer -= dt;
+      if (state.nextWaveTimer <= 0) {
+        startWave(state.wave + 1);
+      }
+      return;
     }
+
+    state.nextWaveTimer = 0;
+    if (isWaveLowOnRemainingEnemies(remaining)) {
+      if (state.waveLowRemainingTimer <= 0) state.waveLowRemainingTimer = WAVE_LOW_REMAINING_DELAY;
+      state.waveLowRemainingTimer -= dt;
+      if (state.waveLowRemainingTimer <= 0) {
+        startWave(state.wave + 1);
+      }
+      return;
+    }
+
+    state.waveLowRemainingTimer = 0;
+  }
+
+  function getWaveRemainingCount() {
+    return Math.max(0, state.spawnLeft || 0) + state.enemies.length;
+  }
+
+  function isWaveLowOnRemainingEnemies(remaining) {
+    var target = Math.max(1, state.waveSpawnTarget || getWaveZombieCount(state.wave));
+    return remaining < WAVE_LOW_REMAINING_COUNT || remaining < target * WAVE_LOW_REMAINING_RATIO;
   }
 
   function endGame() {
@@ -4004,6 +7159,11 @@
     pointerDown = false;
     resetTouchControls();
     setPanel(gameOverPanel, true);
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    setPanel(levelUpPanel, false);
     gameOverStats.textContent = "Wave " + state.wave + " - Level " + state.level + " - Score " + state.score + " - Zombies " + state.kills;
     updateHud();
   }
@@ -4102,12 +7262,14 @@
       var dx = state.player.x - orb.x;
       var dz = state.player.z - orb.z;
       var dist = Math.hypot(dx, dz);
-      if (dist <= XP_PICKUP_RADIUS) {
+      var pickupRadius = getXpPickupRadius();
+      var attractRadius = getXpAttractRadius();
+      if (dist <= pickupRadius) {
         collectXpOrb(i);
         continue;
       }
-      if (dist <= XP_ATTRACT_RADIUS) {
-        var pull = 1 - dist / XP_ATTRACT_RADIUS;
+      if (dist <= attractRadius) {
+        var pull = 1 - dist / attractRadius;
         var speed = XP_ORB_SPEED * (0.45 + pull * 1.8);
         var len = Math.max(0.001, dist);
         orb.vx += (dx / len) * speed * dt * 5.2;
@@ -4142,7 +7304,7 @@
   }
 
   function addXp(amount, x, z) {
-    var gained = Math.max(0, Math.round(Number(amount) || 0));
+    var gained = Math.max(0, Math.round((Number(amount) || 0) * getXpGainMultiplier()));
     if (!gained) return;
     state.xp += gained;
     state.totalXp += gained;
@@ -4152,10 +7314,557 @@
       state.level += 1;
       state.levelUps += 1;
       state.xpToNext = getXpToNextLevel(state.level);
+      queueStandardUpgradeLevel(state.level);
       leveled = true;
     }
     if (leveled) addLevelUpBurst(x, z);
+    maybeOfferNextLevelReward();
     updateHud();
+  }
+
+  function getXpGainMultiplier() {
+    return 1 + Math.max(0, state.xpGainBonus || 0);
+  }
+
+  function getXpPickupRadius() {
+    return XP_PICKUP_RADIUS * (1 + Math.max(0, state.xpPickupRadiusBonus || 0));
+  }
+
+  function getXpAttractRadius() {
+    return XP_ATTRACT_RADIUS * (1 + Math.max(0, state.xpPickupRadiusBonus || 0));
+  }
+
+  function maybeOfferNextLevelReward() {
+    return maybeOfferClassChoice() || maybeOfferRevolverUpgradeChoice() || maybeOfferRifleUpgradeChoice() || maybeOfferLauncherUpgradeChoice() || maybeOfferStandardUpgradeChoice();
+  }
+
+  function queueStandardUpgradeLevel(level) {
+    if (!isStandardUpgradeLevel(level)) return;
+    if (state.pendingStandardUpgradeLevels.indexOf(level) !== -1) return;
+    var inserted = false;
+    for (var i = 0; i < state.pendingStandardUpgradeLevels.length; i++) {
+      if (level < state.pendingStandardUpgradeLevels[i]) {
+        state.pendingStandardUpgradeLevels.splice(i, 0, level);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) state.pendingStandardUpgradeLevels.push(level);
+  }
+
+  function isStandardUpgradeLevel(level) {
+    if (level <= 1 || level === CLASS_CHOICE_LEVEL) return false;
+    if (level === REVOLVER_UPGRADE_LEVEL && (state.playerClass === "gunslinger" || !state.playerClass)) return false;
+    if (level === RIFLE_UPGRADE_LEVEL && (state.playerClass === "ranger" || !state.playerClass)) return false;
+    if (level === LAUNCHER_UPGRADE_LEVEL && (state.playerClass === "demolitionist" || !state.playerClass)) return false;
+    return true;
+  }
+
+  function maybeOfferClassChoice() {
+    if (state.playerClass || state.classChoicePending || state.classChoiceOffered) return false;
+    if (state.level < CLASS_CHOICE_LEVEL || state.mode !== "playing") return false;
+    state.classChoicePending = true;
+    state.classChoiceOffered = true;
+    state.mode = "class-choice";
+    pointerDown = false;
+    touchFire.active = false;
+    if (mobileFire) mobileFire.classList.remove("is-pressed");
+    setPanel(classChoicePanel, true);
+    alignClassWeaponIcons(classChoicePanel);
+    setPanel(menu, false);
+    setPanel(gameOverPanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    setPanel(levelUpPanel, false);
+    updateModeClass();
+    render();
+    return true;
+  }
+
+  function maybeOfferRevolverUpgradeChoice() {
+    if (state.playerClass !== "gunslinger" || state.revolverUpgrade || state.revolverUpgradePending || state.revolverUpgradeOffered) return false;
+    if (state.level < REVOLVER_UPGRADE_LEVEL || state.mode !== "playing") return false;
+    state.revolverUpgradePending = true;
+    state.revolverUpgradeOffered = true;
+    state.mode = "revolver-upgrade";
+    pointerDown = false;
+    touchFire.active = false;
+    if (mobileFire) mobileFire.classList.remove("is-pressed");
+    setPanel(revolverUpgradePanel, true);
+    alignClassWeaponIcons(revolverUpgradePanel);
+    setPanel(menu, false);
+    setPanel(gameOverPanel, false);
+    setPanel(classChoicePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    setPanel(levelUpPanel, false);
+    updateModeClass();
+    render();
+    return true;
+  }
+
+  function maybeOfferRifleUpgradeChoice() {
+    if (state.playerClass !== "ranger" || state.rifleUpgrade || state.rifleUpgradePending || state.rifleUpgradeOffered) return false;
+    if (state.level < RIFLE_UPGRADE_LEVEL || state.mode !== "playing") return false;
+    state.rifleUpgradePending = true;
+    state.rifleUpgradeOffered = true;
+    state.mode = "rifle-upgrade";
+    pointerDown = false;
+    touchFire.active = false;
+    if (mobileFire) mobileFire.classList.remove("is-pressed");
+    setPanel(rifleUpgradePanel, true);
+    alignClassWeaponIcons(rifleUpgradePanel);
+    setPanel(menu, false);
+    setPanel(gameOverPanel, false);
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(levelUpPanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    render();
+    return true;
+  }
+
+  function maybeOfferLauncherUpgradeChoice() {
+    if (state.playerClass !== "demolitionist" || state.launcherUpgrade || state.launcherUpgradePending || state.launcherUpgradeOffered) return false;
+    if (state.level < LAUNCHER_UPGRADE_LEVEL || state.mode !== "playing") return false;
+    state.launcherUpgradePending = true;
+    state.launcherUpgradeOffered = true;
+    state.mode = "launcher-upgrade";
+    pointerDown = false;
+    touchFire.active = false;
+    if (mobileFire) mobileFire.classList.remove("is-pressed");
+    setPanel(launcherUpgradePanel, true);
+    alignClassWeaponIcons(launcherUpgradePanel);
+    setPanel(menu, false);
+    setPanel(gameOverPanel, false);
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(levelUpPanel, false);
+    updateModeClass();
+    render();
+    return true;
+  }
+
+  function maybeOfferStandardUpgradeChoice() {
+    if (state.standardUpgradePending || !state.pendingStandardUpgradeLevels.length) return false;
+    if (state.mode !== "playing" || !levelUpPanel || !levelUpOptions) return false;
+    state.standardUpgradePending = true;
+    state.standardUpgradeLevel = state.pendingStandardUpgradeLevels[0];
+    state.standardUpgradeChoices = rollStandardUpgradeChoices();
+    state.mode = "level-up";
+    pointerDown = false;
+    touchFire.active = false;
+    if (mobileFire) mobileFire.classList.remove("is-pressed");
+    renderStandardUpgradeChoices();
+    setPanel(levelUpPanel, true);
+    setPanel(menu, false);
+    setPanel(gameOverPanel, false);
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    render();
+    return true;
+  }
+
+  function rollStandardUpgradeChoices() {
+    var choices = [];
+    if (isRevolverSpecialUpgradeLevel(state.standardUpgradeLevel)) {
+      choices = choices.concat(rollFromPool(getEligibleRevolverSpecialUpgrades(state.standardUpgradeLevel), 2));
+    } else if (isRifleSpecialUpgradeLevel(state.standardUpgradeLevel)) {
+      choices = choices.concat(rollFromPool(getEligibleRifleSpecialUpgrades(state.standardUpgradeLevel), 2));
+    } else if (isLauncherSpecialUpgradeLevel(state.standardUpgradeLevel)) {
+      choices = choices.concat(rollFromPool(getEligibleLauncherSpecialUpgrades(state.standardUpgradeLevel), 2));
+    }
+    return choices.concat(rollFromPool(STANDARD_UPGRADES, 3 - choices.length));
+  }
+
+  function rollFromPool(source, count) {
+    var pool = source.slice();
+    var choices = [];
+    while (pool.length && choices.length < count) {
+      var index = Math.floor(rng() * pool.length);
+      choices.push(pool.splice(index, 1)[0]);
+    }
+    return choices;
+  }
+
+  function isRevolverSpecialUpgradeLevel(level) {
+    return (
+      state.playerClass === "gunslinger" &&
+      !!state.revolverUpgrade &&
+      level >= REVOLVER_SPECIAL_START_LEVEL &&
+      (level - REVOLVER_UPGRADE_LEVEL) % REVOLVER_SPECIAL_INTERVAL === 0
+    );
+  }
+
+  function getEligibleRevolverSpecialUpgrades(level) {
+    return REVOLVER_SPECIAL_UPGRADES.filter(function (spec) {
+      if (spec.branch !== state.revolverUpgrade) return false;
+      if (spec.minLevel && level < spec.minLevel) return false;
+      if (!spec.repeatable && hasUpgrade(spec.id)) return false;
+      if (spec.maxStacks && getUpgradeCount(spec.id) >= spec.maxStacks) return false;
+      if (spec.requires) {
+        for (var i = 0; i < spec.requires.length; i++) {
+          if (!hasUpgrade(spec.requires[i])) return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function isRifleSpecialUpgradeLevel(level) {
+    return (
+      state.playerClass === "ranger" &&
+      !!state.rifleUpgrade &&
+      level >= RIFLE_SPECIAL_START_LEVEL &&
+      (level - RIFLE_UPGRADE_LEVEL) % RIFLE_SPECIAL_INTERVAL === 0
+    );
+  }
+
+  function getEligibleRifleSpecialUpgrades(level) {
+    return RIFLE_SPECIAL_UPGRADES.filter(function (spec) {
+      if (spec.branch !== state.rifleUpgrade) return false;
+      if (spec.minLevel && level < spec.minLevel) return false;
+      if (!spec.repeatable && hasUpgrade(spec.id)) return false;
+      if (spec.maxStacks && getUpgradeCount(spec.id) >= spec.maxStacks) return false;
+      if (spec.requires) {
+        for (var i = 0; i < spec.requires.length; i++) {
+          if (!hasUpgrade(spec.requires[i])) return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function isLauncherSpecialUpgradeLevel(level) {
+    return (
+      state.playerClass === "demolitionist" &&
+      !!state.launcherUpgrade &&
+      level >= LAUNCHER_SPECIAL_START_LEVEL &&
+      (level - LAUNCHER_UPGRADE_LEVEL) % LAUNCHER_SPECIAL_INTERVAL === 0
+    );
+  }
+
+  function getEligibleLauncherSpecialUpgrades(level) {
+    return LAUNCHER_SPECIAL_UPGRADES.filter(function (spec) {
+      if (spec.starter) return false;
+      if (spec.branch !== state.launcherUpgrade) return false;
+      if (spec.minLevel && level < spec.minLevel) return false;
+      if (!spec.repeatable && hasUpgrade(spec.id)) return false;
+      if (spec.maxStacks && getUpgradeCount(spec.id) >= spec.maxStacks) return false;
+      if (spec.requires) {
+        for (var i = 0; i < spec.requires.length; i++) {
+          if (!hasLauncherUpgradeOrStarter(spec.requires[i])) return false;
+        }
+      }
+      if (spec.requiresAny) {
+        var any = false;
+        for (var j = 0; j < spec.requiresAny.length; j++) {
+          if (hasLauncherUpgradeOrStarter(spec.requiresAny[j])) any = true;
+        }
+        if (!any) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderStandardUpgradeChoices() {
+    if (!levelUpOptions) return;
+    levelUpOptions.innerHTML = "";
+    if (levelUpSubtitle) levelUpSubtitle.textContent = "Level " + state.standardUpgradeLevel + ". Pick a boost for this run.";
+    state.standardUpgradeChoices.forEach(function (spec) {
+      levelUpOptions.appendChild(createStandardUpgradeCard(spec));
+    });
+  }
+
+  function upgradeIcon(inner) {
+    return (
+      '<svg class="upgrade-card__icon" viewBox="0 0 64 64" focusable="false" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round">' +
+      inner +
+      "</svg>"
+    );
+  }
+
+  function getUpgradeIcon(id) {
+    return UPGRADE_ICONS[id] || UPGRADE_ICONS.default;
+  }
+
+  function createStandardUpgradeCard(spec) {
+    var button = document.createElement("button");
+    button.className = "class-card upgrade-card class-card--" + (spec.color === "red" ? "red" : "black");
+    button.type = "button";
+    button.setAttribute("data-standard-upgrade", spec.id);
+    button.setAttribute("data-rank", spec.rank);
+    button.setAttribute("data-suit", spec.suit);
+
+    var mark = document.createElement("span");
+    mark.className = "class-card__mark";
+    mark.setAttribute("aria-hidden", "true");
+    var symbol = document.createElement("span");
+    symbol.className = "upgrade-card__symbol";
+    symbol.innerHTML = getUpgradeIcon(spec.id);
+    mark.appendChild(symbol);
+
+    var title = document.createElement("strong");
+    title.textContent = spec.title;
+    var description = document.createElement("span");
+    description.textContent = spec.description;
+    button.appendChild(mark);
+    button.appendChild(title);
+    button.appendChild(description);
+    return button;
+  }
+
+  function getStandardUpgradeById(id) {
+    for (var i = 0; i < STANDARD_UPGRADES.length; i++) {
+      if (STANDARD_UPGRADES[i].id === id) return STANDARD_UPGRADES[i];
+    }
+    for (var j = 0; j < REVOLVER_SPECIAL_UPGRADES.length; j++) {
+      if (REVOLVER_SPECIAL_UPGRADES[j].id === id) return REVOLVER_SPECIAL_UPGRADES[j];
+    }
+    for (var k = 0; k < RIFLE_SPECIAL_UPGRADES.length; k++) {
+      if (RIFLE_SPECIAL_UPGRADES[k].id === id) return RIFLE_SPECIAL_UPGRADES[k];
+    }
+    for (var l = 0; l < LAUNCHER_SPECIAL_UPGRADES.length; l++) {
+      if (LAUNCHER_SPECIAL_UPGRADES[l].id === id) return LAUNCHER_SPECIAL_UPGRADES[l];
+    }
+    return null;
+  }
+
+  function hasUpgrade(id) {
+    return (state.upgradeCounts[id] || 0) > 0;
+  }
+
+  function getUpgradeCount(id) {
+    return state.upgradeCounts[id] || 0;
+  }
+
+  function choosePlayerClass(id) {
+    var spec = PLAYER_CLASSES[id];
+    if (!spec || state.playerClass || state.level < CLASS_CHOICE_LEVEL) return false;
+    state.playerClass = spec.id;
+    state.classChoicePending = false;
+    state.classChoiceOffered = true;
+    state.revolverDamageMultiplier = spec.revolverDamageMultiplier || 1;
+    state.revolverAmmoPickupBonus = spec.revolverAmmoPickupBonus || 0;
+    state.mode = "playing";
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    grantWeapon(spec.weapon, true);
+    spawnClassChoiceBurst(spec.id);
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function chooseRevolverUpgrade(id) {
+    var spec = REVOLVER_UPGRADES[id];
+    if (!spec || state.playerClass !== "gunslinger" || state.revolverUpgrade || state.level < REVOLVER_UPGRADE_LEVEL) return false;
+    var previousMagazine = getWeaponMagazine(WEAPONS.revolver);
+    state.revolverUpgrade = spec.id;
+    state.revolverUpgradePending = false;
+    state.revolverUpgradeOffered = true;
+    state.revolverDamageMultiplier = spec.revolverDamageMultiplier || state.revolverDamageMultiplier || 1;
+    state.revolverMagazineBonus = spec.revolverMagazineBonus || 0;
+    state.revolverAmmoPickupBonus = spec.revolverAmmoPickupBonus || state.revolverAmmoPickupBonus || 0;
+    resizeWeaponAmmo("revolver", previousMagazine, getWeaponMagazine(WEAPONS.revolver));
+    state.ammoReserve.revolver = Math.max(0, state.ammoReserve.revolver || 0) + (spec.revolverReserveBonus || 0);
+    state.mode = "playing";
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    setWeaponVisual("revolver");
+    spawnRevolverUpgradeBurst(spec.id);
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function chooseRifleUpgrade(id) {
+    var spec = RIFLE_UPGRADES[id];
+    if (!spec || state.playerClass !== "ranger" || state.rifleUpgrade || state.level < RIFLE_UPGRADE_LEVEL) return false;
+    state.rifleUpgrade = spec.id;
+    state.rifleUpgradePending = false;
+    state.rifleUpgradeOffered = true;
+    state.rifleAmmoPickupBonus = spec.rifleAmmoPickupBonus || 0;
+    state.mode = "playing";
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    spawnRifleUpgradeBurst(spec.id);
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function chooseLauncherUpgrade(id) {
+    var spec = LAUNCHER_UPGRADES[id];
+    if (!spec || state.playerClass !== "demolitionist" || state.launcherUpgrade || state.level < LAUNCHER_UPGRADE_LEVEL) return false;
+    var previousMagazine = getWeaponMagazine(WEAPONS.launcher);
+    state.launcherUpgrade = spec.id;
+    state.launcherUpgradePending = false;
+    state.launcherUpgradeOffered = true;
+    state.launcherMagazineMultiplier = spec.launcherMagazineMultiplier || 1;
+    resizeWeaponAmmo("launcher", previousMagazine, getWeaponMagazine(WEAPONS.launcher));
+    if (spec.id === "pyrotechnician") state.launcherFireAmmoAccumulator = 0;
+    state.mode = "playing";
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    spawnLauncherUpgradeBurst(spec.id);
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function chooseStandardUpgrade(id) {
+    if (!state.standardUpgradePending || state.mode !== "level-up") return false;
+    var available = state.standardUpgradeChoices.some(function (spec) {
+      return spec.id === id;
+    });
+    if (!available) return false;
+    var spec = getStandardUpgradeById(id);
+    if (!spec) return false;
+    applyStandardUpgrade(spec);
+    state.standardUpgradePending = false;
+    state.standardUpgradeChoices = [];
+    state.standardUpgradeLevel = 0;
+    state.pendingStandardUpgradeLevels.shift();
+    state.mode = "playing";
+    setPanel(levelUpPanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    spawnStandardUpgradeBurst(spec);
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function applyStandardUpgrade(spec) {
+    state.upgradeCounts[spec.id] = (state.upgradeCounts[spec.id] || 0) + 1;
+    state.standardUpgradesChosen += 1;
+    if (spec.id === "silverBullet") state.bigIronShotsFired = 0;
+    if (spec.id === "duelistFocus") state.duelistFocus = 0;
+    if (spec.id === "chainDetonation") state.launcherChainDetonations = 0;
+    if (spec.id === "fireproofPowder") state.launcherFireAmmoAccumulator = 0;
+    if (spec.id === "madmansJourney") {
+      state.launcherMadmanStacks = 0;
+      state.launcherMadmanTriggers = 0;
+    }
+    if (typeof spec.apply === "function") spec.apply();
+  }
+
+  function forceStandardUpgradeForTest(id) {
+    if (state.mode === "playing") maybeOfferNextLevelReward();
+    if (!state.standardUpgradePending || state.mode !== "level-up") return false;
+    var spec = getStandardUpgradeById(id) || state.standardUpgradeChoices[0];
+    if (!spec) return false;
+    applyStandardUpgrade(spec);
+    state.standardUpgradePending = false;
+    state.standardUpgradeChoices = [];
+    state.standardUpgradeLevel = 0;
+    state.pendingStandardUpgradeLevels.shift();
+    state.mode = "playing";
+    setPanel(levelUpPanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function resizeWeaponAmmo(id, previousMagazine, nextMagazine) {
+    if (nextMagazine > previousMagazine) {
+      state.ammo[id] = Math.min(nextMagazine, Math.max(0, state.ammo[id] || 0) + (nextMagazine - previousMagazine));
+    } else {
+      state.ammo[id] = Math.min(nextMagazine, Math.max(0, state.ammo[id] || 0));
+    }
+    state.reloadTimers[id] = 0;
+  }
+
+  function grantWeapon(id, select) {
+    var weapon = WEAPONS[id];
+    if (!weapon) return false;
+    var magazine = getWeaponMagazine(weapon);
+    state.ownedWeapons[id] = true;
+    state.ammo[id] = Math.max(state.ammo[id] || 0, magazine);
+    state.ammoReserve[id] = Math.max(state.ammoReserve[id] || 0, Math.max(0, (weapon.reserveStart || 0) - magazine));
+    state.reloadTimers[id] = 0;
+    if (select) return selectWeapon(id);
+    return true;
+  }
+
+  function selectWeapon(id) {
+    var weapon = WEAPONS[id];
+    if (!weapon || state.mode !== "playing" || !state.ownedWeapons[id]) return false;
+    state.weapon = id;
+    if (state.player) state.player.weapon = id;
+    if ((state.ammo[id] || 0) <= 0) startReload(id);
+    setWeaponVisual(id);
+    updateHud();
+    return true;
+  }
+
+  function getWeaponDamage(weapon) {
+    if (!weapon) return 0;
+    var damage = weapon.id === "revolver" ? weapon.damage * (state.revolverDamageMultiplier || 1) : weapon.damage;
+    return damage * (1 + Math.max(0, state.globalDamageBonus || 0));
+  }
+
+  function spawnClassChoiceBurst(classId) {
+    if (!state.player) return;
+    var color = classId === "demolitionist" ? 0xff8b35 : classId === "ranger" ? 0xffd66d : 0x87eaff;
+    addShockwave(state.player.x, state.player.z, 3.2, 0.46, color);
+    addLightFlash(state.player.x, 1.5, state.player.z, color, 3.2, 7, 0.24);
+    spawnPurchaseBurst();
+  }
+
+  function spawnRevolverUpgradeBurst(upgradeId) {
+    if (!state.player) return;
+    var color = upgradeId === "bigIron" ? 0xffc44d : 0xff7b73;
+    addShockwave(state.player.x, state.player.z, 3.6, 0.48, color);
+    addLightFlash(state.player.x, 1.5, state.player.z, color, 3.5, 7.5, 0.25);
+    spawnPurchaseBurst();
+  }
+
+  function spawnRifleUpgradeBurst(upgradeId) {
+    if (!state.player) return;
+    var color = upgradeId === "trailWarden" ? 0xffd36b : 0x86f3ff;
+    addShockwave(state.player.x, state.player.z, 3.4, 0.46, color);
+    addLightFlash(state.player.x, 1.5, state.player.z, color, 3.4, 7.2, 0.24);
+    spawnPurchaseBurst();
+  }
+
+  function spawnLauncherUpgradeBurst(upgradeId) {
+    if (!state.player) return;
+    var color = upgradeId === "pyrotechnician" ? 0xff6a16 : 0xffc45f;
+    addShockwave(state.player.x, state.player.z, 3.6, 0.48, color);
+    addLightFlash(state.player.x, 1.5, state.player.z, color, 3.7, 7.8, 0.25);
+    spawnPurchaseBurst();
+  }
+
+  function spawnStandardUpgradeBurst(spec) {
+    if (!state.player) return;
+    var color = spec && spec.color === "red" ? 0xffc85a : 0x8fe7ff;
+    addShockwave(state.player.x, state.player.z, 2.9, 0.42, color);
+    addLightFlash(state.player.x, 1.35, state.player.z, color, 2.8, 6.2, 0.2);
+    spawnPurchaseBurst();
   }
 
   function getXpToNextLevel(level) {
@@ -4321,20 +8030,7 @@
   }
 
   function buyOrSelectWeapon(id) {
-    var weapon = WEAPONS[id];
-    if (!weapon || state.mode !== "playing") return false;
-    if (!state.ownedWeapons[id]) {
-      if (state.score < weapon.cost) return false;
-      state.score -= weapon.cost;
-      state.ownedWeapons[id] = true;
-      spawnPurchaseBurst();
-    }
-    state.weapon = id;
-    if (state.player) state.player.weapon = id;
-    if ((state.ammo[id] || 0) <= 0) startReload(id);
-    setWeaponVisual(id);
-    updateHud();
-    return true;
+    return selectWeapon(id);
   }
 
   function spawnPurchaseBurst() {
@@ -4359,14 +8055,19 @@
 
   function setWeaponVisual(id) {
     if (!state.player || !state.player.group) return;
-    setWeaponMeshes(state.player.group, id);
+    setWeaponMeshes(state.player.group, getWeaponVisualId(id));
+  }
+
+  function getWeaponVisualId(id) {
+    if (id === "revolver" && state.revolverUpgrade === "dualRevolvers") return "dualRevolvers";
+    return id;
   }
 
   function setWeaponMeshes(group, id) {
     var meshMap = group.userData.weaponMeshes;
     if (!meshMap) return;
     Object.keys(meshMap).forEach(function (key) {
-      var visible = key === id;
+      var visible = key === id || (id === "dualRevolvers" && key === "revolver");
       meshMap[key].forEach(function (mesh) {
         mesh.visible = visible;
       });
@@ -4378,26 +8079,48 @@
     resetRun("playing");
     setPanel(menu, false);
     setPanel(gameOverPanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    setPanel(levelUpPanel, false);
     updateModeClass();
   }
 
   function bindInput() {
     startBtn.addEventListener("click", startGame);
     restartBtn.addEventListener("click", startGame);
-    weaponButtons.forEach(function (button) {
+    classChoiceButtons.forEach(function (button) {
       button.addEventListener("click", function () {
-        buyOrSelectWeapon(button.getAttribute("data-weapon"));
+        choosePlayerClass(button.getAttribute("data-class"));
       });
     });
+    revolverUpgradeButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        chooseRevolverUpgrade(button.getAttribute("data-revolver-upgrade"));
+      });
+    });
+    rifleUpgradeButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        chooseRifleUpgrade(button.getAttribute("data-rifle-upgrade"));
+      });
+    });
+    launcherUpgradeButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        chooseLauncherUpgrade(button.getAttribute("data-launcher-upgrade"));
+      });
+    });
+    if (levelUpOptions) {
+      levelUpOptions.addEventListener("click", function (event) {
+        var button = event.target.closest("[data-standard-upgrade]");
+        if (button) chooseStandardUpgrade(button.getAttribute("data-standard-upgrade"));
+      });
+    }
 
     window.addEventListener("keydown", function (event) {
       keys[event.code] = true;
       if (event.code === "KeyF") toggleFullscreen();
-      if (event.code === "KeyR" && state.mode !== "playing") startGame();
-      if ((event.code === "Enter" || event.code === "Space") && state.mode !== "playing") startGame();
-      if (event.code === "Digit1") buyOrSelectWeapon("revolver");
-      if (event.code === "Digit2") buyOrSelectWeapon("rifle");
-      if (event.code === "Digit3") buyOrSelectWeapon("launcher");
+      if (event.code === "KeyR" && state.mode === "gameover") startGame();
+      if ((event.code === "Enter" || event.code === "Space") && (state.mode === "menu" || state.mode === "gameover")) startGame();
     });
     window.addEventListener("keyup", function (event) {
       keys[event.code] = false;
@@ -4409,6 +8132,33 @@
     });
     bindMobileControls();
     window.addEventListener("resize", resize);
+  }
+
+  function initClassWeaponIcons() {
+    classWeaponIcons.forEach(function (icon) {
+      var id = icon.getAttribute("data-weapon-icon");
+      icon.innerHTML = WEAPON_ICONS[id] || "";
+      icon.setAttribute("viewBox", "0 0 128 64");
+    });
+  }
+
+  function alignClassWeaponIcons(panel) {
+    var icons = panel ? Array.prototype.slice.call(panel.querySelectorAll("[data-weapon-icon]")) : classWeaponIcons;
+    icons.forEach(function (icon) {
+      centerSvgContent(icon, 128, 64);
+    });
+  }
+
+  function centerSvgContent(svg, viewWidth, viewHeight) {
+    try {
+      var box = svg.getBBox();
+      if (!box.width || !box.height) return;
+      var centerX = box.x + box.width / 2;
+      var centerY = box.y + box.height / 2;
+      var viewX = centerX - viewWidth / 2;
+      var viewY = centerY - viewHeight / 2;
+      svg.setAttribute("viewBox", [viewX.toFixed(2), viewY.toFixed(2), viewWidth, viewHeight].join(" "));
+    } catch (err) {}
   }
 
   function bindCanvasInput(canvas) {
@@ -4531,6 +8281,11 @@
 
   function updateModeClass() {
     root.classList.toggle("is-playing", state.mode === "playing");
+    root.classList.toggle("is-class-choice", state.mode === "class-choice");
+    root.classList.toggle("is-revolver-upgrade", state.mode === "revolver-upgrade");
+    root.classList.toggle("is-rifle-upgrade", state.mode === "rifle-upgrade");
+    root.classList.toggle("is-launcher-upgrade", state.mode === "launcher-upgrade");
+    root.classList.toggle("is-level-up", state.mode === "level-up");
   }
 
   function updatePointerFromClient(clientX, clientY) {
@@ -4579,17 +8334,18 @@
       var xpRatio = state.xpToNext > 0 ? clamp(state.xp / state.xpToNext, 0, 1) : 0;
       hudXpFill.style.transform = "scaleX(" + xpRatio.toFixed(3) + ")";
     }
-    if (hudWeapon) hudWeapon.textContent = (WEAPONS[state.weapon] || WEAPONS.revolver).label;
     updateAmmoHud();
-    weaponButtons.forEach(function (button) {
-      var id = button.getAttribute("data-weapon");
-      var weapon = WEAPONS[id];
-      if (!weapon) return;
-      var owned = !!state.ownedWeapons[id];
-      button.textContent = owned ? weapon.shortLabel : weapon.shortLabel + " " + weapon.cost;
-      button.disabled = state.mode !== "playing" || (!owned && state.score < weapon.cost);
-      button.classList.toggle("is-active", id === state.weapon);
-      button.classList.toggle("is-owned", owned);
+    classChoiceButtons.forEach(function (button) {
+      button.disabled = state.mode !== "class-choice" || !state.classChoicePending;
+    });
+    revolverUpgradeButtons.forEach(function (button) {
+      button.disabled = state.mode !== "revolver-upgrade" || !state.revolverUpgradePending;
+    });
+    rifleUpgradeButtons.forEach(function (button) {
+      button.disabled = state.mode !== "rifle-upgrade" || !state.rifleUpgradePending;
+    });
+    launcherUpgradeButtons.forEach(function (button) {
+      button.disabled = state.mode !== "launcher-upgrade" || !state.launcherUpgradePending;
     });
     updateMinimap();
   }
@@ -4984,17 +8740,31 @@
   function animateWeaponMeshes(group, kick, intensity, armPose) {
     var rig = group.userData.weaponRig;
     if (!rig) return;
+    var offhandRig = group.userData.offhandWeaponRig;
     var weaponId = state.weapon || "revolver";
     var bob = Math.sin(state.time * 9) * 0.012 * intensity;
     var recoil = weaponId === "launcher" ? 0.3 : weaponId === "rifle" ? 0.22 : 0.16;
+    var dualActive = weaponId === "revolver" && state.revolverUpgrade === "dualRevolvers";
+    var rightKick = dualActive && state.lastDualShotSide < 0 ? kick * 0.22 : kick;
+    var leftKick = dualActive && state.lastDualShotSide > 0 ? kick * 0.22 : kick;
     animateMesh(rig, {
-      x: 0.03 * intensity + kick * 0.035,
-      y: bob + kick * 0.035,
-      z: -kick * recoil,
-      rx: (armPose && armPose.rx ? armPose.rx : 0) - kick * (weaponId === "launcher" ? 0.22 : 0.14),
+      x: 0.03 * intensity + rightKick * 0.035,
+      y: bob + rightKick * 0.035,
+      z: -rightKick * recoil,
+      rx: (armPose && armPose.rx ? armPose.rx : 0) - rightKick * (weaponId === "launcher" ? 0.22 : 0.14),
       ry: armPose && armPose.ry ? armPose.ry : 0,
       rz: armPose && armPose.rz ? armPose.rz : 0,
     });
+    if (offhandRig) {
+      animateMesh(offhandRig, {
+        x: -0.03 * intensity - leftKick * 0.02,
+        y: bob + leftKick * 0.03,
+        z: dualActive ? -leftKick * 0.13 : 0,
+        rx: -0.18 - leftKick * 0.12,
+        ry: -0.08,
+        rz: -0.04 * intensity,
+      });
+    }
   }
 
   function createDeathDebris(enemy) {
@@ -5747,6 +9517,14 @@
       coordinateSystem: "origin arena center; x east/right; z south/down; y up",
       mode: state.mode,
       wave: state.wave,
+      waveSpawnTarget: state.waveSpawnTarget || getWaveZombieCount(state.wave),
+      waveSpawnMultiplier: getWaveZombieMultiplier(state.wave),
+      waveRemaining: getWaveRemainingCount(),
+      waveElapsed: Number((state.waveElapsed || 0).toFixed(2)),
+      waveLowRemainingTimer: Number((state.waveLowRemainingTimer || 0).toFixed(2)),
+      waveNextTimer: Number((state.nextWaveTimer || 0).toFixed(2)),
+      waveHardLimit: WAVE_HARD_LIMIT,
+      waveLowRemainingDelay: WAVE_LOW_REMAINING_DELAY,
       score: state.score,
       kills: state.kills,
       shotsFired: state.shotsFired,
@@ -5831,6 +9609,111 @@
         xpToNext: state.xpToNext,
         totalXp: state.totalXp,
         levelUps: state.levelUps,
+        playerClass: state.playerClass,
+        classChoicePending: state.classChoicePending,
+        classChoiceLevel: CLASS_CHOICE_LEVEL,
+        revolverUpgrade: state.revolverUpgrade,
+        revolverUpgradePending: state.revolverUpgradePending,
+        revolverUpgradeLevel: REVOLVER_UPGRADE_LEVEL,
+        rifleUpgrade: state.rifleUpgrade,
+        rifleUpgradePending: state.rifleUpgradePending,
+        rifleUpgradeLevel: RIFLE_UPGRADE_LEVEL,
+        launcherUpgrade: state.launcherUpgrade,
+        launcherUpgradePending: state.launcherUpgradePending,
+        launcherUpgradeLevel: LAUNCHER_UPGRADE_LEVEL,
+        standardUpgradePending: state.standardUpgradePending,
+        standardUpgradeLevel: state.standardUpgradeLevel,
+        standardUpgradeChoices: state.standardUpgradeChoices.map(function (spec) {
+          return spec.id;
+        }),
+        revolverSpecialLevel: isRevolverSpecialUpgradeLevel(state.standardUpgradeLevel),
+        rifleSpecialLevel: isRifleSpecialUpgradeLevel(state.standardUpgradeLevel),
+        launcherSpecialLevel: isLauncherSpecialUpgradeLevel(state.standardUpgradeLevel),
+        pendingStandardUpgrades: state.pendingStandardUpgradeLevels.length,
+        standardUpgradesChosen: state.standardUpgradesChosen,
+        upgrades: Object.assign({}, state.upgradeCounts),
+        revolverSpecial: {
+          nextStartLevel: REVOLVER_SPECIAL_START_LEVEL,
+          interval: REVOLVER_SPECIAL_INTERVAL,
+          fanTheHammerTimer: Number((state.fanTheHammerTimer || 0).toFixed(2)),
+          duelistFocus: Number((state.duelistFocus || 0).toFixed(2)),
+          dualRicochets: getDualRicochetLimit(),
+          dualKillReloadCounter: state.dualKillReloadCounter || 0,
+          bigIronShotsFired: state.bigIronShotsFired || 0,
+          bigIronRuptures: state.bigIronRuptures || 0,
+          leadBloomShots: state.leadBloomShots || 0,
+          nextDualShotSide: state.dualShotSide || 0,
+          lastDualShotSide: state.lastDualShotSide || 0,
+        },
+        rifleSpecial: {
+          nextStartLevel: RIFLE_SPECIAL_START_LEVEL,
+          interval: RIFLE_SPECIAL_INTERVAL,
+          shotsFired: state.rifleShotsFired || 0,
+          lightningInterval: RIFLE_LIGHTNING_SHOT_INTERVAL,
+          lightningTargets: getRifleLightningTargetCount(),
+          lightningStrikes: state.rifleLightningStrikes || 0,
+          stormTempoTimer: Number((state.rifleStormTempoTimer || 0).toFixed(2)),
+          killReloadCounter: state.rifleKillReloadCounter || 0,
+          magazineMultiplier: state.rifleMagazineMultiplier || 1,
+          autoTrapInterval: Number(getRifleAutoTrapInterval().toFixed(2)),
+          autoTrapBaseInterval: RIFLE_AUTO_TRAP_BASE_INTERVAL,
+          autoTrapMinInterval: RIFLE_AUTO_TRAP_MIN_INTERVAL,
+          autoTrapFrequency: state.rifleAutoTrapFrequency || 0,
+          trapTriggers: state.rifleTrapTriggers || 0,
+          trapAmmoRestored: state.rifleTrapAmmoRestored || 0,
+          trapBonusXp: state.rifleTrapBonusXp || 0,
+          activeTraps: state.rifleTraps.length,
+        },
+        launcherSpecial: {
+          nextStartLevel: LAUNCHER_SPECIAL_START_LEVEL,
+          interval: LAUNCHER_SPECIAL_INTERVAL,
+          branch: state.launcherUpgrade,
+          shotsFired: state.launcherShotsFired || 0,
+          magazineMultiplier: state.launcherMagazineMultiplier || 1,
+          chainDetonationLimit: getLauncherChainDetonationLimit(),
+          chainDetonations: state.launcherChainDetonations || 0,
+          bomblets: state.launcherBomblets || 0,
+          shrapnelShots: state.launcherShrapnelShots || 0,
+          powderEchoes: state.launcherPowderEchoes || 0,
+          ammoRefills: state.launcherAmmoRefills || 0,
+          fullSalvoKillThreshold: LAUNCHER_FULL_SALVO_KILL_THRESHOLD,
+          madmanStacks: state.launcherMadmanStacks || 0,
+          madmanTriggers: state.launcherMadmanTriggers || 0,
+          madmanFireRate: Number(getLauncherMadmanFireRateMultiplier().toFixed(2)),
+          fireKills: state.launcherFireKills || 0,
+          fireBonusXp: state.launcherFireBonusXp || 0,
+          backdrafts: state.launcherBackdrafts || 0,
+          thermitePatches: state.launcherThermitePatches || 0,
+          freeShots: state.launcherFreeShots || 0,
+          crossfireShards: state.launcherCrossfireShards || 0,
+          crossfireRange: Number(getLauncherCrossfireRange().toFixed(2)),
+          firePuddlesDefault: hasPyrotechnicianFirePuddles(),
+          fireBuffDefault: hasPyrotechnicianFireBuff(),
+          fireBuffActive: !!state.launcherFireBuffActive,
+          fireRadius: Number(getLauncherFireRadius().toFixed(2)),
+          fireLife: Number(getLauncherFireLife().toFixed(2)),
+          fireDamage: getLauncherFireDamage(),
+          blastRadius: Number(getLauncherBlastRadius().toFixed(2)),
+          blastDamage: Number(getLauncherBlastDamage().toFixed(2)),
+        },
+        modifiers: {
+          moveSpeed: Number((1 + (state.moveSpeedBonus || 0)).toFixed(3)),
+          damage: Number((1 + (state.globalDamageBonus || 0)).toFixed(3)),
+          reloadSpeed: Number((1 + (state.reloadSpeedBonus || 0)).toFixed(3)),
+          fireRate: Number((1 + (state.fireRateBonus || 0)).toFixed(3)),
+          ammoPickup: Number(getAmmoPickupMultiplier().toFixed(3)),
+          maxHpBonus: state.maxHpBonus || 0,
+          hpRegen: Number((state.hpRegen || 0).toFixed(2)),
+          xpPickupRadius: Number(getXpPickupRadius().toFixed(2)),
+          xpAttractRadius: Number(getXpAttractRadius().toFixed(2)),
+          xpGain: Number(getXpGainMultiplier().toFixed(3)),
+          attackRange: Number(getWeaponRangeMultiplier().toFixed(3)),
+        },
+        revolverDamageMultiplier: state.revolverDamageMultiplier || 1,
+        revolverMagazineBonus: state.revolverMagazineBonus || 0,
+        revolverAmmoPickupBonus: state.revolverAmmoPickupBonus || 0,
+        rifleAmmoPickupBonus: state.rifleAmmoPickupBonus || 0,
+        launcherAmmoPickupBonus: getLauncherAmmoPickupBonus(),
         xpOrbs: state.xpOrbs.length,
         xpProgress: Number((state.xpToNext > 0 ? state.xp / state.xpToNext : 0).toFixed(3)),
       },
@@ -5852,6 +9735,9 @@
             magazine: ammo.magazine,
             reserve: ammo.reserve,
             total: ammo.total,
+            damage: getWeaponDamage(WEAPONS[id]),
+            reloadTime: Number(getWeaponReloadTime(WEAPONS[id]).toFixed(2)),
+            cooldown: Number(getWeaponCooldown(WEAPONS[id]).toFixed(3)),
             reloading: ammo.reloading,
             reloadRemaining: Number(ammo.reloadRemaining.toFixed(2)),
           };
@@ -5859,6 +9745,17 @@
         }, {}),
       },
       spawnLeft: state.spawnLeft,
+      rifleTraps: state.rifleTraps.slice(0, 8).map(function (trap) {
+        return {
+          x: Number(trap.x.toFixed(2)),
+          z: Number(trap.z.toFixed(2)),
+          lure: !!trap.lure,
+          permanent: !!trap.permanent,
+          blastRadius: Number(trap.blastRadius.toFixed(2)),
+          damage: trap.damage,
+          life: trap.permanent ? null : Number(trap.life.toFixed(2)),
+        };
+      }),
       ammoCrates: state.ammoCrates.map(function (crate) {
         return {
           x: Number(crate.x.toFixed(2)),
@@ -5876,11 +9773,18 @@
       }),
       enemyCount: state.enemies.length,
       zombieTeleports: state.zombieTeleports,
+      zombieSurround: {
+        sideCounts: getZombieSurroundSideCounts(visibleGround),
+        spawnCursor: state.zombieSpawnSideCursor || 0,
+        teleportCursor: state.zombieTeleportSideCursor || 0,
+      },
       player: p
         ? {
             x: Number(p.x.toFixed(2)),
             z: Number(p.z.toFixed(2)),
             hp: Number(p.hp.toFixed(1)),
+            maxHp: Number(p.maxHp.toFixed(1)),
+            speed: Number(p.speed.toFixed(2)),
             cooldown: Number(p.cooldown.toFixed(2)),
             aimAngle: Number(p.aimAngle.toFixed(2)),
           }
@@ -5911,10 +9815,23 @@
       bullets: state.bullets.length,
       acidProjectiles: state.acidProjectiles.length,
       acidPuddles: state.acidPuddles.length,
+      firePatches: state.firePatches.length,
+      delayedExplosions: state.delayedExplosions.length,
+      launcherExplosionSamples: state.launcherExplosionSpreadSamples.slice(-24).map(function (sample) {
+        return {
+          kind: sample.kind,
+          x: Number(sample.x.toFixed(2)),
+          z: Number(sample.z.toFixed(2)),
+          radius: Number(sample.radius.toFixed(2)),
+        };
+      }),
       effects: {
         particles: state.particles.length,
         smoke: state.smokePuffs.length,
         shockwaves: state.shockwaves.length,
+        lightningBolts: state.lightningBolts.length,
+        rifleTraps: state.rifleTraps.length,
+        firePatches: state.firePatches.length,
         decals: state.decals.length,
         debris: state.debris.length,
       },
@@ -5932,6 +9849,44 @@
           type: b.type,
           x: Number(b.x.toFixed(2)),
           z: Number(b.z.toFixed(2)),
+          speed: Number(b.speed.toFixed(2)),
+          range: Number((b.speed * b.maxLife).toFixed(2)),
+          damage: b.damage,
+          baseDamage: b.baseDamage,
+          visualWidth: Number((b.visualWidth || 0).toFixed(3)),
+          visualLength: Number((b.visualLength || 0).toFixed(3)),
+          hitRadius: Number((b.hitRadius || 0).toFixed(3)),
+          piercing: !!b.piercing,
+          pierced: b.piercedEnemies ? b.piercedEnemies.length : 0,
+          muzzleSide: b.muzzleSide || 0,
+          ricochetRemaining: b.ricochetRemaining || 0,
+          ricochetDepth: b.ricochetDepth || 0,
+          homing: Number((b.homing || 0).toFixed(3)),
+          rifleShotNumber: b.rifleShotNumber || 0,
+          chainLightning: !!b.chainLightning,
+          lightningTargets: b.lightningTargets || 0,
+          electricVisual: !!(b.mesh && b.mesh.userData && b.mesh.userData.electricProjectile),
+          electricBoltCount:
+            b.mesh && b.mesh.userData && b.mesh.userData.electricParts && b.mesh.userData.electricParts.bolts
+              ? b.mesh.userData.electricParts.bolts.length
+              : 0,
+          electricRingCount:
+            b.mesh && b.mesh.userData && b.mesh.userData.electricParts && b.mesh.userData.electricParts.rings
+              ? b.mesh.userData.electricParts.rings.length
+              : 0,
+          launcherShotNumber: b.launcherShotNumber || 0,
+          powderEcho: !!b.powderEcho,
+          airburstLanding: !!b.airburstLanding,
+          rollingFlame: !!b.rollingFlame,
+          fireShard: !!b.fireShard,
+          plantsTrap: !!b.plantsTrap,
+          silverBullet: !!b.silverBullet,
+          executioner: !!b.executioner,
+          heavyRupture: !!b.heavyRupture,
+          leadBloom: !!b.leadBloom,
+          throughAndThrough: !!b.throughAndThrough,
+          blastRadius: Number((b.blastRadius || 0).toFixed(2)),
+          blastDamage: Number((b.blastDamage || 0).toFixed(2)),
           targetX: b.targetX == null ? null : Number(b.targetX.toFixed(2)),
           targetZ: b.targetZ == null ? null : Number(b.targetZ.toFixed(2)),
           life: Number(b.life.toFixed(2)),
@@ -5954,6 +9909,24 @@
           radius: Number(puddle.radius.toFixed(2)),
           visualParts: 1 + (puddle.darkPatch ? 1 : 0) + (puddle.ring ? 1 : 0) + (puddle.foam ? 1 : 0) + (puddle.bubbles ? puddle.bubbles.length : 0),
           life: Number(puddle.life.toFixed(2)),
+        };
+      }),
+      firePools: state.firePatches.slice(0, 8).map(function (patch) {
+        return {
+          x: Number(patch.x.toFixed(2)),
+          z: Number(patch.z.toFixed(2)),
+          radius: Number(patch.radius.toFixed(2)),
+          damage: patch.damage,
+          trail: !!patch.trail,
+          thermite: !!patch.thermite,
+          backdraft: !!patch.backdraft,
+          splinter: !!patch.splinter,
+          visualParts: getFirePatchVisualPartCount(patch),
+          flameBlocks: (patch.flames || []).reduce(function (sum, flame) {
+            return sum + (flame.children && flame.children.length ? flame.children.length : 1);
+          }, 0),
+          cinders: patch.cinders ? patch.cinders.length : 0,
+          life: Number(patch.life.toFixed(2)),
         };
       }),
       enemies: state.enemies.slice(0, 12).map(function (e) {
@@ -5987,6 +9960,53 @@
       updateHud();
       return state.score;
     },
+    grantXp: function (amount) {
+      addXp(amount, state.player ? state.player.x : 0, state.player ? state.player.z : 0);
+      return {
+        level: state.level,
+        xp: state.xp,
+        xpToNext: state.xpToNext,
+        playerClass: state.playerClass,
+        classChoicePending: state.classChoicePending,
+        revolverUpgrade: state.revolverUpgrade,
+        revolverUpgradePending: state.revolverUpgradePending,
+        rifleUpgrade: state.rifleUpgrade,
+        rifleUpgradePending: state.rifleUpgradePending,
+        launcherUpgrade: state.launcherUpgrade,
+        launcherUpgradePending: state.launcherUpgradePending,
+        standardUpgradePending: state.standardUpgradePending,
+        pendingStandardUpgrades: state.pendingStandardUpgradeLevels.length,
+        mode: state.mode,
+      };
+    },
+    chooseClass: function (id) {
+      return choosePlayerClass(id);
+    },
+    chooseRevolverUpgrade: function (id) {
+      return chooseRevolverUpgrade(id);
+    },
+    chooseRifleUpgrade: function (id) {
+      return chooseRifleUpgrade(id);
+    },
+    chooseLauncherUpgrade: function (id) {
+      return chooseLauncherUpgrade(id);
+    },
+    chooseStandardUpgrade: function (id) {
+      return chooseStandardUpgrade(id);
+    },
+    forceStandardUpgrade: function (id) {
+      return forceStandardUpgradeForTest(id);
+    },
+    forceAllStandardUpgrades: function (id) {
+      var count = 0;
+      while (count < 100 && forceStandardUpgradeForTest(id || "swiftBoots")) count++;
+      return {
+        applied: count,
+        mode: state.mode,
+        pendingStandardUpgrades: state.pendingStandardUpgradeLevels.length,
+        upgrades: Object.assign({}, state.upgradeCounts),
+      };
+    },
     buyWeapon: function (id) {
       return buyOrSelectWeapon(id);
     },
@@ -6008,6 +10028,39 @@
       updateHud();
       return true;
     },
+    forceWaveState: function (wave, liveCount, spawnLeft) {
+      for (var i = state.enemies.length - 1; i >= 0; i--) {
+        removeObject3D(state.enemies[i].group);
+      }
+      state.enemies = [];
+      startWave(Math.max(1, Math.floor(Number(wave) || 1)));
+      state.spawnLeft = Math.max(0, Math.floor(Number(spawnLeft) || 0));
+      state.spawnTimer = 9999;
+      state.waveElapsed = 0;
+      state.waveLowRemainingTimer = 0;
+      state.nextWaveTimer = 0;
+      var count = Math.max(0, Math.floor(Number(liveCount) || 0));
+      var originX = state.player ? state.player.x : 0;
+      var originZ = state.player ? state.player.z : 0;
+      for (var j = 0; j < count; j++) {
+        var zombie = makeZombie("walker");
+        zombie.x = originX + 58 + (j % 5) * 1.4;
+        zombie.z = originZ + 58 + Math.floor(j / 5) * 1.4;
+        resolveMoverPosition(zombie, zombie.radius, ENEMY_BOUNDS_EXTRA);
+        zombie.group.position.set(zombie.x, 0, zombie.z);
+        state.enemies.push(zombie);
+        dynamicRoot.add(zombie.group);
+      }
+      updateHud();
+      render();
+      return {
+        wave: state.wave,
+        waveSpawnTarget: state.waveSpawnTarget,
+        waveRemaining: getWaveRemainingCount(),
+        live: state.enemies.length,
+        spawnLeft: state.spawnLeft,
+      };
+    },
     clearAcidHazards: function () {
       for (var i = state.acidProjectiles.length - 1; i >= 0; i--) {
         removeAcidProjectile(i);
@@ -6016,6 +10069,57 @@
         removeAcidPuddle(j);
       }
       return true;
+    },
+    clearFireHazards: function () {
+      for (var b = state.bullets.length - 1; b >= 0; b--) {
+        if (state.bullets[b].type === "launcherFireShard") removeBullet(b);
+      }
+      for (var i = state.firePatches.length - 1; i >= 0; i--) {
+        removeFirePatch(i);
+      }
+      state.delayedExplosions = [];
+      state.launcherFireBuffActive = false;
+      state.launcherFireAmmoAccumulator = 0;
+      return true;
+    },
+    clearXpOrbs: function () {
+      for (var i = state.xpOrbs.length - 1; i >= 0; i--) {
+        removeXpOrb(i);
+      }
+      return true;
+    },
+    clearLauncherExplosionSamples: function () {
+      state.launcherExplosionSpreadSamples = [];
+      return true;
+    },
+    spawnFirePatchAt: function (x, z, radius, life) {
+      var patch = spawnFirePatch(Number(x) || 0, Number(z) || 0, {
+        radius: Math.max(0.5, Number(radius) || getLauncherFireRadius()),
+        life: Math.max(0.8, Number(life) || getLauncherFireLife()),
+        damage: getLauncherFireDamage(),
+      });
+      return patch
+        ? {
+            x: Number(patch.x.toFixed(2)),
+            z: Number(patch.z.toFixed(2)),
+            radius: Number(patch.radius.toFixed(2)),
+            life: Number(patch.life.toFixed(2)),
+          }
+        : null;
+    },
+    triggerLauncherExplosionAt: function (x, z, kind, radius, damage, options) {
+      var opts = options || {};
+      opts.kind = kind || "main";
+      var source = explodeGrenade(Number(x) || 0, Number(z) || 0, Math.max(0.2, Number(radius) || getLauncherBlastRadius()), Math.max(0.1, Number(damage) || getLauncherBlastDamage()), opts);
+      updateHud();
+      render();
+      return {
+        kind: source.kind,
+        kills: source.killedEnemies.length,
+        ammoRefills: state.launcherAmmoRefills || 0,
+        currentAmmo: getAmmoState("launcher").current,
+        magazine: getAmmoState("launcher").magazine,
+      };
     },
     sampleZombieTypes: function (wave, count) {
       var previousWave = state.wave;
@@ -6027,6 +10131,9 @@
       }
       state.wave = previousWave;
       return result;
+    },
+    getWaveZombieCount: function (wave) {
+      return getWaveZombieCount(wave);
     },
     spawnZombieNow: function () {
       spawnZombie();
@@ -6061,9 +10168,22 @@
       var crate = spawnAmmoCrateAt(Number(x) || 0, Number(z) || 0);
       return { x: Number(crate.x.toFixed(2)), z: Number(crate.z.toFixed(2)) };
     },
+    collectNearestAmmoCrate: function () {
+      if (!state.player || !state.ammoCrates.length) return false;
+      var best = 0;
+      var bestDist = Infinity;
+      for (var i = 0; i < state.ammoCrates.length; i++) {
+        var dist = Math.hypot(state.ammoCrates[i].x - state.player.x, state.ammoCrates[i].z - state.player.z);
+        if (dist < bestDist) {
+          best = i;
+          bestDist = dist;
+        }
+      }
+      return collectAmmoCrate(best);
+    },
     setAmmo: function (id, current, reserve) {
       var weapon = WEAPONS[id] || WEAPONS.revolver;
-      state.ammo[weapon.id] = clamp(Number(current) || 0, 0, weapon.magazine);
+      state.ammo[weapon.id] = clamp(Number(current) || 0, 0, getWeaponMagazine(weapon));
       state.ammoReserve[weapon.id] = Math.max(0, Number(reserve) || 0);
       state.reloadTimers[weapon.id] = 0;
       updateHud();
@@ -6083,6 +10203,16 @@
         z: Number(state.player.z.toFixed(2)),
         cameraX: Number(cameraTarget.x.toFixed(2)),
         cameraZ: Number(cameraTarget.z.toFixed(2)),
+      };
+    },
+    setPlayerHp: function (hp) {
+      if (!state.player) return null;
+      state.player.hp = clamp(Number(hp) || 0, 0, state.player.maxHp);
+      state.player.invuln = 0;
+      updateHud();
+      return {
+        hp: Number(state.player.hp.toFixed(1)),
+        maxHp: Number(state.player.maxHp.toFixed(1)),
       };
     },
     setAimTarget: function (x, z) {
@@ -6128,6 +10258,20 @@
     },
     getRuinColliderDiagnostics: function () {
       return getRuinColliderDiagnostics();
+    },
+    getUpgradeIconDiagnostics: function (id) {
+      var wrapper = document.createElement("div");
+      wrapper.innerHTML = getUpgradeIcon(id);
+      var svg = wrapper.querySelector("svg");
+      return {
+        id: id,
+        text: wrapper.textContent.trim(),
+        svgCount: wrapper.querySelectorAll("svg").length,
+        shapeCount: wrapper.querySelectorAll("path,circle,line,polyline,polygon,rect").length,
+        pathCount: wrapper.querySelectorAll("path").length,
+        circleCount: wrapper.querySelectorAll("circle").length,
+        viewBox: svg ? svg.getAttribute("viewBox") : null,
+      };
     },
     spawnZombieAt: function (type, x, z) {
       var id = { walker: true, runner: true, brute: true, spitter: true }[type] ? type : "walker";

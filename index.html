@@ -22,17 +22,6 @@
           <span>Score <b id="score-value">0</b></span>
           <span>Dead <b id="kills-value">0</b></span>
         </div>
-        <div class="weapon-shop" aria-label="Weapon shop">
-          <div class="weapon-current">
-            <span>Weapon</span>
-            <b id="weapon-value">Revolver</b>
-          </div>
-          <div class="weapon-buttons">
-            <button class="weapon-button is-active" type="button" data-weapon="revolver" title="Use revolver">REV</button>
-            <button class="weapon-button" type="button" data-weapon="rifle" title="Buy or use Winchester">WIN 300</button>
-            <button class="weapon-button" type="button" data-weapon="launcher" title="Buy or use grenade launcher">GL 900</button>
-          </div>
-        </div>
       </div>
 
       <div id="ammo-hud" class="ammo-hud" aria-label="Ammo">
@@ -60,7 +49,7 @@
         <p>Blocky western survival. Keep distance, aim with the mouse, clear every wave.</p>
         <button id="start-btn" type="button">Start Hunt</button>
         <div class="controls">
-          WASD / Arrows: move - Mouse: aim - Left click: shoot - 1/2/3 weapons - F: fullscreen
+          WASD / Arrows: move - Mouse: aim - Left click: shoot - F: fullscreen
         </div>
       </section>
 
@@ -68,6 +57,104 @@
         <h2>Last Stand Lost</h2>
         <p id="game-over-stats">Wave 1 - Score 0</p>
         <button id="restart-btn" type="button">Ride Again</button>
+      </section>
+
+      <section id="class-choice" class="panel class-choice-panel" aria-label="Class choice">
+        <h2>Choose Your Path</h2>
+        <p>Level 5. Pick a role for this run.</p>
+        <div class="class-options">
+          <button class="class-card class-card--black" type="button" data-class="gunslinger" data-rank="A" data-suit="&spades;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Gunslinger</strong>
+            <span>Revolver damage x2, then choose Dual or Big Iron</span>
+          </button>
+          <button class="class-card class-card--red" type="button" data-class="ranger" data-rank="K" data-suit="&hearts;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="rifle" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Ranger</strong>
+            <span>Unlock Winchester, then choose barrage or traps</span>
+          </button>
+          <button class="class-card class-card--black" type="button" data-class="demolitionist" data-rank="Q" data-suit="&clubs;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="launcher" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Demolitionist</strong>
+            <span>Unlock launcher; crates give +6 grenades</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="revolver-upgrade" class="panel class-choice-panel revolver-upgrade-panel" aria-label="Revolver upgrade choice">
+        <h2>Choose Your Iron</h2>
+        <p>Level 10. The revolver path splits.</p>
+        <div class="class-options">
+          <button class="class-card class-card--red" type="button" data-revolver-upgrade="dualRevolvers" data-rank="2" data-suit="&diams;">
+            <span class="class-card__mark class-card__mark--dual" aria-hidden="true">
+              <svg class="class-card__weapon-icon class-card__weapon-icon--dual-left" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
+              <svg class="class-card__weapon-icon class-card__weapon-icon--dual-right" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Dual Revolvers</strong>
+            <span>12-shot magazine, alternating fire, crates +24 ammo</span>
+          </button>
+          <button class="class-card class-card--black" type="button" data-revolver-upgrade="bigIron" data-rank="A" data-suit="&spades;">
+            <span class="class-card__mark class-card__mark--big-iron" aria-hidden="true">
+              <svg class="class-card__weapon-icon class-card__weapon-icon--big-iron" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Big Iron</strong>
+            <span>Slow piercing shots, damage x4, crates +12 ammo</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="rifle-upgrade" class="panel class-choice-panel rifle-upgrade-panel" aria-label="Winchester upgrade choice">
+        <h2>Choose Your Trail</h2>
+        <p>Level 10. The Winchester path splits.</p>
+        <div class="class-options">
+          <button class="class-card class-card--red" type="button" data-rifle-upgrade="leverBarrage" data-rank="K" data-suit="&hearts;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="rifle" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Lever Barrage</strong>
+            <span>Fast rifle path: double magazine and lightning</span>
+          </button>
+          <button class="class-card class-card--black" type="button" data-rifle-upgrade="trailWarden" data-rank="Q" data-suit="&clubs;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="rifleTrap" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Trail Warden</strong>
+            <span>Trap path: lures, auto traps, bonus XP</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="launcher-upgrade" class="panel class-choice-panel launcher-upgrade-panel" aria-label="Launcher upgrade choice">
+        <h2>Choose Your Fuse</h2>
+        <p>Level 10. The launcher path splits.</p>
+        <div class="class-options">
+          <button class="class-card class-card--black" type="button" data-launcher-upgrade="bombardier" data-rank="A" data-suit="&spades;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="launcher" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Bombardier</strong>
+            <span>6-grenade magazine, +12 crate ammo, chain blasts</span>
+          </button>
+          <button class="class-card class-card--red" type="button" data-launcher-upgrade="pyrotechnician" data-rank="K" data-suit="&hearts;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="incendiaryShell" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Pyrotechnician</strong>
+            <span>Fire pools, fire healing, +9 crate ammo</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="level-up-choice" class="panel class-choice-panel level-up-panel" aria-label="Level up choice">
+        <h2>Level Up</h2>
+        <p id="level-up-subtitle">Pick a boost for this run.</p>
+        <div id="level-up-options" class="class-options level-up-options"></div>
       </section>
 
       <div id="mobile-controls" class="mobile-controls" aria-label="Mobile controls">

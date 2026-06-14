@@ -2,37 +2,47 @@
 
 Игра остается обычным статическим сайтом: `index.html`, `styles.css`, `game.js` и `vendor/three.min.js` запускаются напрямую через браузер без сервера. APK собирается как Android-обертка Capacitor вокруг этих файлов.
 
-## Шаги
+## Окружение
 
-Из корня проекта `D:\TestProject`:
+Все локальные инструменты лежат внутри проекта:
+
+- Node.js: `.tools\node\extracted\node-v22.22.3-win-x64`
+- JDK 21: `.tools\jdk\extracted\jdk-21.0.11+10`
+- Android SDK: `.tools\android-sdk`
+
+Чтобы открыть PowerShell с готовым `PATH`, запустите из корня проекта:
 
 ```powershell
-New-Item -ItemType Directory -Path "www\vendor" -Force | Out-Null
-Copy-Item "index.html" "www\index.html" -Force
-Copy-Item "styles.css" "www\styles.css" -Force
-Copy-Item "game.js" "www\game.js" -Force
-Copy-Item "vendor\three.min.js" "www\vendor\three.min.js" -Force
-.\node_modules\.bin\cap.cmd sync android
+.\dev-shell.cmd
 ```
 
-Затем собрать debug APK:
+Разовый запуск команд также работает через npm-скрипты, потому что они сами используют `-ExecutionPolicy Bypass`.
+
+## Проверки
 
 ```powershell
-$env:JAVA_HOME = "D:\TestProject\.tools\jdk\extracted\jdk-21.0.11+10"
-$env:ANDROID_HOME = "D:\TestProject\.tools\android-sdk"
-$env:ANDROID_SDK_ROOT = "D:\TestProject\.tools\android-sdk"
-$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
-
-Set-Location "D:\TestProject\android"
-.\gradlew.bat assembleDebug
-Set-Location "D:\TestProject"
-Copy-Item "android\app\build\outputs\apk\debug\app-debug.apk" "DustAndDead-debug.apk" -Force
+npm run check
+npm test
+npm run verify:apk
 ```
 
-Проверка подписи:
+`npm test` запускает синтаксическую проверку JavaScript и Playwright smoke-тест через `file://`.
+
+## Сборка
+
+Из корня проекта `C:\MyProjects\TestProject`:
 
 ```powershell
-& "D:\TestProject\.tools\android-sdk\build-tools\36.0.0\apksigner.bat" verify --verbose "DustAndDead-debug.apk"
+npm run sync:android
+npm run build:apk
+```
+
+`npm run build:apk` синхронизирует `index.html`, `styles.css`, `game.js` и `vendor\three.min.js` в `www`, выполняет `cap sync android`, собирает debug APK через Gradle, копирует результат в `DustAndDead-debug.apk` и проверяет подпись.
+
+## Ручная проверка подписи
+
+```powershell
+npm run verify:apk
 ```
 
 `DustAndDead-debug.apk` нужен только для локальной проверки и установки на телефон. В GitHub он не добавляется.

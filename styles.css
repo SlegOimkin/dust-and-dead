@@ -139,67 +139,6 @@ canvas {
   font-size: 16px;
 }
 
-.weapon-shop {
-  display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 8px;
-  align-items: stretch;
-  margin-top: 10px;
-}
-
-.weapon-current {
-  display: grid;
-  align-content: center;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(255, 221, 154, 0.2);
-  border-radius: 6px;
-  background: rgba(22, 12, 7, 0.34);
-}
-
-.weapon-current span {
-  color: #f8d28a;
-  font-size: 10px;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.weapon-current b {
-  overflow: hidden;
-  color: #ffffff;
-  font-size: 12px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.weapon-buttons {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.weapon-button {
-  min-width: 0;
-  padding: 8px 5px;
-  border: 1px solid rgba(255, 232, 181, 0.25);
-  border-radius: 6px;
-  background: rgba(101, 55, 25, 0.82);
-  color: #ffe3a5;
-  font-size: 11px;
-  line-height: 1;
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22);
-}
-
-.weapon-button.is-active {
-  background: #f0a348;
-  color: #23150a;
-}
-
-.weapon-button.is-owned:not(.is-active) {
-  background: rgba(148, 93, 42, 0.92);
-}
-
 .ammo-hud {
   position: fixed;
   top: 16px;
@@ -282,6 +221,27 @@ canvas {
   min-height: 49px;
 }
 
+.ammo-cartridge-rack[data-magazine="12"] {
+  --ammo-cols: 6;
+  --round-w: 9px;
+  --round-h: 25px;
+  gap: 3px 4px;
+  min-height: 55px;
+}
+
+.ammo-cartridge-rack[data-layout="dual"] {
+  gap: 5px 5px;
+  align-items: center;
+}
+
+.ammo-cartridge-rack[data-layout="dual"] .ammo-round[data-row="top"] {
+  transform: translateY(-1px);
+}
+
+.ammo-cartridge-rack[data-layout="dual"] .ammo-round[data-row="bottom"] {
+  transform: translateY(2px);
+}
+
 .ammo-cartridge-rack[data-magazine="3"] {
   --ammo-cols: 3;
   --round-w: 18px;
@@ -293,6 +253,15 @@ canvas {
   --round-w: 22px;
   --round-h: 38px;
   gap: 11px;
+}
+
+.ammo-cartridge-rack[data-weapon="launcher"][data-large-magazine="true"] {
+  --ammo-cols: 3;
+  --round-w: 16px;
+  --round-h: 30px;
+  gap: 5px 7px;
+  align-items: center;
+  min-height: 65px;
 }
 
 .ammo-round {
@@ -348,6 +317,22 @@ canvas {
   border-radius: 50%;
   background: rgba(54, 29, 9, 0.72);
   box-shadow: inset 0 1px 0 rgba(255, 245, 186, 0.45);
+}
+
+.ammo-round.is-silver-bullet .ammo-round-live {
+  filter: drop-shadow(0 0 5px rgba(255, 61, 49, 0.52)) drop-shadow(0 1px 0 rgba(0, 0, 0, 0.4));
+  background:
+    linear-gradient(90deg, rgba(78, 9, 8, 0.98) 0%, rgba(255, 82, 66, 0.98) 32%, rgba(159, 22, 18, 0.98) 72%, rgba(55, 7, 6, 0.98) 100%);
+}
+
+.ammo-round.is-silver-bullet .ammo-round-live::before {
+  background: linear-gradient(90deg, #ffe5b3 0%, #ff7b68 45%, #7d130f 100%);
+  box-shadow: inset 2px 0 0 rgba(255, 246, 204, 0.34), 0 0 6px rgba(255, 52, 42, 0.35);
+}
+
+.ammo-round.is-silver-bullet .ammo-round-live::after {
+  background: rgba(63, 7, 6, 0.86);
+  box-shadow: 0 -2px 0 rgba(255, 197, 116, 0.45), inset 0 1px 0 rgba(255, 230, 191, 0.38);
 }
 
 .ammo-cartridge-rack[data-weapon="launcher"] .ammo-round::before,
@@ -591,6 +576,269 @@ canvas {
   line-height: 1.45;
 }
 
+.panel.class-choice-panel {
+  top: 50%;
+  bottom: auto;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  padding: 22px;
+  background:
+    linear-gradient(rgba(64, 34, 15, 0.88), rgba(26, 14, 8, 0.92)),
+    rgba(34, 20, 10, 0.9);
+}
+
+.class-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.revolver-upgrade-panel,
+.rifle-upgrade-panel,
+.launcher-upgrade-panel {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.revolver-upgrade-panel .class-options,
+.rifle-upgrade-panel .class-options,
+.launcher-upgrade-panel .class-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.level-up-panel {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.level-up-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.class-card {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: 76px 28px 58px;
+  gap: 9px;
+  justify-items: center;
+  min-height: 230px;
+  align-content: center;
+  padding: 28px 16px 24px;
+  overflow: hidden;
+  border: 2px solid #2c1608;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.48), transparent 24%),
+    linear-gradient(145deg, #fff3d0, #eed199 54%, #d6a75d);
+  color: #2c170a;
+  line-height: 1.2;
+  text-align: center;
+  text-transform: none;
+  box-shadow:
+    inset 0 0 0 5px rgba(255, 249, 226, 0.9),
+    inset 0 0 0 8px currentColor,
+    inset 0 -18px 36px rgba(79, 38, 12, 0.16),
+    0 14px 28px rgba(0, 0, 0, 0.32);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.class-card::before,
+.class-card::after {
+  position: absolute;
+  z-index: 1;
+  width: 30px;
+  color: currentColor;
+  content: attr(data-rank) "\A" attr(data-suit);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 0.88;
+  text-align: center;
+  white-space: pre;
+}
+
+.class-card::before {
+  top: 13px;
+  left: 11px;
+}
+
+.class-card::after {
+  right: 11px;
+  bottom: 13px;
+  transform: rotate(180deg);
+}
+
+.class-card--red {
+  color: #8d1f18;
+}
+
+.class-card--black {
+  color: #241308;
+}
+
+.class-card__mark {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 108px;
+  height: 72px;
+  margin-bottom: 2px;
+  border: 2px solid currentColor;
+  border-radius: 50% / 42%;
+  background:
+    radial-gradient(ellipse at center, rgba(255, 248, 220, 0.82), rgba(210, 154, 82, 0.18) 66%, transparent 68%),
+    rgba(255, 235, 177, 0.36);
+  color: currentColor;
+  box-shadow: inset 0 0 0 5px rgba(255, 247, 220, 0.42);
+}
+
+.class-card__mark::before,
+.class-card__mark::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 128px;
+  height: 2px;
+  background: currentColor;
+  content: "";
+  opacity: 0.28;
+  transform: translate(-50%, -50%);
+}
+
+.class-card__mark::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.class-card__weapon-icon {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 94px;
+  height: 48px;
+  color: currentColor;
+  filter:
+    drop-shadow(0 1px 0 rgba(255, 248, 220, 0.52))
+    drop-shadow(0 4px 5px rgba(45, 20, 7, 0.24));
+}
+
+.class-card__mark--dual {
+  overflow: hidden;
+}
+
+.class-card__mark--dual .class-card__weapon-icon {
+  position: absolute;
+  width: 72px;
+  height: 38px;
+}
+
+.class-card__weapon-icon--dual-left {
+  transform: translate(-15px, 2px) rotate(-8deg);
+}
+
+.class-card__weapon-icon--dual-right {
+  transform: translate(15px, -2px) rotate(8deg) scaleX(-1);
+}
+
+.class-card__weapon-icon--big-iron {
+  width: 104px;
+  height: 52px;
+}
+
+.upgrade-card {
+  grid-template-rows: 84px 44px 40px;
+  align-content: center;
+  min-height: 204px;
+  padding-top: 24px;
+  padding-bottom: 22px;
+  background:
+    radial-gradient(ellipse at 50% 16%, rgba(255, 255, 255, 0.6), transparent 23%),
+    radial-gradient(ellipse at 50% 100%, rgba(129, 67, 25, 0.18), transparent 54%),
+    linear-gradient(145deg, #fff4cf, #edd096 56%, #c99148);
+}
+
+.upgrade-card::before,
+.upgrade-card::after {
+  width: 27px;
+  font-size: 17px;
+}
+
+.upgrade-card .class-card__mark {
+  width: 98px;
+  height: 76px;
+  align-self: center;
+  margin: 0;
+}
+
+.upgrade-card__symbol {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 50px;
+  color: currentColor;
+}
+
+.upgrade-card__icon {
+  display: block;
+  width: 58px;
+  height: 50px;
+  overflow: visible;
+  filter:
+    drop-shadow(0 1px 0 rgba(255, 248, 220, 0.58))
+    drop-shadow(0 3px 3px rgba(57, 31, 13, 0.24));
+}
+
+.upgrade-card__icon * {
+  vector-effect: non-scaling-stroke;
+}
+
+.class-card:hover,
+.class-card:focus-visible {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.64), transparent 26%),
+    linear-gradient(145deg, #fff8df, #f0dba8 54%, #e0b56f);
+  transform: translateY(-2px);
+}
+
+.class-card strong {
+  position: relative;
+  z-index: 2;
+  max-width: calc(100% - 28px);
+  color: #2c170a;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.upgrade-card strong {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  max-width: calc(100% - 24px);
+  font-size: 22px;
+  line-height: 0.98;
+}
+
+.class-card > span:not(.class-card__mark) {
+  position: relative;
+  z-index: 2;
+  max-width: calc(100% - 44px);
+  color: #5a3017;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.upgrade-card > span:not(.class-card__mark) {
+  align-self: start;
+  display: grid;
+  place-items: start center;
+  min-height: 38px;
+  max-width: calc(100% - 32px);
+}
+
 .controls {
   margin-top: 14px;
   color: #e7c17b;
@@ -761,6 +1009,12 @@ canvas {
     min-height: 42px;
   }
 
+  .ammo-cartridge-rack[data-magazine="12"] {
+    --round-w: 8px;
+    --round-h: 22px;
+    min-height: 48px;
+  }
+
   .ammo-cartridge-rack[data-magazine="3"] {
     --round-w: 16px;
     --round-h: 31px;
@@ -772,8 +1026,134 @@ canvas {
     gap: 9px;
   }
 
+  .ammo-cartridge-rack[data-weapon="launcher"][data-large-magazine="true"] {
+    --round-w: 14px;
+    --round-h: 25px;
+    gap: 4px 6px;
+    min-height: 54px;
+  }
+
   .panel {
     bottom: 5vh;
+  }
+
+}
+
+@media (max-width: 520px) {
+  .class-choice-panel {
+    padding: 16px;
+  }
+
+  .class-options {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .class-card {
+    grid-template-columns: 68px 1fr;
+    grid-template-rows: auto auto;
+    gap: 3px 10px;
+    justify-items: start;
+    min-height: 92px;
+    padding: 14px 42px 14px 44px;
+    text-align: left;
+  }
+
+  .upgrade-card {
+    grid-template-columns: 68px 1fr;
+    grid-template-rows: minmax(32px, auto) minmax(28px, auto);
+    align-content: center;
+    min-height: 98px;
+    padding: 14px 42px 14px 44px;
+  }
+
+  .class-card::before,
+  .class-card::after {
+    width: 24px;
+    font-size: 14px;
+  }
+
+  .class-card::before {
+    top: 10px;
+    left: 9px;
+  }
+
+  .class-card::after {
+    right: 9px;
+    bottom: 10px;
+  }
+
+  .class-card__mark {
+    grid-row: 1 / 3;
+    width: 64px;
+    height: 52px;
+    margin: 0;
+  }
+
+  .class-card__mark::before,
+  .class-card__mark::after {
+    width: 74px;
+  }
+
+  .class-card__weapon-icon {
+    width: 60px;
+    height: 34px;
+  }
+
+  .class-card__mark--dual .class-card__weapon-icon {
+    width: 48px;
+    height: 28px;
+  }
+
+  .class-card__weapon-icon--dual-left {
+    transform: translate(-10px, 1px) rotate(-8deg);
+  }
+
+  .class-card__weapon-icon--dual-right {
+    transform: translate(10px, -1px) rotate(8deg) scaleX(-1);
+  }
+
+  .class-card__weapon-icon--big-iron {
+    width: 60px;
+    height: 34px;
+  }
+
+  .upgrade-card .class-card__mark {
+    grid-row: 1 / 3;
+    width: 64px;
+    height: 52px;
+  }
+
+  .upgrade-card__symbol {
+    width: 44px;
+    height: 36px;
+  }
+
+  .upgrade-card__icon {
+    width: 42px;
+    height: 36px;
+  }
+
+  .class-card strong {
+    font-size: 18px;
+  }
+
+  .upgrade-card strong {
+    justify-items: start;
+    place-items: center start;
+    min-height: 0;
+    max-width: 100%;
+    font-size: 18px;
+  }
+
+  .class-card > span:not(.class-card__mark) {
+    font-size: 12px;
+  }
+
+  .upgrade-card > span:not(.class-card__mark) {
+    place-items: start;
+    min-height: 0;
+    max-width: 100%;
   }
 }
 
@@ -803,6 +1183,14 @@ canvas {
     margin-bottom: 5px;
     font-size: 10px;
   }
+
+  .class-card strong {
+    font-size: 19px;
+  }
+
+  .class-card > span:not(.class-card__mark) {
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 430px) {
@@ -820,6 +1208,122 @@ canvas {
     width: 82px;
     height: 82px;
     font-size: 12px;
+  }
+}
+
+@media (orientation: landscape) and (max-width: 640px) {
+  .panel.class-choice-panel {
+    width: min(620px, calc(100vw - 20px));
+    padding: 12px 16px;
+  }
+
+  .panel.class-choice-panel h2 {
+    margin-bottom: 5px;
+    font-size: 28px;
+  }
+
+  .panel.class-choice-panel p {
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+
+  .class-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .revolver-upgrade-panel .class-options,
+  .rifle-upgrade-panel .class-options,
+  .launcher-upgrade-panel .class-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .level-up-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .class-card {
+    grid-template-columns: none;
+    grid-template-rows: 52px 26px 44px;
+    gap: 6px;
+    justify-items: center;
+    min-height: 166px;
+    padding: 24px 8px 16px;
+    text-align: center;
+  }
+
+  .upgrade-card {
+    grid-template-rows: 52px 34px 30px;
+    min-height: 158px;
+    padding: 22px 8px 16px;
+  }
+
+  .class-card::before,
+  .class-card::after {
+    width: 22px;
+    font-size: 13px;
+  }
+
+  .class-card__mark {
+    grid-row: auto;
+    width: 76px;
+    height: 48px;
+  }
+
+  .class-card__mark::before,
+  .class-card__mark::after {
+    width: 88px;
+  }
+
+  .class-card__weapon-icon {
+    width: 70px;
+    height: 34px;
+  }
+
+  .class-card__mark--dual .class-card__weapon-icon {
+    width: 52px;
+    height: 30px;
+  }
+
+  .class-card__weapon-icon--big-iron {
+    width: 74px;
+    height: 36px;
+  }
+
+  .upgrade-card .class-card__mark {
+    width: 76px;
+    height: 48px;
+  }
+
+  .upgrade-card__symbol {
+    width: 50px;
+    height: 34px;
+  }
+
+  .upgrade-card__icon {
+    width: 46px;
+    height: 34px;
+  }
+
+  .class-card strong {
+    max-width: calc(100% - 18px);
+    font-size: 16px;
+  }
+
+  .upgrade-card strong {
+    min-height: 34px;
+    max-width: calc(100% - 16px);
+    font-size: 16px;
+  }
+
+  .class-card > span:not(.class-card__mark) {
+    max-width: calc(100% - 18px);
+    font-size: 11px;
+  }
+
+  .upgrade-card > span:not(.class-card__mark) {
+    min-height: 28px;
+    max-width: calc(100% - 16px);
   }
 }
 
