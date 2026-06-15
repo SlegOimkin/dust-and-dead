@@ -42,6 +42,7 @@
   var MAX_LIGHT_FLASHES = 40;
   var MAX_DECALS = 48;
   var MAX_DEBRIS = 120;
+  var CONTACT_SHADOW_SURFACE_Y = 0.112;
   var MAX_AMMO_CRATES = 4;
   var MAX_XP_ORBS = 90;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
@@ -4304,8 +4305,8 @@
     audioState.gameBattleGain.gain.cancelScheduledValues(now);
     audioState.gameExploreGain.gain.setValueAtTime(Math.max(0.0001, audioState.gameExploreGain.gain.value || 0.0001), now);
     audioState.gameBattleGain.gain.setValueAtTime(Math.max(0.0001, audioState.gameBattleGain.gain.value || 0.0001), now);
-    audioState.gameExploreGain.gain.linearRampToValueAtTime(1 - battle * 0.42, now + 0.24);
-    audioState.gameBattleGain.gain.linearRampToValueAtTime(battle * 1.08, now + 0.24);
+    audioState.gameExploreGain.gain.linearRampToValueAtTime(1 - battle * 0.34, now + 0.24);
+    audioState.gameBattleGain.gain.linearRampToValueAtTime(battle * 0.82, now + 0.24);
   }
 
   function getGameplayMusicDanger() {
@@ -4329,50 +4330,50 @@
     var phrase = Math.floor(step / 32) % 4;
     var bar = Math.floor(index / 8);
     var battle = clamp(audioState.game.battleAmount, 0, 1);
-    var bass = [82.41, 82.41, 98, 82.41, 65.41, 65.41, 73.42, 61.74];
-    if (index % 4 === 0) playGameBass(time, bass[(step / 4) % bass.length | 0], 0.078 + battle * 0.025);
-    if (index % 4 === 2) playGameHoof(time, 0.04 + battle * 0.012, 320 + battle * 80);
-    if (index % 8 === 3 || index % 8 === 6) playGameHoof(time, 0.022 + battle * 0.01, battle > 0.4 ? 1120 : 780);
-    if (battle > 0.45 && (index === 7 || index === 15 || index === 23 || index === 31)) playGameHoof(time + 0.016, 0.02 + battle * 0.018, 1350);
+    var roots = [82.41, 98, 73.42, 61.74];
+    var root = roots[bar];
+
+    if (index % 8 === 0) playGameBass(time, root, 0.074 + battle * 0.018);
+    if (index % 8 === 4) playGameBass(time, root * 1.5, 0.045 + battle * 0.012);
+    if (index % 8 === 2 || index % 8 === 6) playGameHoof(time, 0.034 + battle * 0.01, 340 + battle * 80);
+    if (index === 10 || index === 26) playGameHoof(time + 0.018, 0.018 + battle * 0.006, 860);
+
     if (index === 0 || index === 8 || index === 16 || index === 24) {
       var chords = [
         [164.81, 246.94, 329.63],
-        [130.81, 196, 261.63],
+        [196, 293.66, 392],
         [146.83, 220, 293.66],
-        [123.47, 184.99, 246.94, 311.13],
+        [123.47, 184.99, 246.94],
       ];
       var battleChords = [
-        [82.41, 123.47, 164.81],
-        [65.41, 98, 130.81],
-        [73.42, 110, 146.83],
-        [61.74, 92.5, 123.47],
+        [82.41, 123.47, 164.81, 246.94],
+        [98, 146.83, 196, 293.66],
+        [73.42, 110, 146.83, 220],
+        [61.74, 92.5, 123.47, 184.99],
       ];
       var pan = index % 16 === 0 ? -0.18 : 0.16;
-      playGameChord(time + 0.022, chords[bar], 0.02 + battle * 0.004, pan);
-      if (battle > 0.38) playGameBattleChord(time + 0.044, battleChords[bar], 0.018 + battle * 0.034, -pan);
+      playGameChord(time + 0.026, chords[bar], 0.021, pan);
+      if (battle > 0.42 && index % 16 === 0) playGameBattleChord(time + 0.058, battleChords[bar], 0.014 + battle * 0.018, -pan);
     }
 
-    var motifA = [null, 329.63, 392, null, 369.99, 329.63, null, 293.66, 246.94, null, 293.66, 329.63, null, 392, 440, null, 493.88, null, 440, 392, 369.99, null, 329.63, 293.66, 246.94, null, 293.66, null, 329.63, null, 392, null];
-    var motifB = [null, 246.94, 293.66, null, 329.63, 369.99, null, 392, 440, null, 392, 329.63, null, 293.66, 246.94, null, 220, null, 246.94, 293.66, 329.63, null, 392, 369.99, 329.63, null, 293.66, 246.94, null, 220, 246.94, null];
+    var motifA = [null, 329.63, null, 392, null, 369.99, 329.63, null, 293.66, null, 329.63, null, 392, null, 440, null, 493.88, null, 440, 392, null, 369.99, 329.63, null, 293.66, null, 246.94, null, 293.66, null, 329.63, null];
+    var motifB = [null, 246.94, null, 293.66, null, 329.63, 369.99, null, 392, null, 440, null, 392, null, 329.63, null, 293.66, null, 329.63, 392, null, 369.99, 329.63, null, 246.94, null, 293.66, null, 329.63, null, 246.94, null];
     var motif = phrase % 2 ? motifB : motifA;
     var note = motif[index];
     if (note) {
-      var accent = index % 8 === 1 || index % 8 === 4 ? 0.014 : 0;
-      playGamePluck(time, note, 0.044 + accent, index % 8 < 4 ? -0.24 : 0.22, 0.42 + (index % 16 === 14 ? 0.16 : 0));
-      if ((index === 4 || index === 20) && phrase % 2 === 0) playGamePluck(time + 0.05, note * 1.5, 0.022, 0.28, 0.26);
+      var leadLevel = battle > 0.45 ? 0.034 : 0.046;
+      playGamePluck(time, note, leadLevel, index % 16 < 8 ? -0.23 : 0.22, 0.34 + (index === 14 || index === 30 ? 0.12 : 0));
     }
 
-    if ((index === 14 || index === 30) && phrase % 2 === 0) playGameWhistle(time + 0.045, phrase % 4 ? 659.25 : 587.33, 0.026 + battle * 0.006);
-    if (index === 0 && phrase === 3) playGameWhistle(time + 0.12, 783.99, 0.022 + battle * 0.01);
-    if (battle > 0.12 && (index === 0 || index === 8 || index === 16 || index === 24)) playGameBattleHit(time, index === 16 ? 61.74 : 82.41, 0.036 + battle * 0.08);
-    if (battle > 0.22 && (index === 4 || index === 12 || index === 20 || index === 28)) playGameBattleSnare(time, 0.032 + battle * 0.064);
-    if (battle > 0.35 && index % 4 === 1) {
-      var growl = [164.81, 146.83, 196, 184.99][bar];
-      playGamePluck(time + 0.008, growl, 0.021 + battle * 0.027, -0.02, 0.18, true);
-      playGamePluck(time + 0.035, growl * 1.5, 0.014 + battle * 0.018, 0.1, 0.13, true);
+    if (battle < 0.35 && (index === 14 || index === 30) && phrase % 2 === 0) playGameWhistle(time + 0.045, phrase % 4 ? 659.25 : 587.33, 0.024);
+    if (battle > 0.12 && (index === 0 || index === 16)) playGameBattleHit(time, index === 16 ? 61.74 : 82.41, 0.032 + battle * 0.052);
+    if (battle > 0.28 && (index === 4 || index === 12 || index === 20 || index === 28)) playGameBattleSnare(time, 0.026 + battle * 0.04);
+    if (battle > 0.58) {
+      var battleLead = [659.25, null, null, null, 739.99, null, null, null, 783.99, null, null, null, 880, null, null, null, 783.99, null, null, null, 739.99, null, null, null, 659.25, null, null, null, 587.33, null, 659.25, null];
+      var battleNote = battleLead[index];
+      if (battleNote) playGameHeroLead(time + 0.02, battleNote, 0.018 + battle * 0.014, index < 16 ? 0.22 : -0.2, 0.36);
     }
-    if (battle > 0.5 && (index === 6 || index === 14 || index === 22 || index === 30)) playGameBattleRattle(time, 0.018 + battle * 0.034, phrase);
-    if (battle > 0.68 && (index === 0 || index === 16)) playGameBattleHorn(time + 0.02, index === 0 ? 220 : 246.94, 0.018 + battle * 0.026);
+    if (battle > 0.72 && index === 0) playGameHeroFanfare(time + 0.08, phrase % 2 ? 587.33 : 659.25, 0.018 + battle * 0.018);
   }
 
   function playGameBass(time, freq, level) {
@@ -4426,6 +4427,34 @@
     for (var i = 0; i < freqs.length; i++) {
       playGamePluck(time + i * 0.012, freqs[i], level * (i === 0 ? 0.9 : 1), pan + (i - 1) * 0.06, 0.24 + i * 0.02, true);
     }
+  }
+
+  function playGameHeroLead(time, freq, level, pan, length) {
+    var ctx = audioState.ctx;
+    var osc = ctx.createOscillator();
+    var shine = ctx.createOscillator();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    osc.type = "triangle";
+    shine.type = "sawtooth";
+    osc.frequency.setValueAtTime(freq, time);
+    shine.frequency.setValueAtTime(freq * 2, time);
+    osc.detune.setValueAtTime(rand(-3, 3), time);
+    shine.detune.setValueAtTime(rand(-4, 4), time);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(2400, time);
+    filter.frequency.exponentialRampToValueAtTime(860, time + Math.max(0.16, length * 0.8));
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.035);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    osc.connect(filter);
+    shine.connect(filter);
+    filter.connect(gain);
+    connectGameOutput(gain, audioState.gameBattleGain, pan || 0);
+    osc.start(time);
+    shine.start(time);
+    osc.stop(time + length + 0.04);
+    shine.stop(time + length + 0.04);
   }
 
   function playGameWhistle(time, freq, level) {
@@ -4513,53 +4542,10 @@
     src.stop(time + 0.22);
   }
 
-  function playGameBattleRattle(time, level, phrase) {
-    var ctx = audioState.ctx;
-    if (!audioState.noiseBuffer) return;
-    var src = ctx.createBufferSource();
-    var filter = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    src.buffer = audioState.noiseBuffer;
-    src.playbackRate.setValueAtTime(1.3 + (phrase % 3) * 0.12, time);
-    filter.type = "highpass";
-    filter.frequency.setValueAtTime(2100, time);
-    filter.Q.value = 0.8;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.11);
-    src.connect(filter);
-    filter.connect(gain);
-    connectGameOutput(gain, audioState.gameBattleGain, rand(-0.28, 0.28));
-    src.start(time);
-    src.stop(time + 0.13);
-  }
-
-  function playGameBattleHorn(time, freq, level) {
-    var ctx = audioState.ctx;
-    var osc = ctx.createOscillator();
-    var growl = ctx.createOscillator();
-    var filter = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    osc.type = "sawtooth";
-    growl.type = "square";
-    osc.frequency.setValueAtTime(freq, time);
-    growl.frequency.setValueAtTime(freq * 0.5, time);
-    osc.detune.setValueAtTime(-5, time);
-    growl.detune.setValueAtTime(9, time);
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(760, time);
-    filter.frequency.exponentialRampToValueAtTime(330, time + 0.74);
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.04);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.82);
-    osc.connect(filter);
-    growl.connect(filter);
-    filter.connect(gain);
-    connectGameOutput(gain, audioState.gameBattleGain, 0.18);
-    osc.start(time);
-    growl.start(time);
-    osc.stop(time + 0.86);
-    growl.stop(time + 0.86);
+  function playGameHeroFanfare(time, freq, level) {
+    playGameHeroLead(time, freq, level, 0.24, 0.42);
+    playGameHeroLead(time + 0.16, freq * 1.125, level * 0.9, -0.18, 0.36);
+    playGameHeroLead(time + 0.3, freq * 1.333, level * 1.04, 0.08, 0.62);
   }
 
   function connectGameOutput(source, destination, pan) {
@@ -11763,7 +11749,7 @@
     mat.opacity = opacity;
     var mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = 0.035;
+    mesh.position.y = CONTACT_SHADOW_SURFACE_Y;
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.renderOrder = -5;
