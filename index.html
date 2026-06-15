@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <main id="game-root" aria-label="Dust and Dead game">
+    <main id="game-root" class="is-intro" aria-label="Dust and Dead game">
       <div id="hud" class="hud" aria-live="polite">
         <div class="hud-row">
           <span class="hud-label">HP</span>
@@ -44,12 +44,23 @@
         <canvas id="minimap-canvas" class="minimap-canvas" width="176" height="128" aria-hidden="true"></canvas>
       </div>
 
-      <section id="menu" class="panel is-visible">
-        <h1>Dust & Dead</h1>
-        <p>Blocky western survival. Keep distance, aim with the mouse, clear every wave.</p>
-        <button id="start-btn" type="button">Start Hunt</button>
-        <div class="controls">
-          WASD / Arrows: move - Mouse: aim - Left click: shoot - F: fullscreen
+      <section id="intro-screen" class="intro-screen is-visible" role="button" tabindex="0" aria-label="Press any button to open the menu">
+        <div class="intro-screen__inner">
+          <div class="intro-screen__title">Dust &amp; Dead</div>
+          <div class="intro-screen__prompt">Press any button</div>
+          <div class="intro-screen__hint">Music enabled</div>
+        </div>
+      </section>
+
+      <section id="menu" class="panel menu-panel is-visible" aria-label="Main menu">
+        <h1>Dust &amp; Dead</h1>
+        <p class="menu-panel__lead">Ride into a blocky frontier where a lone cowboy, roaming dead, and upgrade-heavy gunplay collide in the dust.</p>
+        <div class="menu-panel__actions">
+          <button id="start-btn" type="button">Start Hunt</button>
+          <button id="menu-music-btn" class="menu-music-btn" type="button" aria-label="Mute menu music" aria-pressed="true" title="Mute menu music">&#9835;</button>
+        </div>
+        <div class="controls menu-controls">
+          WASD / Arrows move / Mouse aims / Left click fires / F toggles fullscreen
         </div>
       </section>
 
