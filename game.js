@@ -67,19 +67,22 @@
   var FAST_ZOMBIE_SPEED_MULTIPLIER = 1.07;
   var FAST_ZOMBIE_SPEED_BONUS = 0.18;
   var ZOMBIES_PER_WAVE_MULTIPLIER = 3;
-  var ZOMBIES_PER_WAVE_AFTER_9_MULTIPLIER = 5;
-  var ZOMBIES_PER_WAVE_AFTER_15_MULTIPLIER = 9;
+  var ZOMBIES_PER_WAVE_AFTER_4_MULTIPLIER = 5;
+  var ZOMBIES_PER_WAVE_AFTER_9_MULTIPLIER = 7;
+  var ZOMBIES_PER_WAVE_AFTER_15_MULTIPLIER = 11;
+  var ZOMBIE_SPAWN_BATCH_AFTER_4 = 2;
+  var ZOMBIE_SPAWN_BATCH_AFTER_15 = 3;
   var WAVE_LOW_REMAINING_RATIO = 0.1;
   var WAVE_LOW_REMAINING_COUNT = 5;
   var WAVE_LOW_REMAINING_DELAY = 10;
   var WAVE_HARD_LIMIT = 120;
   var WAVE_CLEAR_DELAY = 1.8;
   var ZOMBIE_POOL_PREWARM = {
-    walker: 24,
-    runner: 12,
-    fastZombie: 8,
-    brute: 8,
-    spitter: 6,
+    walker: 64,
+    runner: 34,
+    fastZombie: 22,
+    brute: 28,
+    spitter: 18,
   };
   var ZOMBIE_SPATIAL_CELL_SIZE = 2.8;
   var CLASS_CHOICE_LEVEL = 5;
@@ -144,10 +147,11 @@
   var ACID_SPIT_SPEED = 12.5;
   var ACID_PUDDLE_RADIUS = 2.55;
   var ACID_PUDDLE_LIFE = 5.8;
-  var ACID_PUDDLE_DAMAGE = 5;
+  var ACID_PUDDLE_DAMAGE = 8;
   var ACID_PUDDLE_DAMAGE_INTERVAL = 0.42;
   var MAX_ACID_PROJECTILES = 12;
   var MAX_ACID_PUDDLES = 10;
+  var ACID_PUDDLE_VISUAL_PREWARM = MAX_ACID_PUDDLES;
   var MOBILE_RENDER_MODE = isMobileRuntime();
   var DYNAMIC_LIGHTS_ENABLED = true;
 
@@ -287,6 +291,9 @@
     standard: 0,
     trail: 0,
   };
+  var acidPuddleVisualPool = [];
+  var acidPuddleVisualCreated = 0;
+  var acidPuddleVisualInUse = 0;
   var rifleTrapVisualPool = [];
   var rifleTrapVisualCreated = 0;
   var rifleTrapVisualInUse = 0;
@@ -385,19 +392,28 @@
     cameraDrift: 0,
   };
   var MENU_MUSIC_STORAGE_KEY = "dustAndDeadMenuMusic";
-  var MENU_MUSIC_VOLUME = 0.62;
-  var GAME_MUSIC_VOLUME = 0.5;
+  var MENU_MUSIC_VOLUME = 1;
+  var GAME_MUSIC_VOLUME = 1;
+  var GAME_MUSIC_INSTRUMENT_BOOST = 4.35;
   var GAME_MUSIC_TEMPO = 116;
+  var REVOLVER_HAMMER_LEAD_TIME = 0.045;
   var introActive = !!introScreen && introScreen.classList.contains("is-visible");
   var audioState = {
     ctx: null,
     masterGain: null,
     musicGain: null,
+    sfxGain: null,
+    sfxLimiter: null,
     menuGain: null,
     gameGain: null,
     gameExploreGain: null,
     gameBattleGain: null,
     noiseBuffer: null,
+    shotNoiseBuffer: null,
+    zombieHitSfxLastAt: 0,
+    zombieHitSfxBurstWindow: 0,
+    zombieHitSfxBurstCount: 0,
+    transientAudioNodeCount: 0,
     enabled: readStoredAudioEnabled(),
     unlocked: false,
     menu: {
@@ -1576,6 +1592,7 @@
   initProjectileVisualPools();
   initZombiePools();
   initFirePatchVisualPools();
+  initAcidPuddleVisualPool();
   initRifleTrapVisualPool();
   initExplosionEffectPools();
   initLights();
@@ -4034,12 +4051,20 @@
       audioState.ctx = ctx;
       audioState.masterGain = ctx.createGain();
       audioState.musicGain = ctx.createGain();
+      audioState.sfxGain = ctx.createGain();
+      audioState.sfxLimiter = ctx.createDynamicsCompressor();
       audioState.menuGain = ctx.createGain();
       audioState.gameGain = ctx.createGain();
       audioState.gameExploreGain = ctx.createGain();
       audioState.gameBattleGain = ctx.createGain();
-      audioState.masterGain.gain.value = 0.86;
+      audioState.masterGain.gain.value = 1;
       audioState.musicGain.gain.value = 1;
+      audioState.sfxGain.gain.value = 1;
+      audioState.sfxLimiter.threshold.value = -5;
+      audioState.sfxLimiter.knee.value = 10;
+      audioState.sfxLimiter.ratio.value = 9;
+      audioState.sfxLimiter.attack.value = 0.002;
+      audioState.sfxLimiter.release.value = 0.16;
       audioState.menuGain.gain.value = 0;
       audioState.gameGain.gain.value = 0;
       audioState.gameExploreGain.gain.value = 1;
@@ -4049,8 +4074,11 @@
       audioState.gameBattleGain.connect(audioState.gameGain);
       audioState.gameGain.connect(audioState.musicGain);
       audioState.musicGain.connect(audioState.masterGain);
+      audioState.sfxGain.connect(audioState.sfxLimiter);
+      audioState.sfxLimiter.connect(audioState.masterGain);
       audioState.masterGain.connect(ctx.destination);
       audioState.noiseBuffer = createMenuNoiseBuffer(ctx);
+      audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
       return ctx;
     } catch (err) {
       audioState.ctx = null;
@@ -4067,6 +4095,21 @@
     for (var i = 0; i < length; i++) {
       last = last * 0.96 + (Math.random() * 2 - 1) * 0.04;
       data[i] = last;
+    }
+    return buffer;
+  }
+
+  function createGunshotNoiseBuffer(ctx) {
+    var length = Math.max(1, Math.floor(ctx.sampleRate * 1.2));
+    var buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    var low = 0;
+    var mid = 0;
+    for (var i = 0; i < length; i++) {
+      var white = Math.random() * 2 - 1;
+      low = low * 0.82 + white * 0.18;
+      mid = mid * 0.36 + white * 0.64;
+      data[i] = white * 0.62 + mid * 0.28 + low * 0.1;
     }
     return buffer;
   }
@@ -4256,30 +4299,31 @@
   function startGameMusicBed(now) {
     var ctx = audioState.ctx;
     if (!ctx) return;
-    createGameBedTone(41.2, 0.024, -8, now, audioState.gameExploreGain, 250);
-    createGameBedTone(82.41, 0.018, 5, now, audioState.gameExploreGain, 380);
-    createGameBedTone(49, 0.022, -12, now, audioState.gameBattleGain, 240);
-    createGameBedTone(65.41, 0.014, 7, now, audioState.gameBattleGain, 340);
+    createGamePedalTone(36.71, 0.011, -4, now, audioState.gameExploreGain, 150);
+    createGamePedalTone(55, 0.006, 3, now, audioState.gameExploreGain, 190);
+    createGamePedalTone(36.71, 0.012, 0, now, audioState.gameBattleGain, 145);
+    createGamePedalTone(73.42, 0.004, -6, now, audioState.gameBattleGain, 210);
   }
 
-  function createGameBedTone(freq, level, detune, now, destination, cutoff) {
+  function createGamePedalTone(freq, level, detune, now, destination, cutoff) {
     var ctx = audioState.ctx;
+    level = boostedGameMusicLevel(level, 0.055);
     var osc = ctx.createOscillator();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    osc.type = "triangle";
+    osc.type = "sine";
     osc.frequency.value = freq;
     osc.detune.value = detune || 0;
     filter.type = "lowpass";
-    filter.frequency.value = cutoff || 420;
-    filter.Q.value = 0.6;
+    filter.frequency.value = cutoff || 180;
+    filter.Q.value = 0.45;
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(level, now + 2.8);
+    gain.gain.linearRampToValueAtTime(level, now + 2.4);
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(destination || audioState.gameExploreGain);
     osc.start(now);
-    audioState.game.nodes.push(osc);
+    audioState.game.nodes.push(osc, filter, gain);
   }
 
   function scheduleGameMusic() {
@@ -4305,8 +4349,8 @@
     audioState.gameBattleGain.gain.cancelScheduledValues(now);
     audioState.gameExploreGain.gain.setValueAtTime(Math.max(0.0001, audioState.gameExploreGain.gain.value || 0.0001), now);
     audioState.gameBattleGain.gain.setValueAtTime(Math.max(0.0001, audioState.gameBattleGain.gain.value || 0.0001), now);
-    audioState.gameExploreGain.gain.linearRampToValueAtTime(1 - battle * 0.34, now + 0.24);
-    audioState.gameBattleGain.gain.linearRampToValueAtTime(battle * 0.82, now + 0.24);
+    audioState.gameExploreGain.gain.linearRampToValueAtTime(Math.max(0.26, 1 - battle * 0.74), now + 0.26);
+    audioState.gameBattleGain.gain.linearRampToValueAtTime(battle * 0.9, now + 0.26);
   }
 
   function getGameplayMusicDanger() {
@@ -4325,227 +4369,438 @@
     return clamp(Math.max(crowdScore, nearScore), 0, 1);
   }
 
+  function boostedGameMusicLevel(level, maxLevel) {
+    return clamp((Number(level) || 0) * GAME_MUSIC_INSTRUMENT_BOOST, 0.0001, maxLevel || 0.24);
+  }
+
   function scheduleGameMusicStep(time, step) {
     var index = step % 32;
     var phrase = Math.floor(step / 32) % 4;
     var bar = Math.floor(index / 8);
+    var beat = index % 8;
     var battle = clamp(audioState.game.battleAmount, 0, 1);
-    var roots = [82.41, 98, 73.42, 61.74];
-    var root = roots[bar];
+    var battleMode = battle > 0.55;
+    var barInfo = getGameMusicBar(battleMode, bar);
+    var destination = battleMode ? audioState.gameBattleGain : audioState.gameExploreGain;
+    var chordPan = beat === 2 ? -0.18 : 0.18;
 
-    if (index % 8 === 0) playGameBass(time, root, 0.074 + battle * 0.018);
-    if (index % 8 === 4) playGameBass(time, root * 1.5, 0.045 + battle * 0.012);
-    if (index % 8 === 2 || index % 8 === 6) playGameHoof(time, 0.034 + battle * 0.01, 340 + battle * 80);
-    if (index === 10 || index === 26) playGameHoof(time + 0.018, 0.018 + battle * 0.006, 860);
-
-    if (index === 0 || index === 8 || index === 16 || index === 24) {
-      var chords = [
-        [164.81, 246.94, 329.63],
-        [196, 293.66, 392],
-        [146.83, 220, 293.66],
-        [123.47, 184.99, 246.94],
-      ];
-      var battleChords = [
-        [82.41, 123.47, 164.81, 246.94],
-        [98, 146.83, 196, 293.66],
-        [73.42, 110, 146.83, 220],
-        [61.74, 92.5, 123.47, 184.99],
-      ];
-      var pan = index % 16 === 0 ? -0.18 : 0.16;
-      playGameChord(time + 0.026, chords[bar], 0.021, pan);
-      if (battle > 0.42 && index % 16 === 0) playGameBattleChord(time + 0.058, battleChords[bar], 0.014 + battle * 0.018, -pan);
+    if (beat === 0) {
+      playGameKick(time, battleMode ? 0.046 + battle * 0.018 : 0.022, destination);
+      playGameBass(time + 0.018, barInfo.root, battleMode ? 0.052 : 0.04, destination, battleMode ? 0.34 : 0.48);
+    }
+    if (beat === 4) {
+      playGameBass(time + 0.012, barInfo.alt, battleMode ? 0.044 : 0.031, destination, battleMode ? 0.3 : 0.42);
     }
 
-    var motifA = [null, 329.63, null, 392, null, 369.99, 329.63, null, 293.66, null, 329.63, null, 392, null, 440, null, 493.88, null, 440, 392, null, 369.99, 329.63, null, 293.66, null, 246.94, null, 293.66, null, 329.63, null];
-    var motifB = [null, 246.94, null, 293.66, null, 329.63, 369.99, null, 392, null, 440, null, 392, null, 329.63, null, 293.66, null, 329.63, 392, null, 369.99, 329.63, null, 246.94, null, 293.66, null, 329.63, null, 246.94, null];
-    var motif = phrase % 2 ? motifB : motifA;
-    var note = motif[index];
+    if (beat === 2 || beat === 6) {
+      playGameChord(time + 0.018, barInfo.chord, battleMode ? 0.016 + battle * 0.006 : 0.015, chordPan, destination, battleMode);
+      if (battleMode) {
+        playGameRim(time + 0.004, 0.024 + battle * 0.022, destination);
+      } else {
+        playGameBrush(time + 0.006, 0.012, 520, destination, chordPan * -0.6);
+      }
+    }
+
+    if (battleMode && (beat === 3 || beat === 7)) {
+      playGameBrush(time, 0.012 + battle * 0.014, 1450, audioState.gameBattleGain, beat === 3 ? -0.12 : 0.12);
+    }
+
+    var exploreMelodyA = [null, null, null, 349.23, null, null, 293.66, null, null, null, 392, null, null, 349.23, null, null, null, 293.66, null, 261.63, null, null, 293.66, null, null, null, 329.63, null, 349.23, null, 293.66, null];
+    var exploreMelodyB = [null, null, 293.66, null, null, 349.23, null, null, null, null, 392, null, 440, null, 392, null, null, null, 349.23, null, null, 293.66, null, null, null, 261.63, null, 277.18, null, null, 293.66, null];
+    var battleMelody = [null, 293.66, null, 349.23, null, 415.3, null, 440, null, 349.23, null, 415.3, null, 523.25, null, 493.88, null, 392, null, 466.16, null, 523.25, null, 587.33, null, 440, null, 415.3, null, 349.23, null, 293.66];
+    var note = battleMode ? battleMelody[index] : (phrase % 2 ? exploreMelodyB : exploreMelodyA)[index];
     if (note) {
-      var leadLevel = battle > 0.45 ? 0.034 : 0.046;
-      playGamePluck(time, note, leadLevel, index % 16 < 8 ? -0.23 : 0.22, 0.34 + (index === 14 || index === 30 ? 0.12 : 0));
+      playGameLead(time + (battleMode ? 0.008 : 0.03), note, battleMode ? 0.018 + battle * 0.008 : 0.015, index % 16 < 8 ? 0.2 : -0.2, battleMode ? 0.28 : 0.62, destination, battleMode);
     }
-
-    if (battle < 0.35 && (index === 14 || index === 30) && phrase % 2 === 0) playGameWhistle(time + 0.045, phrase % 4 ? 659.25 : 587.33, 0.024);
-    if (battle > 0.12 && (index === 0 || index === 16)) playGameBattleHit(time, index === 16 ? 61.74 : 82.41, 0.032 + battle * 0.052);
-    if (battle > 0.28 && (index === 4 || index === 12 || index === 20 || index === 28)) playGameBattleSnare(time, 0.026 + battle * 0.04);
-    if (battle > 0.58) {
-      var battleLead = [659.25, null, null, null, 739.99, null, null, null, 783.99, null, null, null, 880, null, null, null, 783.99, null, null, null, 739.99, null, null, null, 659.25, null, null, null, 587.33, null, 659.25, null];
-      var battleNote = battleLead[index];
-      if (battleNote) playGameHeroLead(time + 0.02, battleNote, 0.018 + battle * 0.014, index < 16 ? 0.22 : -0.2, 0.36);
-    }
-    if (battle > 0.72 && index === 0) playGameHeroFanfare(time + 0.08, phrase % 2 ? 587.33 : 659.25, 0.018 + battle * 0.018);
   }
 
-  function playGameBass(time, freq, level) {
+  function getGameMusicBar(battleMode, bar) {
+    var explore = [
+      { root: 73.42, alt: 110, chord: [146.83, 174.61, 220] },
+      { root: 65.41, alt: 98, chord: [130.81, 164.81, 196] },
+      { root: 58.27, alt: 87.31, chord: [116.54, 146.83, 174.61] },
+      { root: 55, alt: 82.41, chord: [110, 138.59, 164.81] },
+    ];
+    var battle = [
+      { root: 73.42, alt: 110, chord: [146.83, 220, 293.66] },
+      { root: 87.31, alt: 130.81, chord: [174.61, 261.63, 349.23] },
+      { root: 98, alt: 146.83, chord: [196, 233.08, 293.66] },
+      { root: 55, alt: 82.41, chord: [110, 138.59, 164.81, 220] },
+    ];
+    return (battleMode ? battle : explore)[bar % 4];
+  }
+
+  function playGameBass(time, freq, level, destination, length) {
     var ctx = audioState.ctx;
-    var osc = ctx.createOscillator();
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.42, 0.12, 0.8);
+    level = boostedGameMusicLevel(level, 0.18);
+    var body = ctx.createOscillator();
+    var sub = ctx.createOscillator();
+    var bodyGain = ctx.createGain();
+    var subGain = ctx.createGain();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    osc.type = "triangle";
-    osc.frequency.setValueAtTime(freq, time);
+    body.type = "triangle";
+    sub.type = "sine";
+    body.frequency.setValueAtTime(freq * 1.01, time);
+    body.frequency.exponentialRampToValueAtTime(freq, time + 0.055);
+    sub.frequency.setValueAtTime(freq * 0.5, time);
+    bodyGain.gain.value = 0.7;
+    subGain.gain.value = 0.36;
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(360, time);
-    filter.frequency.exponentialRampToValueAtTime(125, time + 0.52);
+    filter.frequency.setValueAtTime(240, time);
+    filter.frequency.exponentialRampToValueAtTime(95, time + length);
+    filter.Q.value = 0.65;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.72);
-    osc.connect(filter);
+    gain.gain.linearRampToValueAtTime(level, time + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    body.connect(bodyGain);
+    sub.connect(subGain);
+    bodyGain.connect(filter);
+    subGain.connect(filter);
     filter.connect(gain);
-    connectGameOutput(gain, audioState.gameExploreGain, -0.04);
-    osc.start(time);
-    osc.stop(time + 0.78);
+    var output = connectGameOutput(gain, destination || audioState.gameExploreGain, -0.04);
+    body.start(time);
+    sub.start(time);
+    body.stop(time + length + 0.05);
+    sub.stop(time + length + 0.05);
+    scheduleAudioDisconnect([body, sub, bodyGain, subGain, filter, gain, output], time + length + 0.14);
   }
 
-  function playGamePluck(time, freq, level, pan, length, battleLayer) {
+  function playGameChord(time, freqs, level, pan, destination, muted) {
+    for (var i = 0; i < freqs.length; i++) {
+      playGameGuitarNote(time + i * 0.018, freqs[i], level * (i === 0 ? 0.78 : 1), pan + (i - 1) * 0.07, muted ? 0.18 + i * 0.012 : 0.42, destination, muted);
+    }
+  }
+
+  function playGameGuitarNote(time, freq, level, pan, length, destination, muted) {
     var ctx = audioState.ctx;
-    var osc = ctx.createOscillator();
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.36, 0.08, 0.72);
+    level = boostedGameMusicLevel(level, muted ? 0.11 : 0.12);
+    var body = ctx.createOscillator();
+    var bite = ctx.createOscillator();
+    var bodyGain = ctx.createGain();
+    var biteGain = ctx.createGain();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    osc.type = battleLayer ? "sawtooth" : "triangle";
-    osc.frequency.setValueAtTime(freq, time);
-    osc.detune.setValueAtTime(rand(-4, 4), time);
+    body.type = "triangle";
+    bite.type = "sawtooth";
+    body.frequency.setValueAtTime(freq * 1.018, time);
+    body.frequency.exponentialRampToValueAtTime(freq, time + 0.05);
+    bite.frequency.setValueAtTime(freq * 0.995, time);
+    bite.detune.value = muted ? -7 : -12;
+    bodyGain.gain.value = muted ? 0.64 : 0.74;
+    biteGain.gain.value = muted ? 0.1 : 0.07;
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(battleLayer ? 1450 : 2200, time);
-    filter.frequency.exponentialRampToValueAtTime(battleLayer ? 420 : 620, time + Math.max(0.08, length * 0.78));
+    filter.frequency.setValueAtTime(muted ? 1650 : 2150, time);
+    filter.frequency.exponentialRampToValueAtTime(muted ? 480 : 640, time + Math.max(0.08, length * 0.74));
+    filter.Q.value = muted ? 0.85 : 0.7;
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.linearRampToValueAtTime(level, time + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
-    osc.connect(filter);
+    body.connect(bodyGain);
+    bite.connect(biteGain);
+    bodyGain.connect(filter);
+    biteGain.connect(filter);
     filter.connect(gain);
-    connectGameOutput(gain, battleLayer ? audioState.gameBattleGain : audioState.gameExploreGain, pan || 0);
-    osc.start(time);
-    osc.stop(time + length + 0.04);
+    var output = connectGameOutput(gain, destination || audioState.gameExploreGain, pan || 0);
+    body.start(time);
+    bite.start(time);
+    body.stop(time + length + 0.05);
+    bite.stop(time + length + 0.05);
+    scheduleAudioDisconnect([body, bite, bodyGain, biteGain, filter, gain, output], time + length + 0.14);
   }
 
-  function playGameChord(time, freqs, level, pan) {
-    for (var i = 0; i < freqs.length; i++) {
-      playGamePluck(time + i * 0.018, freqs[i], level * (i === 0 ? 0.86 : 1), pan + (i - 1) * 0.08, 0.48);
-    }
-  }
-
-  function playGameBattleChord(time, freqs, level, pan) {
-    for (var i = 0; i < freqs.length; i++) {
-      playGamePluck(time + i * 0.012, freqs[i], level * (i === 0 ? 0.9 : 1), pan + (i - 1) * 0.06, 0.24 + i * 0.02, true);
-    }
-  }
-
-  function playGameHeroLead(time, freq, level, pan, length) {
+  function playGameLead(time, freq, level, pan, length, destination, grit) {
     var ctx = audioState.ctx;
-    var osc = ctx.createOscillator();
-    var shine = ctx.createOscillator();
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.45, 0.12, 0.86);
+    level = boostedGameMusicLevel(level, grit ? 0.12 : 0.1);
+    var reed = ctx.createOscillator();
+    var body = ctx.createOscillator();
+    var lfo = ctx.createOscillator();
+    var lfoGain = ctx.createGain();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    osc.type = "triangle";
-    shine.type = "sawtooth";
-    osc.frequency.setValueAtTime(freq, time);
-    shine.frequency.setValueAtTime(freq * 2, time);
-    osc.detune.setValueAtTime(rand(-3, 3), time);
-    shine.detune.setValueAtTime(rand(-4, 4), time);
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(2400, time);
-    filter.frequency.exponentialRampToValueAtTime(860, time + Math.max(0.16, length * 0.8));
+    reed.type = "sawtooth";
+    body.type = "triangle";
+    reed.frequency.setValueAtTime(freq * (grit ? 0.985 : 0.994), time);
+    reed.frequency.exponentialRampToValueAtTime(freq, time + 0.09);
+    body.frequency.setValueAtTime(freq * 0.5, time);
+    body.detune.value = grit ? 5 : -4;
+    lfo.type = "sine";
+    lfo.frequency.value = grit ? 6.5 : 5.2;
+    lfoGain.gain.value = freq * (grit ? 0.0048 : 0.0032);
+    lfo.connect(lfoGain);
+    lfoGain.connect(reed.frequency);
+    lfoGain.connect(body.frequency);
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(grit ? 1180 : 980, time);
+    filter.Q.value = grit ? 1.35 : 1.1;
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.linearRampToValueAtTime(level, time + 0.035);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
-    osc.connect(filter);
-    shine.connect(filter);
+    reed.connect(filter);
+    body.connect(filter);
     filter.connect(gain);
-    connectGameOutput(gain, audioState.gameBattleGain, pan || 0);
-    osc.start(time);
-    shine.start(time);
-    osc.stop(time + length + 0.04);
-    shine.stop(time + length + 0.04);
+    var output = connectGameOutput(gain, destination || audioState.gameExploreGain, pan || 0);
+    lfo.start(time);
+    reed.start(time);
+    body.start(time);
+    lfo.stop(time + length + 0.06);
+    reed.stop(time + length + 0.06);
+    body.stop(time + length + 0.06);
+    scheduleAudioDisconnect([reed, body, lfo, lfoGain, filter, gain, output], time + length + 0.15);
   }
 
-  function playGameWhistle(time, freq, level) {
+  function playGameKick(time, level, destination) {
     var ctx = audioState.ctx;
+    if (!ctx) return;
+    level = boostedGameMusicLevel(level, 0.2);
     var osc = ctx.createOscillator();
     var gain = ctx.createGain();
-    var trem = ctx.createOscillator();
-    var tremGain = ctx.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(freq, time);
-    trem.type = "sine";
-    trem.frequency.value = 5.4;
-    tremGain.gain.value = level * 0.34;
+    osc.frequency.setValueAtTime(92, time);
+    osc.frequency.exponentialRampToValueAtTime(46, time + 0.13);
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.16);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 1.9);
-    trem.connect(tremGain);
-    tremGain.connect(gain.gain);
+    gain.gain.linearRampToValueAtTime(level, time + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.23);
     osc.connect(gain);
-    connectGameOutput(gain, audioState.gameExploreGain, 0.24);
-    trem.start(time);
+    var output = connectGameOutput(gain, destination || audioState.gameExploreGain, 0);
     osc.start(time);
-    trem.stop(time + 1.96);
-    osc.stop(time + 1.96);
+    osc.stop(time + 0.26);
+    scheduleAudioDisconnect([osc, gain, output], time + 0.34);
   }
 
-  function playGameHoof(time, level, centerFreq) {
+  function playGameBrush(time, level, centerFreq, destination, pan) {
     var ctx = audioState.ctx;
-    if (!audioState.noiseBuffer) return;
+    if (!ctx || !audioState.noiseBuffer) return;
+    level = boostedGameMusicLevel(level, 0.09);
     var src = ctx.createBufferSource();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
     src.buffer = audioState.noiseBuffer;
     filter.type = "bandpass";
-    filter.frequency.setValueAtTime(centerFreq, time);
-    filter.Q.value = 2.6;
+    filter.frequency.setValueAtTime(centerFreq || 900, time);
+    filter.Q.value = 1.2;
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.linearRampToValueAtTime(level, time + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.13);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.16);
     src.connect(filter);
     filter.connect(gain);
-    connectGameOutput(gain, audioState.gameExploreGain, rand(-0.16, 0.16));
+    var output = connectGameOutput(gain, destination || audioState.gameExploreGain, pan || 0);
     src.start(time);
-    src.stop(time + 0.15);
+    src.stop(time + 0.18);
+    scheduleAudioDisconnect([src, filter, gain, output], time + 0.26);
   }
 
-  function playGameBattleHit(time, freq, level) {
+  function playGameRim(time, level, destination) {
     var ctx = audioState.ctx;
-    var osc = ctx.createOscillator();
+    if (!ctx || !audioState.noiseBuffer) return;
+    level = boostedGameMusicLevel(level, 0.16);
+    var click = ctx.createBufferSource();
+    var noiseFilter = ctx.createBiquadFilter();
+    var noiseGain = ctx.createGain();
+    var tone = ctx.createOscillator();
+    var toneGain = ctx.createGain();
+    click.buffer = audioState.noiseBuffer;
+    noiseFilter.type = "bandpass";
+    noiseFilter.frequency.setValueAtTime(1850, time);
+    noiseFilter.Q.value = 2.4;
+    noiseGain.gain.setValueAtTime(0.0001, time);
+    noiseGain.gain.linearRampToValueAtTime(level, time + 0.004);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.09);
+    tone.type = "triangle";
+    tone.frequency.setValueAtTime(440, time);
+    toneGain.gain.setValueAtTime(0.0001, time);
+    toneGain.gain.linearRampToValueAtTime(level * 0.35, time + 0.004);
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.08);
+    click.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    tone.connect(toneGain);
+    var noiseOutput = connectGameOutput(noiseGain, destination || audioState.gameBattleGain, rand(-0.08, 0.08));
+    var toneOutput = connectGameOutput(toneGain, destination || audioState.gameBattleGain, rand(-0.06, 0.06));
+    click.start(time);
+    tone.start(time);
+    click.stop(time + 0.11);
+    tone.stop(time + 0.1);
+    scheduleAudioDisconnect([click, noiseFilter, noiseGain, noiseOutput, tone, toneGain, toneOutput], time + 0.2);
+  }
+
+  function playRevolverShotSound(position, dir, muzzleSide, heavy) {
+    if (!audioState.enabled) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+    var now = ctx.currentTime;
+    var side = Number(muzzleSide) || 0;
+    var aimPan = dir && isFinite(dir.x) ? dir.x * 0.1 : 0;
+    var pan = clamp(side * 0.42 + aimPan, -0.75, 0.75);
+    var level = heavy ? 1.2 : 1;
+    var shotTime = now + REVOLVER_HAMMER_LEAD_TIME;
+
+    playRevolverHammerCock(now, pan, 0.058 * level);
+    playGunshotNoiseLayer(shotTime, pan, 1.34 * level, 920, 11800, 0.34, 0.0008, 0.032, rand(0, 0.16));
+    playGunshotNoiseLayer(shotTime + 0.002, pan * 0.85, 1.06 * level, 56, 3400, 0.32, 0.0018, 0.145, rand(0.04, 0.38));
+    playGunshotBody(shotTime, pan, 0.54 * level, heavy);
+    playGunshotNoiseLayer(shotTime + 0.03, pan * 0.45, 0.38 * level, 86, 1700, 0.3, 0.008, 0.3, rand(0.2, 0.55));
+    playGunshotNoiseLayer(shotTime + 0.13, -pan * 0.22, 0.1 * level, 120, 700, 0.28, 0.018, 0.42, rand(0.35, 0.65));
+    playRevolverMechanics(shotTime + 0.08, pan, 0.026 * level);
+  }
+
+  function playGunshotNoiseLayer(time, pan, level, highFreq, lowFreq, q, attack, duration, offset) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    var src = ctx.createBufferSource();
+    var high = ctx.createBiquadFilter();
+    var low = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    src.buffer = audioState.shotNoiseBuffer;
+    src.playbackRate.setValueAtTime(rand(0.94, 1.08), time);
+    high.type = "highpass";
+    high.frequency.setValueAtTime(Math.max(20, highFreq || 120), time);
+    high.Q.value = 0.55;
+    low.type = "lowpass";
+    low.frequency.setValueAtTime(Math.max(80, lowFreq || 1600), time);
+    low.Q.value = q || 0.7;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + Math.max(0.001, attack || 0.004));
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + Math.max(0.012, duration || 0.12));
+    src.connect(high);
+    high.connect(low);
+    low.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    src.start(time, Math.max(0, offset || 0));
+    src.stop(time + Math.max(0.03, duration || 0.12) + 0.08);
+    scheduleAudioDisconnect([src, high, low, gain, output], time + Math.max(0.03, duration || 0.12) + 0.12);
+  }
+
+  function playGunshotBody(time, pan, level, heavy) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var thump = ctx.createOscillator();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(freq, time);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(42, freq * 0.62), time + 0.18);
+    thump.type = "sine";
+    thump.frequency.setValueAtTime(heavy ? 132 : 118, time);
+    thump.frequency.exponentialRampToValueAtTime(heavy ? 42 : 48, time + 0.085);
     filter.type = "lowpass";
-    filter.frequency.setValueAtTime(620, time);
-    filter.frequency.exponentialRampToValueAtTime(160, time + 0.34);
+    filter.frequency.setValueAtTime(heavy ? 240 : 210, time);
+    filter.frequency.exponentialRampToValueAtTime(82, time + 0.13);
+    filter.Q.value = 0.32;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.52);
-    osc.connect(filter);
+    gain.gain.linearRampToValueAtTime(level, time + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.135);
+    thump.connect(filter);
     filter.connect(gain);
-    connectGameOutput(gain, audioState.gameBattleGain, -0.08);
-    osc.start(time);
-    osc.stop(time + 0.56);
+    var output = connectSfxOutput(gain, pan || 0);
+    thump.start(time);
+    thump.stop(time + 0.16);
+    scheduleAudioDisconnect([thump, filter, gain, output], time + 0.2);
   }
 
-  function playGameBattleSnare(time, level) {
+  function playRevolverHammerCock(time, pan, level) {
+    playGunshotNoiseLayer(time, pan * 0.72, level * 0.72, 2850, 9400, 0.5, 0.001, 0.016, rand(0.58, 0.86));
+    playGunshotNoiseLayer(time + 0.022, pan, level * 0.9, 1650, 7600, 0.46, 0.001, 0.023, rand(0.62, 0.94));
+  }
+
+  function playRevolverMechanics(time, pan, level) {
     var ctx = audioState.ctx;
-    if (!audioState.noiseBuffer) return;
-    var src = ctx.createBufferSource();
+    if (!ctx) return;
+    playGunshotNoiseLayer(time, pan, level, 2400, 7600, 0.46, 0.001, 0.022, rand(0.68, 0.92));
+    playGunshotNoiseLayer(time + 0.038, pan * 0.7, level * 0.42, 1500, 5400, 0.38, 0.001, 0.03, rand(0.45, 0.78));
+  }
+
+  function playZombieHitSound(x, z, damage, source) {
+    if (!audioState.enabled || isContinuousHitSoundSource(source)) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+
+    var now = ctx.currentTime;
+    if (now - (audioState.zombieHitSfxLastAt || 0) < 0.018) return;
+    if (now - (audioState.zombieHitSfxBurstWindow || 0) > 0.14) {
+      audioState.zombieHitSfxBurstWindow = now;
+      audioState.zombieHitSfxBurstCount = 0;
+    }
+    if (audioState.zombieHitSfxBurstCount >= 5) return;
+    audioState.zombieHitSfxBurstCount += 1;
+    audioState.zombieHitSfxLastAt = now;
+
+    var player = state.player;
+    var pan = player ? clamp((x - player.x) / 12, -0.62, 0.62) : 0;
+    var impact = clamp((Number(damage) || 1) / 2.5, 0.55, 1.18);
+    var level = 0.24 * impact;
+    playZombieHitThump(now, pan, level * rand(0.68, 0.92));
+    playGunshotNoiseLayer(now + 0.002, pan, level * 0.74, 42, 1180, 0.26, 0.0015, 0.074, rand(0.1, 0.55));
+    playGunshotNoiseLayer(now + 0.012, pan * 0.72, level * 0.58, 140, 2600, 0.22, 0.002, 0.095, rand(0.24, 0.7));
+    playGunshotNoiseLayer(now + 0.024, pan * 0.5, level * 0.22, 720, 3600, 0.2, 0.0015, 0.036, rand(0.45, 0.82));
+  }
+
+  function isContinuousHitSoundSource(source) {
+    if (!source) return false;
+    return source.type === "firePatch";
+  }
+
+  function playZombieHitThump(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var thump = ctx.createOscillator();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    src.buffer = audioState.noiseBuffer;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(1350, time);
-    filter.Q.value = 1.6;
+    thump.type = "triangle";
+    thump.frequency.setValueAtTime(rand(78, 96), time);
+    thump.frequency.exponentialRampToValueAtTime(rand(42, 54), time + 0.055);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(260, time);
+    filter.frequency.exponentialRampToValueAtTime(120, time + 0.08);
+    filter.Q.value = 0.28;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.19);
-    src.connect(filter);
+    gain.gain.linearRampToValueAtTime(level, time + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.082);
+    thump.connect(filter);
     filter.connect(gain);
-    connectGameOutput(gain, audioState.gameBattleGain, rand(-0.1, 0.1));
-    src.start(time);
-    src.stop(time + 0.22);
+    var output = connectSfxOutput(gain, pan || 0);
+    thump.start(time);
+    thump.stop(time + 0.1);
+    scheduleAudioDisconnect([thump, filter, gain, output], time + 0.13);
   }
 
-  function playGameHeroFanfare(time, freq, level) {
-    playGameHeroLead(time, freq, level, 0.24, 0.42);
-    playGameHeroLead(time + 0.16, freq * 1.125, level * 0.9, -0.18, 0.36);
-    playGameHeroLead(time + 0.3, freq * 1.333, level * 1.04, 0.08, 0.62);
+  function connectSfxOutput(source, pan) {
+    var ctx = audioState.ctx;
+    var destination = audioState.sfxGain || audioState.masterGain;
+    if (!destination) return;
+    if (ctx && typeof ctx.createStereoPanner === "function") {
+      var panner = ctx.createStereoPanner();
+      panner.pan.value = pan || 0;
+      source.connect(panner);
+      panner.connect(destination);
+      return panner;
+    } else {
+      source.connect(destination);
+    }
+    return null;
+  }
+
+  function scheduleAudioDisconnect(nodes, stopAt) {
+    var ctx = audioState.ctx;
+    var cleanNodes = [];
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i]) cleanNodes.push(nodes[i]);
+    }
+    if (!cleanNodes.length) return;
+    audioState.transientAudioNodeCount += cleanNodes.length;
+    var delay = Math.max(80, (stopAt - (ctx ? ctx.currentTime : 0)) * 1000 + 80);
+    window.setTimeout(function () {
+      for (var i = 0; i < cleanNodes.length; i++) {
+        try {
+          cleanNodes[i].disconnect();
+        } catch (err) {}
+      }
+      audioState.transientAudioNodeCount = Math.max(0, audioState.transientAudioNodeCount - cleanNodes.length);
+    }, delay);
   }
 
   function connectGameOutput(source, destination, pan) {
@@ -4555,9 +4810,11 @@
       panner.pan.value = pan || 0;
       source.connect(panner);
       panner.connect(destination || audioState.gameExploreGain);
+      return panner;
     } else {
       source.connect(destination || audioState.gameExploreGain);
     }
+    return null;
   }
 
   function stopGameMusicNodes(stopAt) {
@@ -4566,12 +4823,8 @@
       try {
         node.stop(stopAt);
       } catch (err) {}
-      window.setTimeout(function () {
-        try {
-          node.disconnect();
-        } catch (err) {}
-      }, Math.max(80, (stopAt - (audioState.ctx ? audioState.ctx.currentTime : 0)) * 1000 + 80));
     });
+    scheduleAudioDisconnect(nodes, stopAt);
   }
 
   function startMenuMusicBed(now) {
@@ -4599,7 +4852,7 @@
     filter.connect(gain);
     gain.connect(audioState.menuGain);
     osc.start(now);
-    audioState.menu.nodes.push(osc);
+    audioState.menu.nodes.push(osc, filter, gain);
   }
 
   function scheduleMenuMusic() {
@@ -4684,6 +4937,7 @@
     gain.connect(audioState.menuGain);
     osc.start(time);
     osc.stop(time + 0.28);
+    scheduleAudioDisconnect([osc, gain], time + 0.36);
   }
 
   function playMenuBass(time, freq, level) {
@@ -4704,6 +4958,7 @@
     gain.connect(audioState.menuGain);
     osc.start(time);
     osc.stop(time + 0.74);
+    scheduleAudioDisconnect([osc, filter, gain], time + 0.84);
   }
 
   function playMenuPluck(time, freq, level, pan, length) {
@@ -4721,9 +4976,10 @@
     gain.gain.linearRampToValueAtTime(level, time + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
     osc.connect(filter);
-    connectMenuAudioNode(filter, gain, pan);
+    var output = connectMenuAudioNode(filter, gain, pan);
     osc.start(time);
     osc.stop(time + length + 0.04);
+    scheduleAudioDisconnect([osc, filter, gain, output], time + length + 0.12);
   }
 
   function playMenuDustBell(time, freq) {
@@ -4737,9 +4993,10 @@
     gain.gain.linearRampToValueAtTime(0.022, time + 0.04);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + 2.2);
     osc.connect(gain);
-    connectMenuOutput(gain, -0.18);
+    var output = connectMenuOutput(gain, -0.18);
     osc.start(time);
     osc.stop(time + 2.25);
+    scheduleAudioDisconnect([osc, gain, output], time + 2.35);
   }
 
   function playMenuPercussion(time, level, centerFreq) {
@@ -4757,14 +5014,15 @@
     gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.18);
     src.connect(filter);
     filter.connect(gain);
-    connectMenuOutput(gain, rand(-0.18, 0.18));
+    var output = connectMenuOutput(gain, rand(-0.18, 0.18));
     src.start(time);
     src.stop(time + 0.2);
+    scheduleAudioDisconnect([src, filter, gain, output], time + 0.28);
   }
 
   function connectMenuAudioNode(source, gain, pan) {
     source.connect(gain);
-    connectMenuOutput(gain, pan);
+    return connectMenuOutput(gain, pan);
   }
 
   function connectMenuOutput(source, pan) {
@@ -4774,9 +5032,11 @@
       panner.pan.value = pan || 0;
       source.connect(panner);
       panner.connect(audioState.menuGain);
+      return panner;
     } else {
       source.connect(audioState.menuGain);
     }
+    return null;
   }
 
   function stopMenuMusicNodes(stopAt) {
@@ -4785,12 +5045,8 @@
       try {
         node.stop(stopAt);
       } catch (err) {}
-      window.setTimeout(function () {
-        try {
-          node.disconnect();
-        } catch (err) {}
-      }, Math.max(80, (stopAt - (audioState.ctx ? audioState.ctx.currentTime : 0)) * 1000 + 80));
     });
+    scheduleAudioDisconnect(nodes, stopAt);
   }
 
   function updateMenuMusicButton() {
@@ -4826,6 +5082,7 @@
       gameVolume: GAME_MUSIC_VOLUME,
       menuNodeCount: audioState.menu.nodes.length,
       gameNodeCount: audioState.game.nodes.length,
+      transientAudioNodeCount: audioState.transientAudioNodeCount,
       gameDanger: Number(gameDanger.toFixed(3)),
       gameBattleTarget: Number(audioState.game.battleTarget.toFixed(3)),
       gameBattleAmount: Number(audioState.game.battleAmount.toFixed(3)),
@@ -4958,7 +5215,7 @@
     state.waveLowRemainingTimer = 0;
     state.spawnLeft = state.waveSpawnTarget;
     state.spawnTimer = 0.2;
-    state.spawnInterval = Math.max(0.42, 1.02 - wave * 0.055);
+    state.spawnInterval = getWaveSpawnInterval(wave);
     state.zombieSpawnSideCursor = Math.max(0, Math.floor(Number(wave) || 1) - 1) % 4;
     state.zombieTeleportSideCursor = (state.zombieSpawnSideCursor + 2) % 4;
     state.nextWaveTimer = 0;
@@ -4974,7 +5231,21 @@
     var lvl = Math.max(1, Math.floor(Number(wave) || 1));
     if (lvl > 15) return ZOMBIES_PER_WAVE_AFTER_15_MULTIPLIER;
     if (lvl > 9) return ZOMBIES_PER_WAVE_AFTER_9_MULTIPLIER;
+    if (lvl > 4) return ZOMBIES_PER_WAVE_AFTER_4_MULTIPLIER;
     return ZOMBIES_PER_WAVE_MULTIPLIER;
+  }
+
+  function getWaveSpawnInterval(wave) {
+    var lvl = Math.max(1, Math.floor(Number(wave) || 1));
+    if (lvl <= 4) return Math.max(0.42, 1.02 - lvl * 0.055);
+    return clamp(0.62 - (lvl - 4) * 0.035, 0.22, 0.62);
+  }
+
+  function getWaveSpawnBatchSize(wave) {
+    var lvl = Math.max(1, Math.floor(Number(wave) || 1));
+    if (lvl > 15) return ZOMBIE_SPAWN_BATCH_AFTER_15;
+    if (lvl > 4) return ZOMBIE_SPAWN_BATCH_AFTER_4;
+    return 1;
   }
 
   function spawnZombie() {
@@ -5195,6 +5466,10 @@
     prewarmFirePatchVisualPool("trail", FIRE_PATCH_VISUAL_PREWARM.trail);
   }
 
+  function initAcidPuddleVisualPool() {
+    prewarmAcidPuddleVisualPool(ACID_PUDDLE_VISUAL_PREWARM);
+  }
+
   function initRifleTrapVisualPool() {
     prewarmRifleTrapVisualPool(RIFLE_TRAP_VISUAL_PREWARM);
   }
@@ -5232,6 +5507,12 @@
     var pool = firePatchVisualPools[poolKey];
     while (pool.length < count) {
       pool.push(createFirePatchVisual(poolKey === "trail"));
+    }
+  }
+
+  function prewarmAcidPuddleVisualPool(count) {
+    while (acidPuddleVisualPool.length < count) {
+      acidPuddleVisualPool.push(createAcidPuddleVisual());
     }
   }
 
@@ -5277,16 +5558,16 @@
 
   function getZombieConfig(type) {
     return {
-      walker: { hp: 2, speed: 2.35, radius: 0.68, damage: 8, scale: 1, score: 100, xp: 4, color: mats.zombieSkin },
-      runner: { hp: 1, speed: 3.85, radius: 0.58, damage: 6, scale: 0.86, score: 140, xp: 5, color: mats.zombieSkin },
-      fastZombie: { hp: 2, speed: getFastZombieSpeed(), radius: 0.56, damage: 7, scale: 0.95, score: 220, xp: 8, color: mats.fastZombieSkin, fast: true },
-      brute: { hp: 5, speed: 1.85, radius: 0.93, damage: 15, scale: 1.28, score: 280, xp: 12, color: mats.zombieSkin },
-      spitter: { hp: 4, speed: 1.92, radius: 0.62, damage: 9, scale: 1.0, score: 320, xp: 16, color: mats.zombieAcidSkin, tall: true },
+      walker: { hp: 2, speed: 2.35, radius: 0.68, damage: 13, scale: 1, score: 100, xp: 4, color: mats.zombieSkin },
+      runner: { hp: 1, speed: 3.85, radius: 0.58, damage: 11, scale: 0.86, score: 140, xp: 5, color: mats.zombieSkin },
+      fastZombie: { hp: 2, speed: getFastZombieSpeed(), radius: 0.56, damage: 12, scale: 0.95, score: 220, xp: 8, color: mats.fastZombieSkin, fast: true },
+      brute: { hp: 5, speed: 1.85, radius: 0.93, damage: 24, scale: 1.28, score: 280, xp: 12, color: mats.zombieSkin },
+      spitter: { hp: 4, speed: 1.92, radius: 0.62, damage: 14, scale: 1.0, score: 320, xp: 16, color: mats.zombieAcidSkin, tall: true },
     }[type] || {
       hp: 2,
       speed: 2.35,
       radius: 0.68,
-      damage: 8,
+      damage: 13,
       scale: 1,
       score: 100,
       xp: 4,
@@ -6414,6 +6695,7 @@
     state.shake = Math.min(1.2, state.shake + weapon.shake);
     addLightFlash(start.x, start.y, start.z, weapon.id === "launcher" ? 0xff7a24 : 0xffd36b, weapon.id === "launcher" ? 3.2 : 1.7, weapon.id === "launcher" ? 8 : 5, weapon.id === "launcher" ? 0.16 : 0.08);
     addSmokePuff(start.x - dir.x * 0.18, start.y, start.z - dir.z * 0.18, weapon.id === "launcher" ? 0.55 : 0.28, weapon.id === "launcher" ? 0.48 : 0.28);
+    if (weapon.id === "revolver") playRevolverShotSound(start, dir, muzzleSide, bigIronShot);
 
     var particleCount = weapon.id === "launcher" ? 10 : weapon.id === "rifle" ? 4 : 6;
     for (var i = 0; i < particleCount; i++) {
@@ -7024,8 +7306,11 @@
     if (state.spawnLeft <= 0) return;
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
-      spawnZombie();
-      state.spawnLeft -= 1;
+      var batch = Math.min(state.spawnLeft, getWaveSpawnBatchSize(state.wave));
+      for (var i = 0; i < batch; i++) {
+        spawnZombie();
+      }
+      state.spawnLeft -= batch;
       state.spawnTimer = state.spawnInterval * rand(0.65, 1.25);
     }
   }
@@ -7347,7 +7632,7 @@
       x = safe.x;
       z = safe.z;
     }
-    var visual = createAcidPuddleVisual(x, z);
+    var visual = acquireAcidPuddleVisual(x, z);
     state.acidPuddles.push({
       x: x,
       z: z,
@@ -7361,6 +7646,7 @@
       ring: visual.ring,
       foam: visual.foam,
       bubbles: visual.bubbles,
+      visual: visual,
     });
     addShockwave(x, z, ACID_PUDDLE_RADIUS * 0.85, 0.34, 0x9cff47);
     addLightFlash(x, 0.8, z, 0x8dff31, 2.1, 5.5, 0.2);
@@ -7372,30 +7658,57 @@
     trimEffects(state.acidPuddles, MAX_ACID_PUDDLES, removeAcidPuddle);
   }
 
-  function createAcidPuddleVisual(x, z) {
+  function createAcidPuddleVisual() {
     var group = new THREE.Group();
-    group.position.set(x, 0, z);
-    effectRoot.add(group);
+    group.position.set(0, 0, 0);
+    group.visible = false;
 
-    var surface = addPuddleCircle(group, mats.acidPuddle.clone(), ACID_PUDDLE_RADIUS * rand(0.92, 1.08), ACID_PUDDLE_RADIUS * rand(0.72, 0.96), 0.09, -1, rand(0, Math.PI * 2));
-    var darkPatch = addPuddleCircle(group, mats.acidPuddleDark.clone(), ACID_PUDDLE_RADIUS * rand(0.48, 0.62), ACID_PUDDLE_RADIUS * rand(0.26, 0.42), 0.095, 0, rand(0, Math.PI * 2));
-    darkPatch.position.x = rand(-0.22, 0.22);
-    darkPatch.position.z = rand(-0.16, 0.16);
-    rememberBase(darkPatch);
+    var surface = addPuddleCircle(group, mats.acidPuddle.clone(), ACID_PUDDLE_RADIUS, ACID_PUDDLE_RADIUS * 0.82, 0.09, -1, 0);
+    var darkPatch = addPuddleCircle(group, mats.acidPuddleDark.clone(), ACID_PUDDLE_RADIUS * 0.55, ACID_PUDDLE_RADIUS * 0.34, 0.095, 0, 0);
     var ring = addPuddleRing(group, ACID_PUDDLE_RADIUS * 0.68, 0.105);
-    var foam = addPuddleCircle(group, mats.acidPuddleFoam.clone(), ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, 0.11, 1, rand(0, Math.PI * 2));
-    foam.position.x = rand(-0.42, 0.42);
-    foam.position.z = rand(-0.32, 0.32);
-    rememberBase(foam);
+    var foam = addPuddleCircle(group, mats.acidPuddleFoam.clone(), ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, 0.11, 1, 0);
 
     var bubbles = [];
     for (var i = 0; i < 7; i++) {
-      var angle = rand(0, Math.PI * 2);
-      var distance = rand(0.25, ACID_PUDDLE_RADIUS * 0.78);
-      bubbles.push(addPuddleBubble(group, Math.cos(angle) * distance, Math.sin(angle) * distance, rand(0.055, 0.13), i));
+      bubbles.push(addPuddleBubble(group, 0, 0, 0.1, i));
     }
 
-    return { group: group, surface: surface, darkPatch: darkPatch, ring: ring, foam: foam, bubbles: bubbles };
+    var visual = { group: group, surface: surface, darkPatch: darkPatch, ring: ring, foam: foam, bubbles: bubbles };
+    group.userData.acidPuddleVisual = visual;
+    acidPuddleVisualCreated += 1;
+    return visual;
+  }
+
+  function configureAcidPuddleVisual(visual, x, z) {
+    resetFirePatchCircle(visual.surface, ACID_PUDDLE_RADIUS * rand(0.92, 1.08), ACID_PUDDLE_RADIUS * rand(0.72, 0.96), rand(0, Math.PI * 2));
+    resetFirePatchCircle(visual.darkPatch, ACID_PUDDLE_RADIUS * rand(0.48, 0.62), ACID_PUDDLE_RADIUS * rand(0.26, 0.42), rand(0, Math.PI * 2));
+    visual.darkPatch.position.set(rand(-0.22, 0.22), 0.095, rand(-0.16, 0.16));
+    rememberBase(visual.darkPatch);
+    resetFirePatchCircle(visual.ring, ACID_PUDDLE_RADIUS * 0.68, ACID_PUDDLE_RADIUS * 0.68 * 0.82, 0);
+    resetFirePatchCircle(visual.foam, ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, rand(0, Math.PI * 2));
+    visual.foam.position.set(rand(-0.42, 0.42), 0.11, rand(-0.32, 0.32));
+    rememberBase(visual.foam);
+    for (var i = 0; i < visual.bubbles.length; i++) {
+      configureAcidPuddleBubble(visual.bubbles[i], i);
+    }
+    visual.group.position.set(x, 0, z);
+    visual.group.visible = true;
+  }
+
+  function acquireAcidPuddleVisual(x, z) {
+    var visual = acidPuddleVisualPool.length ? acidPuddleVisualPool.pop() : createAcidPuddleVisual();
+    acidPuddleVisualInUse += 1;
+    configureAcidPuddleVisual(visual, x, z);
+    if (visual.group.parent !== effectRoot) effectRoot.add(visual.group);
+    return visual;
+  }
+
+  function releaseAcidPuddleVisual(visual) {
+    if (!visual) return;
+    if (visual.group.parent) visual.group.parent.remove(visual.group);
+    visual.group.visible = false;
+    acidPuddleVisualInUse = Math.max(0, acidPuddleVisualInUse - 1);
+    acidPuddleVisualPool.push(visual);
   }
 
   function addPuddleCircle(parent, mat, sx, sz, y, renderOrder, angle) {
@@ -7451,6 +7764,17 @@
     rememberBase(mesh);
     parent.add(mesh);
     return mesh;
+  }
+
+  function configureAcidPuddleBubble(mesh, index) {
+    var angle = rand(0, Math.PI * 2);
+    var distance = rand(0.25, ACID_PUDDLE_RADIUS * 0.78);
+    var size = rand(0.055, 0.13);
+    mesh.userData.bubblePhase = rand(0, Math.PI * 2);
+    mesh.position.set(Math.cos(angle) * distance, 0.13, Math.sin(angle) * distance);
+    mesh.scale.set(size, size * 0.32, size);
+    mesh.visible = true;
+    rememberBase(mesh);
   }
 
   function findNearestClearGroundPoint(x, z, radius) {
@@ -7522,7 +7846,7 @@
   function removeAcidPuddle(index) {
     var puddle = state.acidPuddles[index];
     if (!puddle) return;
-    removeObject3D(puddle.mesh);
+    releaseAcidPuddleVisual(puddle.visual);
     state.acidPuddles.splice(index, 1);
   }
 
@@ -7542,6 +7866,15 @@
         created: firePatchVisualCreated.trail,
         inUse: firePatchVisualInUse.trail,
       },
+    };
+  }
+
+  function getAcidPuddleVisualPoolStats() {
+    return {
+      available: acidPuddleVisualPool.length,
+      created: acidPuddleVisualCreated,
+      inUse: acidPuddleVisualInUse,
+      prewarm: ACID_PUDDLE_VISUAL_PREWARM,
     };
   }
 
@@ -9454,6 +9787,7 @@
     enemy.hp -= damage;
     if (source && source.executioner && enemy.hp > 0 && enemy.hp <= enemy.maxHp * 0.28) enemy.hp = 0;
     enemy.hitPulse = 1;
+    playZombieHitSound(x, z, damage, source);
     addHitSpark(x, z);
     for (var i = 0; i < 6; i++) {
       spawnParticle(x, 1.05, z, rand(-2.5, 2.5), rand(0.8, 3.6), rand(-2.5, 2.5), 0.28, rand(0.08, 0.18), mats.zombieBlood);
@@ -11854,6 +12188,7 @@
       pools: {
         zombies: getZombiePoolStats(),
         firePatchVisuals: getFirePatchVisualPoolStats(),
+        acidPuddleVisuals: getAcidPuddleVisualPoolStats(),
         rifleTrapVisuals: getRifleTrapVisualPoolStats(),
         explosionEffects: getExplosionEffectPoolStats(),
         particleVisuals: getParticleVisualPoolStats(),
@@ -12501,6 +12836,8 @@
       wave: state.wave,
       waveSpawnTarget: state.waveSpawnTarget || getWaveZombieCount(state.wave),
       waveSpawnMultiplier: getWaveZombieMultiplier(state.wave),
+      waveSpawnBatchSize: getWaveSpawnBatchSize(state.wave),
+      spawnInterval: Number((state.spawnInterval || getWaveSpawnInterval(state.wave)).toFixed(2)),
       waveRemaining: getWaveRemainingCount(),
       waveElapsed: Number((state.waveElapsed || 0).toFixed(2)),
       waveLowRemainingTimer: Number((state.waveLowRemainingTimer || 0).toFixed(2)),
@@ -12593,6 +12930,7 @@
           occupants: zombieSpatialStats.occupants,
         },
         firePatchVisualPools: getFirePatchVisualPoolStats(),
+        acidPuddleVisualPools: getAcidPuddleVisualPoolStats(),
         rifleTrapVisualPools: getRifleTrapVisualPoolStats(),
         explosionEffectPools: getExplosionEffectPoolStats(),
         particleVisualPools: getParticleVisualPoolStats(),
@@ -13058,6 +13396,8 @@
       return {
         wave: state.wave,
         waveSpawnTarget: state.waveSpawnTarget,
+        spawnInterval: Number(state.spawnInterval.toFixed(2)),
+        spawnBatchSize: getWaveSpawnBatchSize(state.wave),
         waveRemaining: getWaveRemainingCount(),
         live: state.enemies.length,
         spawnLeft: state.spawnLeft,
@@ -13318,6 +13658,13 @@
       return {
         visuals: getFirePatchVisualPoolStats(),
         activePatches: state.firePatches.length,
+      };
+    },
+    getAcidPuddleOptimizationStats: function () {
+      return {
+        visuals: getAcidPuddleVisualPoolStats(),
+        activePuddles: state.acidPuddles.length,
+        maxPuddles: MAX_ACID_PUDDLES,
       };
     },
     getRifleTrapOptimizationStats: function () {
