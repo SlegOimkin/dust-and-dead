@@ -52,6 +52,13 @@
   var XP_ORB_SPEED = 8.2;
   var BASE_PLAYER_SPEED = 8.3;
   var BASE_PLAYER_HP = 120;
+  var MOBILE_AUTORUN_TRIGGER = 0.92;
+  var MOBILE_AUTORUN_KNOB_SCALE = 0.74;
+  var AMMO_CRATE_POINTER_RANGE = 34;
+  var AMMO_CRATE_POINTER_VIEW_PAD = 1.05;
+  var AMMO_CRATE_POINTER_FADE_SPEED = 9.5;
+  var AMMO_CRATE_POINTER_HEIGHT = 4.55;
+  var AMMO_CRATE_POINTER_OFFSET = 2.05;
   var MIN_PLAYER_PASSAGE = 2.0;
   var MAIN_TOWN_MICRO_BUFFER = 10.5;
   var MICRO_FENCE_ROAD_CLEARANCE = 2.2;
@@ -246,10 +253,23 @@
     baseY: 0,
     x: 0,
     z: 0,
+    autoRun: false,
+    autoX: 0,
+    autoZ: 0,
   };
   var touchFire = {
     active: false,
     pointerId: null,
+  };
+  var mobileFieldFire = {
+    active: false,
+    pointerId: null,
+  };
+  var mobileAimTarget = {
+    active: false,
+    x: 0,
+    z: 0,
+    marker: null,
   };
   var lastMobileAim = { x: 0, z: -1 };
   var lastFrame = performance.now();
@@ -264,6 +284,8 @@
   var mapFootprints = [];
   var microSettlementStats = [];
   var interestPointStats = [];
+  var roadSurfaceMeshes = [];
+  var terrainPatchMeshes = [];
   var nextMapFootprintId = 1;
   var sharedGeometries = {};
   var zombiePools = createZombiePoolBuckets();
@@ -346,6 +368,7 @@
     maxZ: ARENA_D / 2 + 2.5,
   };
   var currentAmmoIcon = "";
+  var ammoCratePointer = null;
   var ammoVisualState = {
     weapon: "",
     magazine: 0,
@@ -1630,6 +1653,31 @@
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     });
+    mats.ammoCratePointer = new THREE.MeshBasicMaterial({
+      color: 0xffd56a,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.ammoCratePointerGlow = new THREE.MeshBasicMaterial({
+      color: 0xfff0a8,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.ammoCratePointerOutline = new THREE.MeshBasicMaterial({
+      color: 0x2a1508,
+      transparent: true,
+      opacity: 0.76,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+    });
     mats.metal = material(0x353333, 0.35, 0.75);
     mats.black = material(0x151515, 0.55, 0.25);
     mats.playerHat = material(0x6c351a, 0.78, 0.04);
@@ -1815,6 +1863,24 @@
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
+    mats.mobileAimTarget = new THREE.MeshBasicMaterial({
+      color: 0xffd66d,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.mobileAimTargetGlow = new THREE.MeshBasicMaterial({
+      color: 0x8fe8ff,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
     mats.trapMetal = material(0x2c2a24, 0.42, 0.48);
     mats.trapWood = material(0x6a3a1e, 0.72, 0.04);
     mats.trapGlow = new THREE.MeshBasicMaterial({
@@ -1980,8 +2046,9 @@
   function buildMenuEnvironment() {
     var menuMats = menuState.mats;
     addSharedBox(menuWorldRoot, 92, 0.32, 92, mats.sand, 0, -0.18, 0);
-    addSharedBox(menuWorldRoot, 18, 0.08, 56, mats.road, 1.5, 0.02, -4.5);
-    addSharedBox(menuWorldRoot, 30, 0.06, 10, mats.road, -9.5, 0.03, 10.5).rotation.z = -0.06;
+    configureRoadSurface(addSharedBox(menuWorldRoot, 18, 0.08, 56, mats.road, 1.5, 0.02, -4.5), 0.08);
+    var angledMenuRoad = configureRoadSurface(addSharedBox(menuWorldRoot, 30, 0.06, 10, mats.road, -9.5, 0.03, 10.5), 0.06);
+    angledMenuRoad.rotation.z = -0.06;
 
     for (var i = 0; i < 18; i++) {
       var patch = addSharedBox(
@@ -2276,7 +2343,20 @@
 
   function addRoad(w, h, d, x, y, z, pad, type) {
     var road = addBox(worldRoot, w, h, d, mats.road, x, y, z);
+    configureRoadSurface(road, h);
     registerMapFootprint(type || "road-clear", x, z, w, d, pad || 0.2, false);
+    return road;
+  }
+
+  function configureRoadSurface(road, height) {
+    if (!road) return road;
+    road.castShadow = false;
+    road.receiveShadow = false;
+    road.renderOrder = -4;
+    road.userData.isRoadSurface = true;
+    road.userData.noDebris = true;
+    road.userData.surfaceTopY = road.position.y + (Number(height) || 0) / 2;
+    roadSurfaceMeshes.push(road);
     return road;
   }
 
@@ -2293,8 +2373,15 @@
       var pz = mapRand(-ARENA_D / 2 - 3, ARENA_D / 2 + 3);
       var pw = mapRand(0.5, 2.1);
       var pd = mapRand(0.15, 0.62);
-      var patch = addBox(worldRoot, pw, 0.035, pd, patchMat, px, 0.08, pz);
+      var patchY = 0.006 + mapRand(-0.001, 0.001);
+      var patch = addBox(worldRoot, pw, 0.035, pd, patchMat, px, patchY, pz);
       patch.rotation.y = mapRand(0, Math.PI);
+      patch.castShadow = false;
+      patch.receiveShadow = false;
+      patch.userData.isTerrainPatch = true;
+      patch.userData.noDebris = true;
+      patch.userData.surfaceTopY = patchY + 0.035 / 2;
+      terrainPatchMeshes.push(patch);
     }
   }
 
@@ -3460,6 +3547,38 @@
     };
   }
 
+  function getRoadSurfaceDiagnostics() {
+    var shadowCastingRoads = 0;
+    var shadowReceivingRoads = 0;
+    var minRoadSurfaceTopY = Infinity;
+    for (var i = 0; i < roadSurfaceMeshes.length; i++) {
+      var road = roadSurfaceMeshes[i];
+      if (!road) continue;
+      if (road.castShadow) shadowCastingRoads += 1;
+      if (road.receiveShadow) shadowReceivingRoads += 1;
+      if (road.userData && isFinite(road.userData.surfaceTopY)) {
+        minRoadSurfaceTopY = Math.min(minRoadSurfaceTopY, road.userData.surfaceTopY);
+      }
+    }
+
+    var maxTerrainPatchTopY = -Infinity;
+    for (var j = 0; j < terrainPatchMeshes.length; j++) {
+      var patch = terrainPatchMeshes[j];
+      if (patch && patch.userData && isFinite(patch.userData.surfaceTopY)) {
+        maxTerrainPatchTopY = Math.max(maxTerrainPatchTopY, patch.userData.surfaceTopY);
+      }
+    }
+
+    return {
+      roadCount: roadSurfaceMeshes.length,
+      shadowCastingRoads: shadowCastingRoads,
+      shadowReceivingRoads: shadowReceivingRoads,
+      terrainPatchCount: terrainPatchMeshes.length,
+      minRoadSurfaceTopY: isFinite(minRoadSurfaceTopY) ? Number(minRoadSurfaceTopY.toFixed(4)) : null,
+      maxTerrainPatchTopY: isFinite(maxTerrainPatchTopY) ? Number(maxTerrainPatchTopY.toFixed(4)) : null,
+    };
+  }
+
   function isAllowedMapFootprintContact(a, b) {
     if (isRoadFootprint(a) || isRoadFootprint(b)) {
       var other = isRoadFootprint(a) ? b : a;
@@ -3800,6 +3919,9 @@
     releaseAllParticlesToPool();
     releaseAllProjectilesToPool();
     clearDynamic();
+    ammoCratePointer = null;
+    mobileAimTarget.active = false;
+    mobileAimTarget.marker = null;
     state.mode = mode || "playing";
     state.time = 0;
     state.wave = 1;
@@ -3939,6 +4061,7 @@
     pointerInput.followOffsetZ = 4;
     state.player.group.position.set(state.player.x, 0, state.player.z);
     dynamicRoot.add(state.player.group);
+    if (state.mode === "playing") ensureAmmoCratePointer();
     if (state.mode === "menu") {
       setupMenuShowcase();
       setWeaponMeshes(state.player.group, "rifle");
@@ -4711,6 +4834,369 @@
     if (!ctx) return;
     playGunshotNoiseLayer(time, pan, level, 2400, 7600, 0.46, 0.001, 0.022, rand(0.68, 0.92));
     playGunshotNoiseLayer(time + 0.038, pan * 0.7, level * 0.42, 1500, 5400, 0.38, 0.001, 0.03, rand(0.45, 0.78));
+  }
+
+  function playRifleShotSound(position, dir, chainLightning) {
+    if (!audioState.enabled) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+
+    var now = ctx.currentTime;
+    var aimPan = dir && isFinite(dir.x) ? dir.x * 0.18 : 0;
+    var pan = clamp(aimPan, -0.68, 0.68);
+    var level = chainLightning ? 1.04 : 1;
+
+    playWinchesterMuzzleBlast(now, pan, 0.96 * level);
+    playWinchesterPressureBody(now + 0.002, pan, 0.82 * level);
+    playWinchesterChamberSnap(now + 0.014, pan, 0.052 * level);
+    playWinchesterOpenTail(now + 0.028, pan, 0.26 * level);
+    if (chainLightning) playRifleLightningShotCharge(now + 0.006, pan, level);
+    playRifleLeverAction(now + 0.215, pan, 1.08 * level);
+  }
+
+  function playRifleLightningShotCharge(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    playGunshotNoiseLayer(time, pan * 0.78, 0.22 * level, 2400, 13800, 0.88, 0.001, 0.044, rand(0.18, 0.52));
+    playGunshotNoiseLayer(time + 0.018, -pan * 0.5, 0.14 * level, 3200, 11200, 1.05, 0.001, 0.038, rand(0.36, 0.68));
+    playElectricToneBurst(time + 0.004, pan, 0.055 * level, 1180, 0.11, 1.4);
+    playElectricToneBurst(time + 0.026, -pan * 0.6, 0.036 * level, 2380, 0.075, 1.15);
+  }
+
+  function playWinchesterMuzzleBlast(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    var src = ctx.createBufferSource();
+    var high = ctx.createBiquadFilter();
+    var low = ctx.createBiquadFilter();
+    var presence = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    src.buffer = audioState.shotNoiseBuffer;
+    src.playbackRate.setValueAtTime(rand(1.08, 1.24), time);
+    high.type = "highpass";
+    high.frequency.setValueAtTime(640, time);
+    high.Q.value = 0.42;
+    low.type = "lowpass";
+    low.frequency.setValueAtTime(15500, time);
+    low.frequency.exponentialRampToValueAtTime(7200, time + 0.034);
+    low.Q.value = 0.18;
+    presence.type = "peaking";
+    presence.frequency.setValueAtTime(2950, time);
+    presence.Q.value = 0.82;
+    presence.gain.value = 3.1;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.0008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.045);
+    src.connect(high);
+    high.connect(low);
+    low.connect(presence);
+    presence.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    src.start(time, rand(0, 0.12));
+    src.stop(time + 0.075);
+    scheduleAudioDisconnect([src, high, low, presence, gain, output], time + 0.13);
+  }
+
+  function playWinchesterPressureBody(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var thump = ctx.createOscillator();
+    var punch = ctx.createOscillator();
+    var thumpGain = ctx.createGain();
+    var punchGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var chest = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    thump.type = "sine";
+    punch.type = "triangle";
+    thump.frequency.setValueAtTime(126, time);
+    thump.frequency.exponentialRampToValueAtTime(39, time + 0.12);
+    punch.frequency.setValueAtTime(248, time);
+    punch.frequency.exponentialRampToValueAtTime(82, time + 0.074);
+    thumpGain.gain.value = 0.9;
+    punchGain.gain.value = 0.28;
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(470, time);
+    filter.frequency.exponentialRampToValueAtTime(86, time + 0.18);
+    filter.Q.value = 0.28;
+    chest.type = "peaking";
+    chest.frequency.setValueAtTime(155, time);
+    chest.Q.value = 0.7;
+    chest.gain.value = 3.6;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.175);
+    thump.connect(thumpGain);
+    punch.connect(punchGain);
+    thumpGain.connect(filter);
+    punchGain.connect(filter);
+    filter.connect(chest);
+    chest.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    thump.start(time);
+    punch.start(time);
+    thump.stop(time + 0.21);
+    punch.stop(time + 0.14);
+    scheduleAudioDisconnect([thump, punch, thumpGain, punchGain, filter, chest, gain, output], time + 0.25);
+  }
+
+  function playWinchesterChamberSnap(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var click = ctx.createOscillator();
+    var ring = ctx.createOscillator();
+    var clickGain = ctx.createGain();
+    var ringGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    click.type = "square";
+    ring.type = "triangle";
+    click.frequency.setValueAtTime(1180, time);
+    click.frequency.exponentialRampToValueAtTime(640, time + 0.032);
+    ring.frequency.setValueAtTime(2380, time + 0.001);
+    ring.frequency.exponentialRampToValueAtTime(1540, time + 0.028);
+    clickGain.gain.value = 0.32;
+    ringGain.gain.value = 0.18;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(1550, time);
+    filter.Q.value = 1.45;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.044);
+    click.connect(clickGain);
+    ring.connect(ringGain);
+    clickGain.connect(filter);
+    ringGain.connect(filter);
+    filter.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    click.start(time);
+    ring.start(time + 0.001);
+    click.stop(time + 0.055);
+    ring.stop(time + 0.05);
+    scheduleAudioDisconnect([click, ring, clickGain, ringGain, filter, gain, output], time + 0.1);
+  }
+
+  function playWinchesterOpenTail(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    var src = ctx.createBufferSource();
+    var high = ctx.createBiquadFilter();
+    var low = ctx.createBiquadFilter();
+    var mid = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    src.buffer = audioState.shotNoiseBuffer;
+    src.playbackRate.setValueAtTime(rand(0.74, 0.86), time);
+    high.type = "highpass";
+    high.frequency.setValueAtTime(58, time);
+    high.Q.value = 0.35;
+    low.type = "lowpass";
+    low.frequency.setValueAtTime(2700, time);
+    low.frequency.exponentialRampToValueAtTime(620, time + 0.23);
+    low.Q.value = 0.24;
+    mid.type = "peaking";
+    mid.frequency.setValueAtTime(230, time);
+    mid.Q.value = 0.52;
+    mid.gain.value = 3.2;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.265);
+    src.connect(high);
+    high.connect(low);
+    low.connect(mid);
+    mid.connect(gain);
+    var output = connectSfxOutput(gain, pan * 0.55 || 0);
+    src.start(time, rand(0.1, 0.34));
+    src.stop(time + 0.31);
+    scheduleAudioDisconnect([src, high, low, mid, gain, output], time + 0.37);
+  }
+
+  function playElectricToneBurst(time, pan, level, freq, length, bend) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.08, 0.028, 0.18);
+    bend = Math.max(0.25, Number(bend) || 1);
+    var buzz = ctx.createOscillator();
+    var shine = ctx.createOscillator();
+    var buzzGain = ctx.createGain();
+    var shineGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    buzz.type = "sawtooth";
+    shine.type = "square";
+    buzz.frequency.setValueAtTime(freq, time);
+    buzz.frequency.exponentialRampToValueAtTime(Math.max(80, freq / bend), time + length);
+    shine.frequency.setValueAtTime(freq * rand(1.92, 2.22), time);
+    shine.frequency.exponentialRampToValueAtTime(Math.max(140, freq * rand(1.12, 1.34)), time + length * 0.82);
+    buzzGain.gain.value = 0.68;
+    shineGain.gain.value = 0.12;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(freq * 1.1, time);
+    filter.Q.value = 2.2;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    buzz.connect(buzzGain);
+    shine.connect(shineGain);
+    buzzGain.connect(filter);
+    shineGain.connect(filter);
+    filter.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    buzz.start(time);
+    shine.start(time + 0.001);
+    buzz.stop(time + length + 0.02);
+    shine.stop(time + length + 0.02);
+    scheduleAudioDisconnect([buzz, shine, buzzGain, shineGain, filter, gain, output], time + length + 0.08);
+  }
+
+  function playLightningChainSound(fromX, fromZ, toX, toZ, index, total) {
+    if (!audioState.enabled) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+    total = Math.max(1, Math.floor(Number(total) || 1));
+    index = Math.max(0, Math.floor(Number(index) || 0));
+    var player = state.player;
+    var centerX = (fromX + toX) * 0.5;
+    var centerZ = (fromZ + toZ) * 0.5;
+    var pan = player ? clamp((centerX - player.x) / 14, -0.7, 0.7) : 0;
+    var distance = Math.hypot(toX - fromX, toZ - fromZ);
+    var chainProgress = total <= 1 ? 0 : index / (total - 1);
+    var time = ctx.currentTime + index * 0.038;
+    var countBoost = clamp(total / 4, 0.65, 1.35);
+    var falloff = 1 - chainProgress * 0.28;
+    var level = countBoost * falloff;
+    var pitch = 1640 + index * 310 + clamp(distance, 0, 16) * 22;
+
+    playGunshotNoiseLayer(time, pan, 0.2 * level, 1850, 11800, 1.05, 0.001, 0.048, rand(0.22, 0.7));
+    playGunshotNoiseLayer(time + 0.01, -pan * 0.45, 0.105 * level, 680, 6200, 0.82, 0.002, 0.072, rand(0.36, 0.78));
+    playElectricToneBurst(time + 0.004, pan, 0.05 * level, pitch, 0.085, 1.7 + chainProgress * 0.35);
+    if (total > 2 && index > 0) {
+      playElectricToneBurst(time + 0.026, pan * 0.5, 0.022 * level, pitch * 1.8, 0.045, 1.2);
+    }
+  }
+
+  function playRifleLeverAction(time, pan, level) {
+    playWinchesterLeverThunk(time, pan - 0.06, 0.066 * level, 315, 0.06);
+    playWinchesterBoltSlide(time + 0.048, pan + 0.04, 0.075 * level, 0.086);
+    playWinchesterMetalLatch(time + 0.118, pan - 0.03, 0.066 * level, 1850, 0.038);
+    playWinchesterLeverThunk(time + 0.156, pan + 0.05, 0.058 * level, 430, 0.052);
+    playWinchesterMetalLatch(time + 0.212, pan + 0.02, 0.052 * level, 2720, 0.03);
+  }
+
+  function playWinchesterLeverThunk(time, pan, level, freq, length) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.055, 0.038, 0.082);
+    var body = ctx.createOscillator();
+    var latch = ctx.createOscillator();
+    var bodyGain = ctx.createGain();
+    var latchGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    body.type = "triangle";
+    latch.type = "square";
+    body.frequency.setValueAtTime(freq, time);
+    body.frequency.exponentialRampToValueAtTime(Math.max(115, freq * 0.42), time + length);
+    latch.frequency.setValueAtTime(freq * 2.6, time + 0.004);
+    latch.frequency.exponentialRampToValueAtTime(Math.max(220, freq * 1.18), time + length * 0.75);
+    bodyGain.gain.value = 0.72;
+    latchGain.gain.value = 0.12;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(Math.max(430, freq * 1.45), time);
+    filter.Q.value = 1.02;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    body.connect(bodyGain);
+    latch.connect(latchGain);
+    bodyGain.connect(filter);
+    latchGain.connect(filter);
+    filter.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    body.start(time);
+    latch.start(time + 0.004);
+    body.stop(time + length + 0.024);
+    latch.stop(time + length + 0.024);
+    scheduleAudioDisconnect([body, latch, bodyGain, latchGain, filter, gain, output], time + length + 0.09);
+  }
+
+  function playWinchesterBoltSlide(time, pan, level, length) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    length = clamp(Number(length) || 0.08, 0.055, 0.11);
+    var src = ctx.createBufferSource();
+    var high = ctx.createBiquadFilter();
+    var low = ctx.createBiquadFilter();
+    var tone = ctx.createOscillator();
+    var toneGain = ctx.createGain();
+    var noiseGain = ctx.createGain();
+    var mix = ctx.createGain();
+    src.buffer = audioState.shotNoiseBuffer;
+    src.playbackRate.setValueAtTime(rand(1.28, 1.48), time);
+    high.type = "highpass";
+    high.frequency.setValueAtTime(860, time);
+    high.Q.value = 0.42;
+    low.type = "lowpass";
+    low.frequency.setValueAtTime(4200, time);
+    low.Q.value = 1.1;
+    tone.type = "triangle";
+    tone.frequency.setValueAtTime(920, time + 0.003);
+    tone.frequency.exponentialRampToValueAtTime(540, time + length);
+    toneGain.gain.value = 0.32;
+    noiseGain.gain.value = 0.72;
+    mix.gain.setValueAtTime(0.0001, time);
+    mix.gain.linearRampToValueAtTime(level, time + 0.007);
+    mix.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    src.connect(high);
+    high.connect(low);
+    low.connect(noiseGain);
+    tone.connect(toneGain);
+    noiseGain.connect(mix);
+    toneGain.connect(mix);
+    var output = connectSfxOutput(mix, pan || 0);
+    src.start(time, rand(0.42, 0.72));
+    tone.start(time + 0.003);
+    src.stop(time + length + 0.035);
+    tone.stop(time + length + 0.03);
+    scheduleAudioDisconnect([src, high, low, tone, toneGain, noiseGain, mix, output], time + length + 0.12);
+  }
+
+  function playWinchesterMetalLatch(time, pan, level, freq, length) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.034, 0.022, 0.052);
+    var click = ctx.createOscillator();
+    var ping = ctx.createOscillator();
+    var clickGain = ctx.createGain();
+    var pingGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    click.type = "triangle";
+    ping.type = "sine";
+    click.frequency.setValueAtTime(freq, time);
+    click.frequency.exponentialRampToValueAtTime(Math.max(260, freq * 0.58), time + length);
+    ping.frequency.setValueAtTime(freq * rand(1.85, 2.18), time + 0.001);
+    ping.frequency.exponentialRampToValueAtTime(freq * rand(1.05, 1.22), time + length * 0.86);
+    clickGain.gain.value = 0.88;
+    pingGain.gain.value = 0.18;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(Math.max(760, freq * 0.8), time);
+    filter.Q.value = 1.35;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.0015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    click.connect(clickGain);
+    ping.connect(pingGain);
+    clickGain.connect(filter);
+    pingGain.connect(filter);
+    filter.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    click.start(time);
+    ping.start(time + 0.001);
+    click.stop(time + length + 0.02);
+    ping.stop(time + length + 0.02);
+    scheduleAudioDisconnect([click, ping, clickGain, pingGain, filter, gain, output], time + length + 0.08);
   }
 
   function playZombieHitSound(x, z, damage, source) {
@@ -5872,6 +6358,8 @@
     }
 
     if (state.mode !== "playing") {
+      updateAmmoCratePointer(dt);
+      updateMobileAimTargetMarker(dt);
       updateParticles(dt);
       updateVisualEffects(dt);
       return;
@@ -5882,6 +6370,8 @@
     updatePlayer(dt);
     updateXpOrbs(dt);
     updateAmmoCrates(dt);
+    updateAmmoCratePointer(dt);
+    updateMobileAimTargetMarker(dt);
     updateSpawning(dt);
     updateRifleTraps(dt);
     updateEnemies(dt);
@@ -6255,15 +6745,17 @@
     if (keys.KeyS || keys.ArrowDown) mz += 1;
     if (keys.KeyA || keys.ArrowLeft) mx -= 1;
     if (keys.KeyD || keys.ArrowRight) mx += 1;
-    mx += touchMove.x;
-    mz += touchMove.z;
+    var touchVector = getTouchMoveVector();
+    mx += touchVector.x;
+    mz += touchVector.z;
     var len = Math.hypot(mx, mz);
     if (len > 0) {
       mx /= len;
       mz /= len;
-      if (touchMove.active && Math.hypot(touchMove.x, touchMove.z) > 0.18) {
-        lastMobileAim.x = touchMove.x / Math.hypot(touchMove.x, touchMove.z);
-        lastMobileAim.z = touchMove.z / Math.hypot(touchMove.x, touchMove.z);
+      var touchLen = Math.hypot(touchVector.x, touchVector.z);
+      if (touchLen > 0.18) {
+        lastMobileAim.x = touchVector.x / touchLen;
+        lastMobileAim.z = touchVector.z / touchLen;
       }
       p.x += mx * p.speed * dt;
       p.z += mz * p.speed * dt;
@@ -6281,7 +6773,7 @@
     updateDuelistFocus(dt, p.moveAmount);
     p.group.position.set(p.x, 0, p.z);
 
-    if ((pointerDown || touchFire.active) && p.cooldown <= 0) shoot();
+    if ((pointerDown || touchFire.active || mobileFieldFire.active) && p.cooldown <= 0) shoot();
   }
 
   function updateDuelistFocus(dt, moveAmount) {
@@ -6320,6 +6812,219 @@
         collectAmmoCrate(i);
       }
     }
+  }
+
+  function ensureAmmoCratePointer() {
+    if (ammoCratePointer && ammoCratePointer.parent) return ammoCratePointer;
+    ammoCratePointer = createAmmoCratePointer();
+    dynamicRoot.add(ammoCratePointer);
+    return ammoCratePointer;
+  }
+
+  function createAmmoCratePointer() {
+    var group = new THREE.Group();
+    group.name = "ammo crate offscreen pointer";
+    group.visible = false;
+    group.userData.alpha = 0;
+    group.userData.angle = 0;
+    group.userData.targetScale = 1;
+    group.userData.target = null;
+    group.userData.faders = [];
+
+    var glowMat = mats.ammoCratePointerGlow.clone();
+    var glow = new THREE.Mesh(getSharedGeometry("ammo-crate-pointer-glow", function () {
+      return new THREE.RingGeometry(0.86, 1.24, 54);
+    }), glowMat);
+    glow.userData.disposeGeometry = false;
+    glow.userData.disposeMaterial = true;
+    glow.userData.baseOpacity = glowMat.opacity;
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = -0.09;
+    glow.renderOrder = 30;
+    glow.castShadow = false;
+    glow.receiveShadow = false;
+    group.add(glow);
+
+    var arrowGeometry = getSharedGeometry("ammo-crate-pointer-arrow-shape", function () {
+      var shape = new THREE.Shape();
+      shape.moveTo(-0.34, -0.94);
+      shape.lineTo(0.34, -0.94);
+      shape.lineTo(0.34, 0.18);
+      shape.lineTo(0.78, 0.18);
+      shape.lineTo(0, 1.2);
+      shape.lineTo(-0.78, 0.18);
+      shape.lineTo(-0.34, 0.18);
+      shape.lineTo(-0.34, -0.94);
+      return new THREE.ShapeGeometry(shape);
+    });
+
+    var outlineMat = mats.ammoCratePointerOutline.clone();
+    var outline = new THREE.Mesh(arrowGeometry, outlineMat);
+    outline.userData.disposeGeometry = false;
+    outline.userData.disposeMaterial = true;
+    outline.userData.baseOpacity = outlineMat.opacity;
+    outline.rotation.x = Math.PI / 2;
+    outline.position.y = -0.02;
+    outline.scale.setScalar(1.16);
+    outline.renderOrder = 31;
+    outline.castShadow = false;
+    outline.receiveShadow = false;
+    group.add(outline);
+
+    var arrowMat = mats.ammoCratePointer.clone();
+    var arrow = new THREE.Mesh(arrowGeometry, arrowMat);
+    arrow.userData.disposeGeometry = false;
+    arrow.userData.disposeMaterial = true;
+    arrow.userData.baseOpacity = arrowMat.opacity;
+    arrow.rotation.x = Math.PI / 2;
+    arrow.position.y = 0.04;
+    arrow.renderOrder = 32;
+    arrow.castShadow = false;
+    arrow.receiveShadow = false;
+    group.add(arrow);
+
+    var ridgeMat = mats.ammoCratePointerGlow.clone();
+    var ridge = addSharedBox(group, 0.13, 0.04, 1.2, ridgeMat, 0, 0.1, -0.18);
+    ridge.userData.disposeMaterial = true;
+    ridge.userData.baseOpacity = ridgeMat.opacity;
+    ridge.renderOrder = 33;
+    ridge.castShadow = false;
+    ridge.receiveShadow = false;
+
+    group.traverse(function (child) {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.userData.noDebris = true;
+      child.renderOrder = child.renderOrder || 31;
+      if (child.material && child.material.opacity != null) {
+        if (child.userData.baseOpacity == null) child.userData.baseOpacity = child.material.opacity;
+        group.userData.faders.push(child);
+      }
+    });
+    setAmmoCratePointerOpacity(group, 0);
+    return group;
+  }
+
+  function updateAmmoCratePointer(dt) {
+    var pointer = ammoCratePointer;
+    if (state.mode !== "playing" || !state.player) {
+      if (pointer) fadeAmmoCratePointer(pointer, null, dt);
+      return;
+    }
+
+    pointer = ensureAmmoCratePointer();
+    fadeAmmoCratePointer(pointer, findAmmoCratePointerTarget(), dt);
+  }
+
+  function fadeAmmoCratePointer(pointer, target, dt) {
+    if (!pointer) return;
+    var currentAlpha = pointer.userData.alpha || 0;
+    var targetAlpha = target ? 1 : 0;
+    var alpha = currentAlpha + (targetAlpha - currentAlpha) * Math.min(1, dt * AMMO_CRATE_POINTER_FADE_SPEED);
+    if (!target && alpha < 0.025) alpha = 0;
+    pointer.userData.alpha = alpha;
+
+    if (target || alpha > 0) {
+      updateAmmoCratePointerTransform(pointer, target);
+      pointer.visible = true;
+    } else {
+      pointer.visible = false;
+    }
+
+    pointer.userData.target = target
+      ? {
+          x: target.crate.x,
+          z: target.crate.z,
+          distance: target.distance,
+          mini: !!target.crate.mini,
+        }
+      : null;
+    setAmmoCratePointerOpacity(pointer, alpha);
+  }
+
+  function updateAmmoCratePointerTransform(pointer, target) {
+    var p = state.player;
+    if (!p) return;
+    var angle = target ? Math.atan2(target.dx, target.dz) : pointer.userData.angle || 0;
+    var nx = Math.sin(angle);
+    var nz = Math.cos(angle);
+    var bob = Math.sin(state.time * 5.2) * 0.09 + Math.sin(state.time * 2.7) * 0.035;
+    var pulse = 1 + Math.sin(state.time * 7.6) * 0.035;
+
+    pointer.userData.angle = angle;
+    if (target) {
+      pointer.userData.targetScale = 0.88 + clamp(target.distance / AMMO_CRATE_POINTER_RANGE, 0, 1) * 0.2;
+    }
+    pointer.position.set(
+      p.x + nx * AMMO_CRATE_POINTER_OFFSET,
+      AMMO_CRATE_POINTER_HEIGHT + bob,
+      p.z + nz * AMMO_CRATE_POINTER_OFFSET
+    );
+    pointer.rotation.set(0, angle, 0);
+    pointer.scale.setScalar((pointer.userData.targetScale || 1) * pulse);
+  }
+
+  function setAmmoCratePointerOpacity(pointer, alpha) {
+    var faders = pointer && pointer.userData ? pointer.userData.faders || [] : [];
+    for (var i = 0; i < faders.length; i++) {
+      var mesh = faders[i];
+      if (mesh.material && mesh.material.opacity != null) {
+        mesh.material.opacity = (mesh.userData.baseOpacity == null ? 1 : mesh.userData.baseOpacity) * alpha;
+      }
+    }
+  }
+
+  function findAmmoCratePointerTarget() {
+    if (!state.player || !state.ammoCrates.length) return null;
+    var p = state.player;
+    var visibleGround = getCurrentVisibleGroundRect();
+    var best = null;
+    var bestDist = Infinity;
+    for (var i = 0; i < state.ammoCrates.length; i++) {
+      var crate = state.ammoCrates[i];
+      var dx = crate.x - p.x;
+      var dz = crate.z - p.z;
+      var dist = Math.hypot(dx, dz);
+      if (dist > AMMO_CRATE_POINTER_RANGE) continue;
+      if (!pointOutsideVisibleGround(crate.x, crate.z, AMMO_CRATE_POINTER_VIEW_PAD, visibleGround)) continue;
+      if (dist < bestDist) {
+        best = {
+          crate: crate,
+          dx: dx,
+          dz: dz,
+          distance: dist,
+        };
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  function getAmmoCratePointerDiagnostics() {
+    var pointer = ammoCratePointer;
+    var alpha = pointer && pointer.userData ? pointer.userData.alpha || 0 : 0;
+    var target = pointer && pointer.userData ? pointer.userData.target : null;
+    var player = state.player;
+    var pointerDistance = pointer && player ? Math.hypot(pointer.position.x - player.x, pointer.position.z - player.z) : 0;
+    return {
+      visible: !!(pointer && pointer.visible && alpha > 0.05),
+      alpha: Number(alpha.toFixed(3)),
+      angle: pointer && pointer.userData ? Number((pointer.userData.angle || 0).toFixed(3)) : 0,
+      x: pointer ? Number(pointer.position.x.toFixed(2)) : 0,
+      y: pointer ? Number(pointer.position.y.toFixed(2)) : 0,
+      z: pointer ? Number(pointer.position.z.toFixed(2)) : 0,
+      distanceFromPlayer: Number(pointerDistance.toFixed(2)),
+      range: AMMO_CRATE_POINTER_RANGE,
+      target: target
+        ? {
+            x: Number(target.x.toFixed(2)),
+            z: Number(target.z.toFixed(2)),
+            distance: Number(target.distance.toFixed(2)),
+            mini: !!target.mini,
+          }
+        : null,
+    };
   }
 
   function spawnAmmoCrate() {
@@ -6484,7 +7189,10 @@
 
   function updateAim() {
     var p = state.player;
-    if (touchFire.active || (touchMove.active && Math.hypot(touchMove.x, touchMove.z) > 0.18)) {
+    var touchVector = getTouchMoveVector();
+    if (mobileAimTarget.active) {
+      applyMobileAimTarget();
+    } else if (touchFire.active || Math.hypot(touchVector.x, touchVector.z) > 0.18) {
       updateMobileAimTarget(p);
     } else {
       refreshPointerWorldFromFollow(p);
@@ -6494,6 +7202,11 @@
     if (Math.hypot(dx, dz) < 0.001) dz = 1;
     p.aimAngle = Math.atan2(dx, dz);
     p.group.rotation.y = p.aimAngle;
+  }
+
+  function applyMobileAimTarget() {
+    state.pointerWorld.x = mobileAimTarget.x;
+    state.pointerWorld.z = mobileAimTarget.z;
   }
 
   function updateMobileAimTarget(player) {
@@ -6511,13 +7224,124 @@
       return;
     }
 
-    var moveLen = Math.hypot(touchMove.x, touchMove.z);
+    var touchVector = getTouchMoveVector();
+    var moveLen = Math.hypot(touchVector.x, touchVector.z);
     if (moveLen > 0.18) {
-      lastMobileAim.x = touchMove.x / moveLen;
-      lastMobileAim.z = touchMove.z / moveLen;
+      lastMobileAim.x = touchVector.x / moveLen;
+      lastMobileAim.z = touchVector.z / moveLen;
     }
     state.pointerWorld.x = player.x + lastMobileAim.x * 7;
     state.pointerWorld.z = player.z + lastMobileAim.z * 7;
+  }
+
+  function setMobileAimTargetFromClient(clientX, clientY) {
+    if (!state.player || state.mode !== "playing") return false;
+    updatePointerFromClient(clientX, clientY);
+    mobileAimTarget.active = true;
+    mobileAimTarget.x = state.pointerWorld.x;
+    mobileAimTarget.z = state.pointerWorld.z;
+    applyMobileAimTarget();
+    ensureMobileAimTargetMarker();
+    updateMobileAimTargetMarker(0);
+    return true;
+  }
+
+  function clearMobileAimTarget() {
+    mobileAimTarget.active = false;
+    if (mobileAimTarget.marker) mobileAimTarget.marker.visible = false;
+  }
+
+  function ensureMobileAimTargetMarker() {
+    if (mobileAimTarget.marker && mobileAimTarget.marker.parent) return mobileAimTarget.marker;
+    mobileAimTarget.marker = createMobileAimTargetMarker();
+    dynamicRoot.add(mobileAimTarget.marker);
+    return mobileAimTarget.marker;
+  }
+
+  function createMobileAimTargetMarker() {
+    var group = new THREE.Group();
+    group.name = "mobile manual aim target";
+    group.visible = false;
+    group.userData.faders = [];
+
+    var glowMat = mats.mobileAimTargetGlow.clone();
+    var glow = new THREE.Mesh(getSharedGeometry("mobile-aim-target-glow", function () {
+      return new THREE.RingGeometry(0.74, 1.02, 48);
+    }), glowMat);
+    glow.userData.disposeGeometry = false;
+    glow.userData.disposeMaterial = true;
+    glow.userData.baseOpacity = glowMat.opacity;
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.y = 0.05;
+    glow.renderOrder = 38;
+    glow.castShadow = false;
+    glow.receiveShadow = false;
+    group.add(glow);
+
+    var ringMat = mats.mobileAimTarget.clone();
+    var ring = new THREE.Mesh(getSharedGeometry("mobile-aim-target-ring", function () {
+      return new THREE.RingGeometry(0.38, 0.5, 36);
+    }), ringMat);
+    ring.userData.disposeGeometry = false;
+    ring.userData.disposeMaterial = true;
+    ring.userData.baseOpacity = ringMat.opacity;
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.08;
+    ring.renderOrder = 39;
+    ring.castShadow = false;
+    ring.receiveShadow = false;
+    group.add(ring);
+
+    var crossMat = mats.mobileAimTarget.clone();
+    var crossA = addSharedBox(group, 1.18, 0.05, 0.1, crossMat, 0, 0.1, 0);
+    var crossB = addSharedBox(group, 0.1, 0.05, 1.18, crossMat, 0, 0.1, 0);
+    crossA.userData.disposeMaterial = true;
+    crossB.userData.disposeMaterial = false;
+
+    group.traverse(function (child) {
+      if (!child.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      child.userData.noDebris = true;
+      child.renderOrder = child.renderOrder || 39;
+      if (child.material && child.material.opacity != null) {
+        if (child.userData.baseOpacity == null) child.userData.baseOpacity = child.material.opacity;
+        group.userData.faders.push(child);
+      }
+    });
+    return group;
+  }
+
+  function updateMobileAimTargetMarker(dt) {
+    var marker = mobileAimTarget.marker;
+    if (!marker && mobileAimTarget.active) marker = ensureMobileAimTargetMarker();
+    if (!marker) return;
+    if (!mobileAimTarget.active || state.mode !== "playing") {
+      marker.visible = false;
+      return;
+    }
+
+    var pulse = 1 + Math.sin(state.time * 7.4) * 0.07;
+    marker.visible = true;
+    marker.position.set(mobileAimTarget.x, 0, mobileAimTarget.z);
+    marker.rotation.y += (dt || 0) * 1.2;
+    marker.scale.setScalar(pulse);
+    var faders = marker.userData.faders || [];
+    for (var i = 0; i < faders.length; i++) {
+      var mesh = faders[i];
+      if (mesh.material && mesh.material.opacity != null) {
+        mesh.material.opacity = (mesh.userData.baseOpacity == null ? 1 : mesh.userData.baseOpacity) * (0.82 + Math.sin(state.time * 5.6 + i) * 0.12);
+      }
+    }
+  }
+
+  function getMobileAimTargetDiagnostics() {
+    return {
+      active: !!mobileAimTarget.active,
+      x: Number(mobileAimTarget.x.toFixed(2)),
+      z: Number(mobileAimTarget.z.toFixed(2)),
+      markerVisible: !!(mobileAimTarget.marker && mobileAimTarget.marker.visible),
+    };
   }
 
   function findNearestEnemy(x, z, maxDistance) {
@@ -6696,6 +7520,7 @@
     addLightFlash(start.x, start.y, start.z, weapon.id === "launcher" ? 0xff7a24 : 0xffd36b, weapon.id === "launcher" ? 3.2 : 1.7, weapon.id === "launcher" ? 8 : 5, weapon.id === "launcher" ? 0.16 : 0.08);
     addSmokePuff(start.x - dir.x * 0.18, start.y, start.z - dir.z * 0.18, weapon.id === "launcher" ? 0.55 : 0.28, weapon.id === "launcher" ? 0.48 : 0.28);
     if (weapon.id === "revolver") playRevolverShotSound(start, dir, muzzleSide, bigIronShot);
+    if (weapon.id === "rifle") playRifleShotSound(start, dir, rifleChainLightning);
 
     var particleCount = weapon.id === "launcher" ? 10 : weapon.id === "rifle" ? 4 : 6;
     for (var i = 0; i < particleCount; i++) {
@@ -9454,23 +10279,31 @@
   function triggerRifleChainLightning(b, hit) {
     var targetLimit = Math.max(1, b.lightningTargets || getRifleLightningTargetCount());
     var targets = [hit];
+    var chainX = hit.x;
+    var chainZ = hit.z;
+    while (targets.length < targetLimit) {
+      var next = findNextLightningTarget(targets, chainX, chainZ, 16);
+      if (!next) break;
+      targets.push(next);
+      chainX = next.x;
+      chainZ = next.z;
+    }
+
     var prevX = b.x;
     var prevZ = b.z;
     addLightFlash(hit.x, 1.45, hit.z, 0x86f3ff, 3.4, 8.5, 0.18);
     addShockwave(hit.x, hit.z, 1.8, 0.28, 0x86f3ff);
 
-    for (var i = 0; i < targetLimit; i++) {
+    for (var i = 0; i < targets.length; i++) {
       var target = targets[i];
       if (!target) break;
       addLightningBolt(prevX, prevZ, target.x, target.z);
+      playLightningChainSound(prevX, prevZ, target.x, target.z, i, targets.length);
       if (state.enemies.indexOf(target) !== -1) {
         damageEnemy(target, getRifleLightningDamage(), target.x, target.z, { type: "rifleLightning" });
       }
       prevX = target.x;
       prevZ = target.z;
-      if (targets.length >= targetLimit) continue;
-      var next = findNextLightningTarget(targets, prevX, prevZ, 16);
-      if (next) targets.push(next);
     }
 
     state.rifleLightningStrikes += targets.length;
@@ -11240,23 +12073,69 @@
   function bindCanvasInput(canvas) {
     canvas.addEventListener("pointermove", handleCanvasPointerMove);
     canvas.addEventListener("pointerdown", handleCanvasPointerDown);
+    canvas.addEventListener("pointerup", handleCanvasPointerUp);
+    canvas.addEventListener("pointercancel", handleCanvasPointerUp);
+    canvas.addEventListener("lostpointercapture", handleCanvasPointerUp);
     canvas.addEventListener("contextmenu", handleCanvasContextMenu);
   }
 
   function handleCanvasPointerMove(event) {
+    if (mobileFieldFire.active && event.pointerId === mobileFieldFire.pointerId) {
+      event.preventDefault();
+      setMobileAimTargetFromClient(event.clientX, event.clientY);
+      return;
+    }
     if (state.mode === "menu") updateMenuPointerFromClient(event.clientX, event.clientY);
     updatePointerFromClient(event.clientX, event.clientY);
   }
 
   function handleCanvasPointerDown(event) {
     if (event.button !== 0) return;
+    if (state.mode === "playing" && isTouchPointerEvent(event)) {
+      event.preventDefault();
+      startMobileFieldFire(event);
+      pointerDown = false;
+      return;
+    }
     updatePointerFromClient(event.clientX, event.clientY);
     pointerDown = true;
     if (state.mode === "menu") startGame();
   }
 
+  function handleCanvasPointerUp(event) {
+    if (mobileFieldFire.active && (!event || event.pointerId === mobileFieldFire.pointerId)) {
+      endMobileFieldFire();
+    }
+  }
+
   function handleCanvasContextMenu(event) {
     event.preventDefault();
+  }
+
+  function isTouchPointerEvent(event) {
+    return event && event.pointerType === "touch";
+  }
+
+  function startMobileFieldFire(event) {
+    mobileFieldFire.active = true;
+    mobileFieldFire.pointerId = event.pointerId;
+    setMobileAimTargetFromClient(event.clientX, event.clientY);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch (err) {}
+    if (state.player) {
+      updateAim();
+      if (state.player.cooldown <= 0) {
+        shoot();
+        updateHud();
+      }
+    }
+  }
+
+  function endMobileFieldFire() {
+    mobileFieldFire.active = false;
+    mobileFieldFire.pointerId = null;
+    clearMobileAimTarget();
   }
 
   function bindMobileControls() {
@@ -11265,6 +12144,8 @@
         if (event.button !== 0 && event.pointerType !== "touch") return;
         event.preventDefault();
         event.stopPropagation();
+        stopTouchAutoRun(false);
+        clearMobileAimTarget();
         touchMove.active = true;
         touchMove.pointerId = event.pointerId;
         try {
@@ -11309,8 +12190,31 @@
     }
   }
 
+  function getTouchMoveVector() {
+    if (touchMove.active) {
+      return { x: touchMove.x, z: touchMove.z };
+    }
+    if (touchMove.autoRun) {
+      return { x: touchMove.autoX, z: touchMove.autoZ };
+    }
+    return { x: 0, z: 0 };
+  }
+
+  function getMoveStickMax() {
+    return Math.max(1, moveStick ? moveStick.getBoundingClientRect().width * 0.34 : 42);
+  }
+
+  function setMoveKnobOffset(x, y) {
+    if (!moveKnob) return;
+    moveKnob.style.transform = "translate(calc(-50% + " + x.toFixed(1) + "px), calc(-50% + " + y.toFixed(1) + "px))";
+  }
+
+  function centerMoveKnob() {
+    setMoveKnobOffset(0, 0);
+  }
+
   function updateTouchMove(clientX, clientY) {
-    var max = moveStick ? moveStick.getBoundingClientRect().width * 0.34 : 42;
+    var max = getMoveStickMax();
     var dx = clientX - touchMove.baseX;
     var dy = clientY - touchMove.baseY;
     var dist = Math.hypot(dx, dy);
@@ -11319,19 +12223,54 @@
     var ny = dist > 0.001 ? dy / dist : 0;
     touchMove.x = (nx * limited) / max;
     touchMove.z = (ny * limited) / max;
-    if (moveKnob) {
-      moveKnob.style.transform = "translate(calc(-50% + " + (nx * limited).toFixed(1) + "px), calc(-50% + " + (ny * limited).toFixed(1) + "px))";
-    }
+    if (moveStick) moveStick.classList.toggle("is-auto-run-ready", Math.hypot(touchMove.x, touchMove.z) >= MOBILE_AUTORUN_TRIGGER);
+    setMoveKnobOffset(nx * limited, ny * limited);
   }
 
   function endTouchMove(event) {
     if (!touchMove.active || (event && event.pointerId !== touchMove.pointerId)) return;
+    var releaseX = touchMove.x;
+    var releaseZ = touchMove.z;
+    var releaseLen = Math.hypot(releaseX, releaseZ);
+    var shouldAutoRun = !!event && event.type === "pointerup" && releaseLen >= MOBILE_AUTORUN_TRIGGER;
     touchMove.active = false;
     touchMove.pointerId = null;
     touchMove.x = 0;
     touchMove.z = 0;
-    if (moveKnob) moveKnob.style.transform = "translate(-50%, -50%)";
-    if (moveStick) moveStick.classList.remove("is-active");
+    if (moveStick) {
+      moveStick.classList.remove("is-active");
+      moveStick.classList.remove("is-auto-run-ready");
+    }
+    if (shouldAutoRun) {
+      startTouchAutoRun(releaseX, releaseZ);
+    } else {
+      stopTouchAutoRun(true);
+    }
+  }
+
+  function startTouchAutoRun(x, z) {
+    var len = Math.hypot(x, z);
+    if (len < 0.001) {
+      stopTouchAutoRun(true);
+      return;
+    }
+    touchMove.autoRun = true;
+    touchMove.autoX = x / len;
+    touchMove.autoZ = z / len;
+    if (moveStick) moveStick.classList.add("is-auto-run");
+    var max = getMoveStickMax() * MOBILE_AUTORUN_KNOB_SCALE;
+    setMoveKnobOffset(touchMove.autoX * max, touchMove.autoZ * max);
+  }
+
+  function stopTouchAutoRun(resetKnob) {
+    touchMove.autoRun = false;
+    touchMove.autoX = 0;
+    touchMove.autoZ = 0;
+    if (moveStick) {
+      moveStick.classList.remove("is-auto-run");
+      moveStick.classList.remove("is-auto-run-ready");
+    }
+    if (resetKnob !== false && !touchMove.active) centerMoveKnob();
   }
 
   function endTouchFire(event) {
@@ -11346,12 +12285,22 @@
     touchMove.pointerId = null;
     touchMove.x = 0;
     touchMove.z = 0;
+    touchMove.autoRun = false;
+    touchMove.autoX = 0;
+    touchMove.autoZ = 0;
     touchFire.active = false;
     touchFire.pointerId = null;
+    mobileFieldFire.active = false;
+    mobileFieldFire.pointerId = null;
     lastMobileAim.x = 0;
     lastMobileAim.z = -1;
-    if (moveKnob) moveKnob.style.transform = "translate(-50%, -50%)";
-    if (moveStick) moveStick.classList.remove("is-active");
+    clearMobileAimTarget();
+    centerMoveKnob();
+    if (moveStick) {
+      moveStick.classList.remove("is-active");
+      moveStick.classList.remove("is-auto-run");
+      moveStick.classList.remove("is-auto-run-ready");
+    }
     if (mobileFire) mobileFire.classList.remove("is-pressed");
     updateModeClass();
   }
@@ -11697,12 +12646,16 @@
       ammoHud.style.setProperty("--reload-progress", reloadProgressText);
       ammoHudCache.reloadProgress = reloadProgressText;
     }
+    var ammoWarning = getAmmoWarningLevel(ammo);
+    ammoHud.classList.toggle("is-low-ammo", ammoWarning === "low");
+    ammoHud.classList.toggle("is-critical-ammo", ammoWarning === "critical");
     if (ammoStatus) {
+      var remainingStatus = getAmmoRemainingStatusText(ammo, ammoWarning);
       var statusText = ammo.reloading
-        ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s"
+        ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s / " + remainingStatus
         : ammo.total <= 0
           ? "Empty"
-          : "LEFT " + ammo.total;
+          : remainingStatus;
       if (ammoHudCache.statusText !== statusText) {
         ammoStatus.textContent = statusText;
         ammoHudCache.statusText = statusText;
@@ -11729,6 +12682,20 @@
       ammoWeaponIcon.innerHTML = WEAPON_ICONS[weapon.id] || WEAPON_ICONS.revolver;
       currentAmmoIcon = weapon.id;
     }
+  }
+
+  function getAmmoWarningLevel(ammo) {
+    if (!ammo || ammo.total <= 0 || ammo.magazine <= 0) return "none";
+    if (ammo.total <= ammo.magazine) return "critical";
+    if (ammo.total <= ammo.magazine * 2) return "low";
+    return "none";
+  }
+
+  function getAmmoRemainingStatusText(ammo, warningLevel) {
+    if (!ammo || ammo.total <= 0) return "Empty";
+    if (warningLevel === "critical") return "LAST MAG / LEFT " + ammo.total;
+    if (warningLevel === "low") return "LOW AMMO / LEFT " + ammo.total;
+    return "LEFT " + ammo.total;
   }
 
   function render() {
@@ -13134,6 +14101,7 @@
         followOffsetX: Number(pointerInput.followOffsetX.toFixed(2)),
         followOffsetZ: Number(pointerInput.followOffsetZ.toFixed(2)),
       },
+      ammoCratePointer: getAmmoCratePointerDiagnostics(),
       minimap: {
         visible: state.mode === "playing",
         nearestAmmoCrates: getNearestAmmoCratesForMinimap(4).map(function (crate) {
@@ -13151,6 +14119,11 @@
         moveActive: touchMove.active,
         moveX: Number(touchMove.x.toFixed(2)),
         moveZ: Number(touchMove.z.toFixed(2)),
+        autoRun: !!touchMove.autoRun,
+        autoX: Number(touchMove.autoX.toFixed(2)),
+        autoZ: Number(touchMove.autoZ.toFixed(2)),
+        aimTarget: getMobileAimTargetDiagnostics(),
+        fieldFireActive: !!mobileFieldFire.active,
         fireActive: touchFire.active,
       },
       bullets: state.bullets.length,
@@ -13565,6 +14538,9 @@
       }
       return collectAmmoCrate(best);
     },
+    getAmmoCratePointerDiagnostics: function () {
+      return getAmmoCratePointerDiagnostics();
+    },
     setAmmo: function (id, current, reserve) {
       var weapon = WEAPONS[id] || WEAPONS.revolver;
       state.ammo[weapon.id] = clamp(Number(current) || 0, 0, getWeaponMagazine(weapon));
@@ -13639,6 +14615,9 @@
     },
     validateMapLayout: function () {
       return validateMapLayout();
+    },
+    getRoadSurfaceDiagnostics: function () {
+      return getRoadSurfaceDiagnostics();
     },
     getRuinColliderDiagnostics: function () {
       return getRuinColliderDiagnostics();
