@@ -4140,6 +4140,7 @@
     }
     setIntroActive(false);
     unlockAudioFromGesture(true);
+    if (isRifleListenSceneRequested() && state.mode === "menu") startGame();
     return true;
   }
 
@@ -4240,18 +4241,18 @@
   }
 
   function createDryRifleShotBuffer(ctx) {
-    var length = Math.max(1, Math.floor(ctx.sampleRate * 0.18));
+    var length = Math.max(1, Math.floor(ctx.sampleRate * 0.12));
     var buffer = ctx.createBuffer(1, length, ctx.sampleRate);
     var data = buffer.getChannelData(0);
     var last = 0;
     for (var i = 0; i < length; i++) {
       var t = i / ctx.sampleRate;
-      var envelope = Math.exp(-t * 68);
-      var snapEnvelope = Math.exp(-t * 320);
+      var envelope = Math.exp(-t * 92);
+      var snapEnvelope = Math.exp(-t * 520);
       var white = Math.random() * 2 - 1;
-      var dry = white - last * 0.72;
+      var dry = white - last * 0.86;
       last = white;
-      data[i] = clamp(dry * envelope * 0.8 + white * snapEnvelope * 0.34, -1, 1);
+      data[i] = clamp(dry * envelope * 0.72 + white * snapEnvelope * 0.38, -1, 1);
     }
     return buffer;
   }
@@ -4866,11 +4867,8 @@
     var pan = clamp(aimPan, -0.68, 0.68);
     var level = chainLightning ? 1.04 : 1;
 
-    playWinchesterRifleReport(now, pan, 0.98 * level);
-    playWinchesterPressureHit(now + 0.003, pan, 0.58 * level);
-    playWinchesterMuzzleSnap(now + 0.006, pan, 0.09 * level);
+    playWinchesterPowerShot(now, pan, level);
     if (chainLightning) playRifleLightningShotCharge(now + 0.006, pan, level);
-    playRifleLeverAction(now + 0.19, pan, 1.04 * level);
   }
 
   function playRifleLightningShotCharge(time, pan, level) {
@@ -4882,131 +4880,86 @@
     playElectricToneBurst(time + 0.026, -pan * 0.6, 0.036 * level, 2380, 0.075, 1.15);
   }
 
-  function playWinchesterRifleReport(time, pan, level) {
+  function playWinchesterPowerShot(time, pan, level) {
     var ctx = audioState.ctx;
     if (!ctx || !audioState.rifleShotBuffer) return;
-    var muzzle = ctx.createBufferSource();
-    var pressure = ctx.createBufferSource();
-    var muzzleHigh = ctx.createBiquadFilter();
-    var muzzleLow = ctx.createBiquadFilter();
-    var pressureHigh = ctx.createBiquadFilter();
-    var pressureLow = ctx.createBiquadFilter();
+    var blast = ctx.createBufferSource();
+    var crack = ctx.createBufferSource();
+    var blastHigh = ctx.createBiquadFilter();
+    var blastLow = ctx.createBiquadFilter();
+    var crackHigh = ctx.createBiquadFilter();
+    var crackLow = ctx.createBiquadFilter();
     var presence = ctx.createBiquadFilter();
-    var body = ctx.createBiquadFilter();
+    var chest = ctx.createBiquadFilter();
+    var noiseGain = ctx.createGain();
+    var thump = ctx.createOscillator();
+    var thumpFilter = ctx.createBiquadFilter();
+    var thumpGain = ctx.createGain();
     var mix = ctx.createGain();
-    muzzle.buffer = audioState.rifleShotBuffer;
-    pressure.buffer = audioState.rifleShotBuffer;
-    muzzle.playbackRate.setValueAtTime(rand(1.06, 1.16), time);
-    pressure.playbackRate.setValueAtTime(rand(0.9, 0.98), time);
-    muzzleHigh.type = "highpass";
-    muzzleHigh.frequency.setValueAtTime(720, time);
-    muzzleHigh.Q.value = 0.42;
-    muzzleLow.type = "lowpass";
-    muzzleLow.frequency.setValueAtTime(9600, time);
-    muzzleLow.Q.value = 0.24;
-    pressureHigh.type = "highpass";
-    pressureHigh.frequency.setValueAtTime(145, time);
-    pressureHigh.Q.value = 0.28;
-    pressureLow.type = "lowpass";
-    pressureLow.frequency.setValueAtTime(2450, time);
-    pressureLow.Q.value = 0.24;
+    blast.buffer = audioState.rifleShotBuffer;
+    crack.buffer = audioState.rifleShotBuffer;
+    blast.playbackRate.setValueAtTime(rand(0.92, 1.02), time);
+    crack.playbackRate.setValueAtTime(rand(1.28, 1.44), time);
+    blastHigh.type = "highpass";
+    blastHigh.frequency.setValueAtTime(105, time);
+    blastHigh.Q.value = 0.25;
+    blastLow.type = "lowpass";
+    blastLow.frequency.setValueAtTime(5200, time);
+    blastLow.frequency.exponentialRampToValueAtTime(2400, time + 0.055);
+    blastLow.Q.value = 0.2;
+    crackHigh.type = "highpass";
+    crackHigh.frequency.setValueAtTime(1850, time);
+    crackHigh.Q.value = 0.5;
+    crackLow.type = "lowpass";
+    crackLow.frequency.setValueAtTime(10800, time);
+    crackLow.Q.value = 0.24;
     presence.type = "peaking";
-    presence.frequency.setValueAtTime(2350, time);
-    presence.Q.value = 0.78;
-    presence.gain.value = 4.4;
-    body.type = "peaking";
-    body.frequency.setValueAtTime(430, time);
-    body.Q.value = 0.74;
-    body.gain.value = 2.7;
+    presence.frequency.setValueAtTime(2100, time);
+    presence.Q.value = 0.82;
+    presence.gain.value = 4.8;
+    chest.type = "peaking";
+    chest.frequency.setValueAtTime(255, time);
+    chest.Q.value = 0.72;
+    chest.gain.value = 5.4;
+    noiseGain.gain.setValueAtTime(0.0001, time);
+    noiseGain.gain.linearRampToValueAtTime(1.08 * level, time + 0.0007);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.082);
+    thump.type = "sine";
+    thump.frequency.setValueAtTime(98, time);
+    thump.frequency.exponentialRampToValueAtTime(46, time + 0.075);
+    thumpFilter.type = "lowpass";
+    thumpFilter.frequency.setValueAtTime(190, time);
+    thumpFilter.frequency.exponentialRampToValueAtTime(82, time + 0.09);
+    thumpFilter.Q.value = 0.22;
+    thumpGain.gain.setValueAtTime(0.0001, time);
+    thumpGain.gain.linearRampToValueAtTime(0.62 * level, time + 0.0025);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.105);
     mix.gain.setValueAtTime(0.0001, time);
-    mix.gain.linearRampToValueAtTime(level, time + 0.0007);
-    mix.gain.exponentialRampToValueAtTime(0.0001, time + 0.072);
-    muzzle.connect(muzzleHigh);
-    muzzleHigh.connect(muzzleLow);
-    muzzleLow.connect(presence);
-    pressure.connect(pressureHigh);
-    pressureHigh.connect(pressureLow);
-    pressureLow.connect(body);
-    body.connect(presence);
-    presence.connect(mix);
+    mix.gain.linearRampToValueAtTime(1, time + 0.001);
+    mix.gain.exponentialRampToValueAtTime(0.0001, time + 0.12);
+    blast.connect(blastHigh);
+    blastHigh.connect(blastLow);
+    blastLow.connect(chest);
+    crack.connect(crackHigh);
+    crackHigh.connect(crackLow);
+    crackLow.connect(presence);
+    chest.connect(presence);
+    presence.connect(noiseGain);
+    noiseGain.connect(mix);
+    thump.connect(thumpFilter);
+    thumpFilter.connect(thumpGain);
+    thumpGain.connect(mix);
     var output = connectSfxOutput(mix, pan || 0);
-    muzzle.start(time, rand(0.001, 0.026));
-    pressure.start(time + 0.001, rand(0.03, 0.07));
-    muzzle.stop(time + 0.085);
-    pressure.stop(time + 0.09);
-    scheduleAudioDisconnect([muzzle, pressure, muzzleHigh, muzzleLow, pressureHigh, pressureLow, presence, body, mix, output], time + 0.15);
-  }
-
-  function playWinchesterPressureHit(time, pan, level) {
-    var ctx = audioState.ctx;
-    if (!ctx) return;
-    var chest = ctx.createOscillator();
-    var wood = ctx.createOscillator();
-    var chestGain = ctx.createGain();
-    var woodGain = ctx.createGain();
-    var filter = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    chest.type = "sine";
-    wood.type = "triangle";
-    chest.frequency.setValueAtTime(132, time);
-    chest.frequency.exponentialRampToValueAtTime(86, time + 0.052);
-    wood.frequency.setValueAtTime(235, time + 0.002);
-    wood.frequency.exponentialRampToValueAtTime(142, time + 0.046);
-    chestGain.gain.value = 0.92;
-    woodGain.gain.value = 0.22;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(170, time);
-    filter.Q.value = 0.86;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.002);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.078);
-    chest.connect(chestGain);
-    wood.connect(woodGain);
-    chestGain.connect(filter);
-    woodGain.connect(filter);
-    filter.connect(gain);
-    var output = connectSfxOutput(gain, pan || 0);
-    chest.start(time);
-    wood.start(time + 0.002);
-    chest.stop(time + 0.1);
-    wood.stop(time + 0.082);
-    scheduleAudioDisconnect([chest, wood, chestGain, woodGain, filter, gain, output], time + 0.14);
-  }
-
-  function playWinchesterMuzzleSnap(time, pan, level) {
-    var ctx = audioState.ctx;
-    if (!ctx) return;
-    var snap = ctx.createOscillator();
-    var ring = ctx.createOscillator();
-    var snapGain = ctx.createGain();
-    var ringGain = ctx.createGain();
-    var filter = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    snap.type = "square";
-    ring.type = "triangle";
-    snap.frequency.setValueAtTime(1180, time);
-    snap.frequency.exponentialRampToValueAtTime(780, time + 0.018);
-    ring.frequency.setValueAtTime(2520, time + 0.001);
-    ring.frequency.exponentialRampToValueAtTime(1680, time + 0.024);
-    snapGain.gain.value = 0.18;
-    ringGain.gain.value = 0.16;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(1760, time);
-    filter.Q.value = 1.12;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.0015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.034);
-    snap.connect(snapGain);
-    ring.connect(ringGain);
-    snapGain.connect(filter);
-    ringGain.connect(filter);
-    filter.connect(gain);
-    var output = connectSfxOutput(gain, pan || 0);
-    snap.start(time);
-    ring.start(time + 0.001);
-    snap.stop(time + 0.04);
-    ring.stop(time + 0.04);
-    scheduleAudioDisconnect([snap, ring, snapGain, ringGain, filter, gain, output], time + 0.09);
+    blast.start(time, rand(0.004, 0.032));
+    crack.start(time, rand(0.001, 0.024));
+    thump.start(time);
+    blast.stop(time + 0.105);
+    crack.stop(time + 0.04);
+    thump.stop(time + 0.13);
+    scheduleAudioDisconnect(
+      [blast, crack, blastHigh, blastLow, crackHigh, crackLow, presence, chest, noiseGain, thump, thumpFilter, thumpGain, mix, output],
+      time + 0.18
+    );
   }
 
   function playElectricToneBurst(time, pan, level, freq, length, bend) {
@@ -5072,89 +5025,6 @@
     if (total > 2 && index > 0) {
       playElectricToneBurst(time + 0.026, pan * 0.5, 0.022 * level, pitch * 1.8, 0.045, 1.2);
     }
-  }
-
-  function playRifleLeverAction(time, pan, level) {
-    playWinchesterDryLeverClick(time, pan - 0.05, 0.074 * level, 740, 0.034);
-    playWinchesterDryBoltRack(time + 0.044, pan + 0.04, 0.08 * level, 0.07);
-    playWinchesterDryLeverClick(time + 0.112, pan - 0.03, 0.06 * level, 1080, 0.028);
-    playWinchesterDryBoltRack(time + 0.148, pan + 0.04, 0.052 * level, 0.052);
-    playWinchesterDryLeverClick(time + 0.206, pan + 0.02, 0.06 * level, 1900, 0.024);
-  }
-
-  function playWinchesterDryLeverClick(time, pan, level, freq, length) {
-    var ctx = audioState.ctx;
-    if (!ctx) return;
-    length = clamp(Number(length) || 0.03, 0.018, 0.048);
-    var click = ctx.createOscillator();
-    var ping = ctx.createOscillator();
-    var clickGain = ctx.createGain();
-    var pingGain = ctx.createGain();
-    var filter = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    click.type = "triangle";
-    ping.type = "square";
-    click.frequency.setValueAtTime(freq, time);
-    click.frequency.exponentialRampToValueAtTime(Math.max(360, freq * 0.64), time + length);
-    ping.frequency.setValueAtTime(freq * 1.74, time + 0.001);
-    ping.frequency.exponentialRampToValueAtTime(Math.max(620, freq * 1.08), time + length * 0.75);
-    clickGain.gain.value = 0.72;
-    pingGain.gain.value = 0.16;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(Math.max(780, freq * 1.1), time);
-    filter.Q.value = 1.05;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.0015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
-    click.connect(clickGain);
-    ping.connect(pingGain);
-    clickGain.connect(filter);
-    pingGain.connect(filter);
-    filter.connect(gain);
-    var output = connectSfxOutput(gain, pan || 0);
-    click.start(time);
-    ping.start(time + 0.001);
-    click.stop(time + length + 0.015);
-    ping.stop(time + length + 0.015);
-    scheduleAudioDisconnect([click, ping, clickGain, pingGain, filter, gain, output], time + length + 0.07);
-  }
-
-  function playWinchesterDryBoltRack(time, pan, level, length) {
-    var ctx = audioState.ctx;
-    if (!ctx) return;
-    length = clamp(Number(length) || 0.06, 0.038, 0.078);
-    var slide = ctx.createOscillator();
-    var lock = ctx.createOscillator();
-    var slideGain = ctx.createGain();
-    var lockGain = ctx.createGain();
-    var filter = ctx.createBiquadFilter();
-    var mix = ctx.createGain();
-    slide.type = "triangle";
-    lock.type = "square";
-    slide.frequency.setValueAtTime(1180, time + 0.002);
-    slide.frequency.exponentialRampToValueAtTime(760, time + length);
-    lock.frequency.setValueAtTime(1540, time + length * 0.42);
-    lock.frequency.exponentialRampToValueAtTime(980, time + length);
-    slideGain.gain.value = 0.28;
-    lockGain.gain.value = 0.12;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(980, time);
-    filter.frequency.exponentialRampToValueAtTime(760, time + length);
-    filter.Q.value = 1.0;
-    mix.gain.setValueAtTime(0.0001, time);
-    mix.gain.linearRampToValueAtTime(level, time + 0.004);
-    mix.gain.exponentialRampToValueAtTime(0.0001, time + length);
-    slide.connect(slideGain);
-    lock.connect(lockGain);
-    slideGain.connect(filter);
-    lockGain.connect(filter);
-    filter.connect(mix);
-    var output = connectSfxOutput(mix, pan || 0);
-    slide.start(time + 0.002);
-    lock.start(time + length * 0.42);
-    slide.stop(time + length + 0.02);
-    lock.stop(time + length + 0.018);
-    scheduleAudioDisconnect([slide, lock, slideGain, lockGain, filter, mix, output], time + length + 0.09);
   }
 
   function playZombieHitSound(x, z, damage, source) {
@@ -11937,6 +11807,7 @@
   function startGame() {
     lockLandscapeIfPossible();
     resetRun("playing");
+    if (isRifleListenSceneRequested()) setupRifleListenScene();
     setPanel(menu, false);
     setPanel(gameOverPanel, false);
     setPanel(revolverUpgradePanel, false);
@@ -11944,6 +11815,34 @@
     setPanel(launcherUpgradePanel, false);
     setPanel(levelUpPanel, false);
     updateModeClass();
+  }
+
+  function isRifleListenSceneRequested() {
+    var params = new URLSearchParams(window.location.search || "");
+    var value = (params.get("listen") || "").toLowerCase();
+    return value === "rifle" || value === "winchester";
+  }
+
+  function setupRifleListenScene() {
+    if (!state.player) return;
+    releaseAllEnemiesToPool();
+    state.spawnLeft = 0;
+    state.spawnTimer = 9999;
+    state.waveSuspended = true;
+    state.nextWaveTimer = 9999;
+    state.playerClass = "ranger";
+    state.classChoicePending = false;
+    state.classChoiceOffered = true;
+    grantWeapon("rifle", true);
+    state.ammo.rifle = getWeaponMagazine(WEAPONS.rifle);
+    state.ammoReserve.rifle = Math.max(state.ammoReserve.rifle || 0, 180);
+    state.reloadTimers.rifle = 0;
+    state.pointerWorld.x = state.player.x + 18;
+    state.pointerWorld.z = state.player.z;
+    pointerHit.set(state.pointerWorld.x, 0, state.pointerWorld.z);
+    updateAim();
+    updateHud();
+    render();
   }
 
   function bindInput() {
