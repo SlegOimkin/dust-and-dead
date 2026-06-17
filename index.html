@@ -33,21 +33,15 @@
       </div>
 
       <div id="minimap" class="minimap" aria-label="Minimap">
-        <div class="minimap-top">
-          <span>Map</span>
-          <span id="minimap-ammo-count">0</span>
-        </div>
-        <canvas id="minimap-canvas" class="minimap-canvas" width="176" height="128" aria-hidden="true"></canvas>
-      </div>
-
-      <div id="xp-hud" class="xp-hud" aria-label="Experience">
-        <div class="xp-hud__top">
-          <span>Level <b id="level-value">1</b></span>
-          <span>Experience</span>
-        </div>
-        <div class="xp-frame">
-          <div class="xp-meter" aria-hidden="true">
-            <div id="xp-fill" class="xp-fill"></div>
+        <div class="minimap-level-badge">Level <b id="level-value">1</b></div>
+        <div class="minimap-xp-frame" aria-hidden="true">
+          <div class="minimap-xp-inner">
+            <div class="minimap-top">
+              <span>Map</span>
+              <span id="minimap-ammo-count">0</span>
+            </div>
+            <canvas id="minimap-canvas" class="minimap-canvas" width="176" height="128" aria-hidden="true"></canvas>
+            <div id="xp-fill" class="minimap-xp-fill" aria-hidden="true"></div>
           </div>
         </div>
       </div>

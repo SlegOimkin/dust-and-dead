@@ -47,6 +47,7 @@
   var MAX_XP_ORBS = 90;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
   var MINI_AMMO_CRATE_PICKUP_SCALE = 1 / 3;
+  var SILVER_CACHE_KILLS_PER_DROP = 3;
   var XP_PICKUP_RADIUS = 1.1;
   var XP_ATTRACT_RADIUS = 7.5;
   var XP_ORB_SPEED = 8.2;
@@ -84,6 +85,7 @@
   var WAVE_LOW_REMAINING_DELAY = 10;
   var WAVE_HARD_LIMIT = 120;
   var WAVE_CLEAR_DELAY = 1.8;
+  var OBSTACLE_SPATIAL_CELL_SIZE = 12;
   var ZOMBIE_POOL_PREWARM = {
     walker: 64,
     runner: 34,
@@ -177,6 +179,7 @@
   var ammoReloadFill = document.getElementById("ammo-reload-fill");
   var ammoWeaponIcon = document.getElementById("ammo-weapon-icon");
   var ammoCartridgeRack = document.getElementById("ammo-cartridge-rack");
+  var minimapHud = document.getElementById("minimap");
   var minimapCanvas = document.getElementById("minimap-canvas");
   var minimapAmmoCount = document.getElementById("minimap-ammo-count");
   var minimapCtx = minimapCanvas ? minimapCanvas.getContext("2d") : null;
@@ -281,6 +284,15 @@
   var MAIN_TOWN_LAYOUT = MAIN_TOWNS[0].layout;
   var PLAYER_START = createPlayerStart();
   var obstacleRects = [];
+  var obstacleSpatialGrid = Object.create(null);
+  var obstacleSpatialGridKeys = [];
+  var obstacleSpatialQueryId = 1;
+  var obstacleSpatialStats = {
+    cellSize: OBSTACLE_SPATIAL_CELL_SIZE,
+    cellCount: 0,
+    maxBucketSize: 0,
+    occupants: 0,
+  };
   var mapFootprints = [];
   var microSettlementStats = [];
   var interestPointStats = [];
@@ -790,7 +802,7 @@
       id: "silverBullet",
       branch: "bigIron",
       title: "Silver Bullet",
-      description: "Last Big Iron round in the magazine is x3 damage, x1.5 size, x1.3 speed.",
+      description: "Last Big Iron round: x3 damage, x1.5 size, x1.3 speed.",
       symbol: "SIL",
       rank: "A",
       suit: "S",
@@ -800,7 +812,7 @@
       id: "silverCache",
       branch: "bigIron",
       title: "Silver Cache",
-      description: "Every 2nd Silver Bullet kill drops a mini ammo crate with 1/3 ammo.",
+      description: "Every 3rd Silver Bullet kill drops a 1/3-ammo mini crate.",
       symbol: "BOX",
       rank: "2",
       suit: "S",
@@ -6619,7 +6631,7 @@
   function updateAmmoCrates(dt) {
     state.ammoCrateTimer = Math.max(0, state.ammoCrateTimer - dt);
     if (state.ammoCrateTimer <= 0) {
-      if (state.ammoCrates.length < MAX_AMMO_CRATES) spawnAmmoCrate();
+      if (countStandardAmmoCrates() < MAX_AMMO_CRATES) spawnAmmoCrate();
       state.ammoCrateTimer = rand(16, 25);
     }
 
@@ -6640,6 +6652,14 @@
         collectAmmoCrate(i);
       }
     }
+  }
+
+  function countStandardAmmoCrates() {
+    var count = 0;
+    for (var i = 0; i < state.ammoCrates.length; i++) {
+      if (!state.ammoCrates[i].mini) count += 1;
+    }
+    return count;
   }
 
   function ensureAmmoCratePointer() {
@@ -7989,6 +8009,7 @@
       var cellZ = Math.floor(enemy.z / ZOMBIE_SPATIAL_CELL_SIZE);
       enemy.gridCellX = cellX;
       enemy.gridCellZ = cellZ;
+      enemy.spatialOrder = e;
       var key = cellX + ":" + cellZ;
       var bucket = zombieSpatialGrid[key];
       if (!bucket) {
@@ -8049,7 +8070,7 @@
   function updateEnemies(dt) {
     var p = state.player;
     var visibleGround = getCurrentVisibleGroundRect();
-    rebuildZombieSpatialGrid();
+    ensureZombieSpatialGridCurrent();
     for (var i = state.enemies.length - 1; i >= 0; i--) {
       var e = state.enemies[i];
       if (e.active === false) continue;
@@ -8110,7 +8131,7 @@
       }
       e.x += (moveX + sepX * 4.2) * dt;
       e.z += (moveZ + sepZ * 4.2) * dt;
-      resolveMoverPosition(e, e.radius, ENEMY_BOUNDS_EXTRA);
+      resolveMoverPosition(e, e.radius + 0.16, ENEMY_BOUNDS_EXTRA);
       var moved = Math.hypot(e.x - oldX, e.z - oldZ);
       updateZombieStuckState(e, moved, dist, dt);
       e.moveAmount += (clamp(moved / Math.max(0.001, enemySpeed * dt), 0, 1) - e.moveAmount) * Math.min(1, dt * 10);
@@ -9805,6 +9826,7 @@
   }
 
   function updateBullets(dt) {
+    if (state.bullets.length && state.enemies.length) ensureZombieSpatialGridCurrent();
     for (var i = state.bullets.length - 1; i >= 0; i--) {
       var b = state.bullets[i];
       b.age += dt;
@@ -9883,16 +9905,7 @@
 
       var hit = null;
       if (!(b.type === "launcher" && b.airburstLanding) && b.type !== "launcherFireShard") {
-        for (var j = 0; j < state.enemies.length; j++) {
-          var e = state.enemies[j];
-          if (b.piercing && b.piercedEnemies && b.piercedEnemies.indexOf(e) !== -1) continue;
-          if (b.hitEnemies && b.hitEnemies.indexOf(e) !== -1) continue;
-          var d = Math.hypot(b.x - e.x, b.z - e.z);
-          if (d < e.radius + b.hitRadius) {
-            hit = e;
-            break;
-          }
-        }
+        hit = findBulletHitTarget(b);
       }
 
       if (hit) {
@@ -10005,6 +10018,33 @@
     }
   }
 
+  function shouldBulletSkipEnemy(b, enemy) {
+    if (!enemy || enemy.active === false) return true;
+    if (b.piercing && b.piercedEnemies && b.piercedEnemies.indexOf(enemy) !== -1) return true;
+    if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) return true;
+    return false;
+  }
+
+  function getEnemySpatialOrder(enemy) {
+    return enemy && enemy.spatialOrder != null ? enemy.spatialOrder : state.enemies.indexOf(enemy);
+  }
+
+  function findBulletHitTarget(b) {
+    var hit = null;
+    var hitOrder = Infinity;
+    forEachEnemyNearCircle(b.x, b.z, b.hitRadius + 1.1, function (enemy) {
+      if (shouldBulletSkipEnemy(b, enemy)) return;
+      var d = Math.hypot(b.x - enemy.x, b.z - enemy.z);
+      if (d >= enemy.radius + b.hitRadius) return;
+      var order = getEnemySpatialOrder(enemy);
+      if (order < hitOrder) {
+        hitOrder = order;
+        hit = enemy;
+      }
+    }, true);
+    return hit;
+  }
+
   function applyBulletHoming(b, dt) {
     if (!b.homing || b.type !== "revolver") return;
     var target = findEnemyInBulletCone(b, 13.5, 0.78);
@@ -10024,21 +10064,21 @@
   function findEnemyInBulletCone(b, maxDistance, minDot) {
     var best = null;
     var bestScore = Infinity;
-    for (var i = 0; i < state.enemies.length; i++) {
-      var enemy = state.enemies[i];
-      if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) continue;
+    forEachEnemyNearCircle(b.x, b.z, maxDistance, function (enemy) {
+      if (!enemy || enemy.active === false) return;
+      if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) return;
       var dx = enemy.x - b.x;
       var dz = enemy.z - b.z;
       var dist = Math.hypot(dx, dz);
-      if (dist <= 0.001 || dist > maxDistance) continue;
+      if (dist <= 0.001 || dist > maxDistance) return;
       var dot = (dx / dist) * b.dirX + (dz / dist) * b.dirZ;
-      if (dot < minDot) continue;
+      if (dot < minDot) return;
       var score = dist - dot * 3;
       if (score < bestScore) {
         bestScore = score;
         best = enemy;
       }
-    }
+    }, true);
     return best;
   }
 
@@ -10083,16 +10123,15 @@
   function findRicochetTarget(b, hit, maxDistance) {
     var best = null;
     var bestDist = maxDistance || Infinity;
-    for (var i = 0; i < state.enemies.length; i++) {
-      var enemy = state.enemies[i];
-      if (enemy === hit) continue;
-      if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) continue;
+    forEachEnemyNearCircle(b.x, b.z, bestDist, function (enemy) {
+      if (!enemy || enemy.active === false || enemy === hit) return;
+      if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) return;
       var dist = Math.hypot(enemy.x - b.x, enemy.z - b.z);
       if (dist < bestDist) {
         best = enemy;
         bestDist = dist;
       }
-    }
+    }, true);
     return best;
   }
 
@@ -10127,7 +10166,7 @@
       if (!target) break;
       addLightningBolt(prevX, prevZ, target.x, target.z);
       playLightningChainSound(prevX, prevZ, target.x, target.z, i, targets.length);
-      if (state.enemies.indexOf(target) !== -1) {
+      if (target.active !== false) {
         damageEnemy(target, getRifleLightningDamage(), target.x, target.z, { type: "rifleLightning" });
       }
       prevX = target.x;
@@ -10141,15 +10180,15 @@
   function findNextLightningTarget(existingTargets, x, z, maxDistance) {
     var best = null;
     var bestDist = maxDistance || Infinity;
-    for (var i = 0; i < state.enemies.length; i++) {
-      var enemy = state.enemies[i];
-      if (existingTargets.indexOf(enemy) !== -1) continue;
+    forEachEnemyNearCircle(x, z, bestDist, function (enemy) {
+      if (!enemy || enemy.active === false) return;
+      if (existingTargets.indexOf(enemy) !== -1) return;
       var dist = Math.hypot(enemy.x - x, enemy.z - z);
       if (dist < bestDist) {
         best = enemy;
         bestDist = dist;
       }
-    }
+    }, true);
     return best;
   }
 
@@ -10369,6 +10408,7 @@
       if (dist <= 0.001 || dist > 12) return;
       insertRifleTrapLureTarget(enemy, dist);
     }, true);
+    var movedAny = false;
     for (var i = 0; i < rifleTrapTargetScratch.length; i++) {
       var enemy = rifleTrapTargetScratch[i];
       var dist = rifleTrapDistanceScratch[i];
@@ -10377,7 +10417,9 @@
       var pull = enemy.speed * (0.5 + (1 - Math.min(1, dist / 12)) * 0.45) * dt;
       enemy.x += (dx / dist) * pull;
       enemy.z += (dz / dist) * pull;
+      movedAny = true;
     }
+    if (movedAny) zombieSpatialDirty = true;
   }
 
   function insertRifleTrapLureTarget(enemy, dist) {
@@ -10433,14 +10475,12 @@
     var radius = 2.15;
     addShockwave(b.x, b.z, radius, 0.36, 0xffc45f);
     addLightFlash(b.x, 1.1, b.z, 0xffb347, 2.8, 6, 0.18);
-    var victims = state.enemies.slice();
-    for (var i = 0; i < victims.length; i++) {
-      var enemy = victims[i];
-      if (state.enemies.indexOf(enemy) === -1) continue;
+    forEachEnemyNearCircle(b.x, b.z, radius + 1.1, function (enemy) {
+      if (!enemy || enemy.active === false) return;
       var dist = Math.hypot(enemy.x - b.x, enemy.z - b.z);
-      if (dist > radius) continue;
+      if (dist > radius) return;
       damageEnemy(enemy, Math.max(1, Math.ceil(2.4 * (1 - dist / radius))), b.x, b.z, b);
-    }
+    }, true);
   }
 
   function damageEnemy(enemy, damage, x, z, source) {
@@ -10504,7 +10544,7 @@
   function handleSilverCacheKill(enemy, source) {
     if (!enemy || !source || source.type !== "revolver" || !source.silverBullet || !hasUpgrade("silverCache")) return;
     state.silverBulletAmmoKills += 1;
-    if (state.silverBulletAmmoKills < 2) return;
+    if (state.silverBulletAmmoKills < SILVER_CACHE_KILLS_PER_DROP) return;
     state.silverBulletAmmoKills = 0;
     spawnMiniAmmoCrateAt(enemy.x, enemy.z);
   }
@@ -10556,14 +10596,12 @@
       backdraft: true,
       damageDelay: 0.12,
     });
-    var victims = state.enemies.slice();
-    for (var i = 0; i < victims.length; i++) {
-      var enemy = victims[i];
-      if (state.enemies.indexOf(enemy) === -1) continue;
+    forEachEnemyNearCircle(x, z, 2.25 + 1.2, function (enemy) {
+      if (!enemy || enemy.active === false) return;
       var dist = Math.hypot(enemy.x - x, enemy.z - z);
-      if (dist > 2.25 + enemy.radius * 0.25) continue;
+      if (dist > 2.25 + enemy.radius * 0.25) return;
       damageEnemy(enemy, Math.max(1, Math.ceil(2.2 * (1 - clamp(dist / 2.25, 0, 1)) + 0.4)), x, z, { type: "launcherBackdraft" });
-    }
+    }, true);
   }
 
   function restoreWeaponAmmo(id, amount) {
@@ -12058,7 +12096,11 @@
   }
 
   function getMoveStickMax() {
-    return Math.max(1, moveStick ? moveStick.getBoundingClientRect().width * 0.34 : 42);
+    if (!moveStick) return 42;
+    var style = window.getComputedStyle ? window.getComputedStyle(moveStick) : null;
+    var visualSize = style ? parseFloat(style.getPropertyValue("--move-stick-visual-size")) : 0;
+    if (!Number.isFinite(visualSize) || visualSize <= 0) visualSize = moveStick.getBoundingClientRect().width;
+    return Math.max(1, visualSize * 0.34);
   }
 
   function setMoveKnobOffset(x, y) {
@@ -12239,12 +12281,19 @@
       hudLevel.textContent = String(state.level);
       hudCache.level = String(state.level);
     }
-    if (hudXpFill) {
+    if (hudXpFill || minimapHud) {
       var xpRatio = state.xpToNext > 0 ? clamp(state.xp / state.xpToNext, 0, 1) : 0;
       var xpRatioText = xpRatio.toFixed(3);
       if (hudCache.xpRatio !== xpRatioText) {
-        hudXpFill.style.transform = "scaleX(" + xpRatioText + ")";
+        if (hudXpFill) hudXpFill.style.transform = "scaleX(" + xpRatioText + ")";
+        if (minimapHud) {
+          minimapHud.style.setProperty("--xp-progress", xpRatioText);
+          minimapHud.style.setProperty("--xp-progress-angle", (xpRatio * 360).toFixed(1) + "deg");
+          minimapHud.setAttribute("aria-label", "Minimap. Level " + state.level + ". Experience " + Math.round(xpRatio * 100) + "%.");
+        }
         hudCache.xpRatio = xpRatioText;
+      } else if (minimapHud && hudCache.level === String(state.level)) {
+        minimapHud.setAttribute("aria-label", "Minimap. Level " + state.level + ". Experience " + Math.round(xpRatio * 100) + "%.");
       }
     }
     updateAmmoHud();
@@ -12443,6 +12492,7 @@
     nearestAmmoCrateDistanceScratch.length = 0;
     for (var i = 0; i < state.ammoCrates.length; i++) {
       var crate = state.ammoCrates[i];
+      if (crate.mini) continue;
       var dx = crate.x - state.player.x;
       var dz = crate.z - state.player.z;
       var distSq = dx * dx + dz * dz;
@@ -12544,7 +12594,7 @@
   function getAmmoWarningLevel(ammo) {
     if (!ammo || ammo.total <= 0 || ammo.magazine <= 0) return "none";
     if (ammo.total <= ammo.magazine) return "critical";
-    if (ammo.total <= ammo.magazine * 2) return "low";
+    if (ammo.total <= ammo.magazine * 2 || ammo.reserve <= ammo.magazine * 2) return "low";
     return "none";
   }
 
@@ -13009,6 +13059,20 @@
         rifleTraps: state.rifleTraps.length,
         ammoCrates: state.ammoCrates.length,
       },
+      spatial: {
+        obstacles: {
+          cellSize: obstacleSpatialStats.cellSize,
+          cellCount: obstacleSpatialStats.cellCount,
+          maxBucketSize: obstacleSpatialStats.maxBucketSize,
+          occupants: obstacleSpatialStats.occupants,
+        },
+        zombies: {
+          cellSize: ZOMBIE_SPATIAL_CELL_SIZE,
+          cellCount: zombieSpatialStats.cellCount,
+          maxBucketSize: zombieSpatialStats.maxBucketSize,
+          occupants: zombieSpatialStats.occupants,
+        },
+      },
       pools: {
         zombies: getZombiePoolStats(),
         firePatchVisuals: getFirePatchVisualPoolStats(),
@@ -13049,17 +13113,105 @@
   function addObstacleRect(x, z, w, d, pad, type, rotation) {
     var angle = Number(rotation) || 0;
     var obstacleType = type || "obstacle";
-    obstacleRects.push({
+    var obstaclePad = pad || 0;
+    var bounds = getRotatedRectBounds(w, d, angle);
+    var rect = {
       x: x,
       z: z,
       halfW: w / 2,
       halfD: d / 2,
-      pad: pad || 0,
+      pad: obstaclePad,
       rotation: angle,
       type: obstacleType,
-    });
-    var bounds = getRotatedRectBounds(w, d, angle);
-    registerMapFootprint(obstacleType, x, z, bounds.w, bounds.d, pad || 0, true);
+      minX: x - bounds.w / 2 - obstaclePad,
+      maxX: x + bounds.w / 2 + obstaclePad,
+      minZ: z - bounds.d / 2 - obstaclePad,
+      maxZ: z + bounds.d / 2 + obstaclePad,
+    };
+    obstacleRects.push(rect);
+    insertObstacleInSpatialGrid(rect);
+    registerMapFootprint(obstacleType, x, z, bounds.w, bounds.d, obstaclePad, true);
+  }
+
+  function insertObstacleInSpatialGrid(rect) {
+    if (!rect) return;
+    var minCellX = getObstacleCell(rect.minX);
+    var maxCellX = getObstacleCell(rect.maxX);
+    var minCellZ = getObstacleCell(rect.minZ);
+    var maxCellZ = getObstacleCell(rect.maxZ);
+    for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
+        var key = getObstacleCellKey(cellX, cellZ);
+        var bucket = obstacleSpatialGrid[key];
+        if (!bucket) {
+          bucket = [];
+          obstacleSpatialGrid[key] = bucket;
+          obstacleSpatialGridKeys.push(key);
+        }
+        bucket.push(rect);
+        if (bucket.length > obstacleSpatialStats.maxBucketSize) obstacleSpatialStats.maxBucketSize = bucket.length;
+      }
+    }
+    obstacleSpatialStats.cellCount = obstacleSpatialGridKeys.length;
+    obstacleSpatialStats.occupants = obstacleRects.length;
+  }
+
+  function getObstacleCell(value) {
+    return Math.floor(value / OBSTACLE_SPATIAL_CELL_SIZE);
+  }
+
+  function getObstacleCellKey(cellX, cellZ) {
+    return cellX + ":" + cellZ;
+  }
+
+  function nextObstacleSpatialQueryId() {
+    obstacleSpatialQueryId += 1;
+    if (obstacleSpatialQueryId > 1000000000) obstacleSpatialQueryId = 1;
+    return obstacleSpatialQueryId;
+  }
+
+  function visitObstaclesInCellRange(minCellX, maxCellX, minCellZ, maxCellZ, callback) {
+    if (!obstacleSpatialGridKeys.length) {
+      for (var i = 0; i < obstacleRects.length; i++) {
+        if (callback(obstacleRects[i])) return true;
+      }
+      return false;
+    }
+    var queryId = nextObstacleSpatialQueryId();
+    for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
+        var bucket = obstacleSpatialGrid[getObstacleCellKey(cellX, cellZ)];
+        if (!bucket) continue;
+        for (var i = 0; i < bucket.length; i++) {
+          var rect = bucket[i];
+          if (rect._obstacleQueryId === queryId) continue;
+          rect._obstacleQueryId = queryId;
+          if (callback(rect)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function visitObstaclesNearCircle(x, z, radius, callback) {
+    var r = Math.max(0, radius || 0);
+    return visitObstaclesInCellRange(
+      getObstacleCell(x - r),
+      getObstacleCell(x + r),
+      getObstacleCell(z - r),
+      getObstacleCell(z + r),
+      callback
+    );
+  }
+
+  function visitObstaclesInAabb(minX, maxX, minZ, maxZ, callback) {
+    return visitObstaclesInCellRange(
+      getObstacleCell(minX),
+      getObstacleCell(maxX),
+      getObstacleCell(minZ),
+      getObstacleCell(maxZ),
+      callback
+    );
   }
 
   function getRotatedRectBounds(w, d, rotation) {
@@ -13108,8 +13260,13 @@
     var extra = boundsExtra || 0;
     mover.x = clamp(mover.x, -ARENA_W / 2 - extra + radius, ARENA_W / 2 + extra - radius);
     mover.z = clamp(mover.z, -ARENA_D / 2 - extra + radius, ARENA_D / 2 + extra - radius);
-    for (var i = 0; i < obstacleRects.length; i++) {
-      pushCircleOutOfRect(mover, obstacleRects[i], radius);
+    for (var pass = 0; pass < 2; pass++) {
+      var pushed = false;
+      visitObstaclesNearCircle(mover.x, mover.z, radius + 4.0, function (rect) {
+        if (pushCircleOutOfRect(mover, rect, radius)) pushed = true;
+        return false;
+      });
+      if (!pushed) break;
     }
     mover.x = clamp(mover.x, -ARENA_W / 2 - extra + radius, ARENA_W / 2 + extra - radius);
     mover.z = clamp(mover.z, -ARENA_D / 2 - extra + radius, ARENA_D / 2 + extra - radius);
@@ -13123,7 +13280,7 @@
     var dx = local.x - closestX;
     var dz = local.z - closestZ;
     var distSq = dx * dx + dz * dz;
-    if (distSq >= minDist * minDist) return;
+    if (distSq >= minDist * minDist) return false;
 
     var pushX = 0;
     var pushZ = 0;
@@ -13147,13 +13304,13 @@
     var worldPush = rectLocalDeltaToWorld(pushX, pushZ, rect.rotation || 0);
     circle.x += worldPush.x;
     circle.z += worldPush.z;
+    return true;
   }
 
   function pointHitsObstacle(x, z, radius) {
-    for (var i = 0; i < obstacleRects.length; i++) {
-      if (circleIntersectsRect(x, z, radius, obstacleRects[i])) return true;
-    }
-    return false;
+    return visitObstaclesNearCircle(x, z, radius + 0.05, function (rect) {
+      return circleIntersectsRect(x, z, radius, rect);
+    });
   }
 
   function circleIntersectsRect(x, z, radius, rect) {
@@ -13177,8 +13334,7 @@
 
   function obstacleClearanceAt(x, z, radius) {
     var best = 3;
-    for (var i = 0; i < obstacleRects.length; i++) {
-      var rect = obstacleRects[i];
+    visitObstaclesNearCircle(x, z, radius + 3.05, function (rect) {
       var local = worldToRectLocal(x, z, rect);
       var closestX = clamp(local.x, -rect.halfW, rect.halfW);
       var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
@@ -13186,22 +13342,30 @@
       var dz = local.z - closestZ;
       var clearance = Math.sqrt(dx * dx + dz * dz) - (radius + rect.pad);
       best = Math.min(best, clearance);
-    }
+      return false;
+    });
     return clamp(best, -2, 3);
   }
 
   function findBlockingObstacle(x1, z1, x2, z2, radius, ignoreRect) {
     var best = null;
     var bestT = Infinity;
-    for (var i = 0; i < obstacleRects.length; i++) {
-      var rect = obstacleRects[i];
-      if (rect === ignoreRect) continue;
-      var t = segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius);
-      if (t !== null && t > 0.015 && t < bestT) {
-        bestT = t;
-        best = { rect: rect, t: t };
+    var queryPad = radius + 0.75;
+    visitObstaclesInAabb(
+      Math.min(x1, x2) - queryPad,
+      Math.max(x1, x2) + queryPad,
+      Math.min(z1, z2) - queryPad,
+      Math.max(z1, z2) + queryPad,
+      function (rect) {
+        if (rect === ignoreRect) return false;
+        var t = segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius);
+        if (t !== null && t > 0.015 && t < bestT) {
+          bestT = t;
+          best = { rect: rect, t: t };
+        }
+        return false;
       }
-    }
+    );
     return best;
   }
 
@@ -13746,6 +13910,12 @@
         },
       },
       optimization: {
+        obstacleSpatialGrid: {
+          cellSize: obstacleSpatialStats.cellSize,
+          cellCount: obstacleSpatialStats.cellCount,
+          maxBucketSize: obstacleSpatialStats.maxBucketSize,
+          occupants: obstacleSpatialStats.occupants,
+        },
         zombiePools: getZombiePoolStats(),
         zombieSpatialGrid: {
           cellSize: ZOMBIE_SPATIAL_CELL_SIZE,
@@ -14382,6 +14552,16 @@
       var crate = spawnAmmoCrateAt(Number(x) || 0, Number(z) || 0);
       return { x: Number(crate.x.toFixed(2)), z: Number(crate.z.toFixed(2)) };
     },
+    spawnMiniAmmoCrateAt: function (x, z) {
+      var crate = spawnMiniAmmoCrateAt(Number(x) || 0, Number(z) || 0);
+      return {
+        type: crate.mini ? "mini" : "standard",
+        mini: !!crate.mini,
+        x: Number(crate.x.toFixed(2)),
+        z: Number(crate.z.toFixed(2)),
+        pickupScale: Number((crate.pickupScale || 1).toFixed(3)),
+      };
+    },
     collectNearestAmmoCrate: function () {
       if (!state.player || !state.ammoCrates.length) return false;
       var best = 0;
@@ -14487,6 +14667,12 @@
           cellCount: zombieSpatialStats.cellCount,
           maxBucketSize: zombieSpatialStats.maxBucketSize,
           occupants: zombieSpatialStats.occupants,
+        },
+        obstacleGrid: {
+          cellSize: obstacleSpatialStats.cellSize,
+          cellCount: obstacleSpatialStats.cellCount,
+          maxBucketSize: obstacleSpatialStats.maxBucketSize,
+          occupants: obstacleSpatialStats.occupants,
         },
       };
     },
