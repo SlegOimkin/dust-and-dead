@@ -433,6 +433,7 @@
     gameBattleGain: null,
     noiseBuffer: null,
     shotNoiseBuffer: null,
+    rifleShotBuffer: null,
     zombieHitSfxLastAt: 0,
     zombieHitSfxBurstWindow: 0,
     zombieHitSfxBurstCount: 0,
@@ -4202,6 +4203,7 @@
       audioState.masterGain.connect(ctx.destination);
       audioState.noiseBuffer = createMenuNoiseBuffer(ctx);
       audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+      audioState.rifleShotBuffer = createDryRifleShotBuffer(ctx);
       return ctx;
     } catch (err) {
       audioState.ctx = null;
@@ -4233,6 +4235,23 @@
       low = low * 0.82 + white * 0.18;
       mid = mid * 0.36 + white * 0.64;
       data[i] = white * 0.62 + mid * 0.28 + low * 0.1;
+    }
+    return buffer;
+  }
+
+  function createDryRifleShotBuffer(ctx) {
+    var length = Math.max(1, Math.floor(ctx.sampleRate * 0.18));
+    var buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    var last = 0;
+    for (var i = 0; i < length; i++) {
+      var t = i / ctx.sampleRate;
+      var envelope = Math.exp(-t * 68);
+      var snapEnvelope = Math.exp(-t * 320);
+      var white = Math.random() * 2 - 1;
+      var dry = white - last * 0.72;
+      last = white;
+      data[i] = clamp(dry * envelope * 0.8 + white * snapEnvelope * 0.34, -1, 1);
     }
     return buffer;
   }
@@ -4840,19 +4859,18 @@
     if (!audioState.enabled) return;
     var ctx = audioState.ctx || ensureAudioContext();
     if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
-    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+    if (!audioState.rifleShotBuffer) audioState.rifleShotBuffer = createDryRifleShotBuffer(ctx);
 
     var now = ctx.currentTime;
     var aimPan = dir && isFinite(dir.x) ? dir.x * 0.18 : 0;
     var pan = clamp(aimPan, -0.68, 0.68);
     var level = chainLightning ? 1.04 : 1;
 
-    playWinchesterMuzzleBlast(now, pan, 0.96 * level);
-    playWinchesterPressureBody(now + 0.002, pan, 0.82 * level);
-    playWinchesterChamberSnap(now + 0.014, pan, 0.052 * level);
-    playWinchesterOpenTail(now + 0.028, pan, 0.26 * level);
+    playWinchesterRifleReport(now, pan, 0.98 * level);
+    playWinchesterPressureHit(now + 0.003, pan, 0.58 * level);
+    playWinchesterMuzzleSnap(now + 0.006, pan, 0.09 * level);
     if (chainLightning) playRifleLightningShotCharge(now + 0.006, pan, level);
-    playRifleLeverAction(now + 0.215, pan, 1.08 * level);
+    playRifleLeverAction(now + 0.19, pan, 1.04 * level);
   }
 
   function playRifleLightningShotCharge(time, pan, level) {
@@ -4864,151 +4882,131 @@
     playElectricToneBurst(time + 0.026, -pan * 0.6, 0.036 * level, 2380, 0.075, 1.15);
   }
 
-  function playWinchesterMuzzleBlast(time, pan, level) {
+  function playWinchesterRifleReport(time, pan, level) {
     var ctx = audioState.ctx;
-    if (!ctx || !audioState.shotNoiseBuffer) return;
-    var src = ctx.createBufferSource();
-    var high = ctx.createBiquadFilter();
-    var low = ctx.createBiquadFilter();
+    if (!ctx || !audioState.rifleShotBuffer) return;
+    var muzzle = ctx.createBufferSource();
+    var pressure = ctx.createBufferSource();
+    var muzzleHigh = ctx.createBiquadFilter();
+    var muzzleLow = ctx.createBiquadFilter();
+    var pressureHigh = ctx.createBiquadFilter();
+    var pressureLow = ctx.createBiquadFilter();
     var presence = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    src.buffer = audioState.shotNoiseBuffer;
-    src.playbackRate.setValueAtTime(rand(1.08, 1.24), time);
-    high.type = "highpass";
-    high.frequency.setValueAtTime(640, time);
-    high.Q.value = 0.42;
-    low.type = "lowpass";
-    low.frequency.setValueAtTime(15500, time);
-    low.frequency.exponentialRampToValueAtTime(7200, time + 0.034);
-    low.Q.value = 0.18;
+    var body = ctx.createBiquadFilter();
+    var mix = ctx.createGain();
+    muzzle.buffer = audioState.rifleShotBuffer;
+    pressure.buffer = audioState.rifleShotBuffer;
+    muzzle.playbackRate.setValueAtTime(rand(1.06, 1.16), time);
+    pressure.playbackRate.setValueAtTime(rand(0.9, 0.98), time);
+    muzzleHigh.type = "highpass";
+    muzzleHigh.frequency.setValueAtTime(720, time);
+    muzzleHigh.Q.value = 0.42;
+    muzzleLow.type = "lowpass";
+    muzzleLow.frequency.setValueAtTime(9600, time);
+    muzzleLow.Q.value = 0.24;
+    pressureHigh.type = "highpass";
+    pressureHigh.frequency.setValueAtTime(145, time);
+    pressureHigh.Q.value = 0.28;
+    pressureLow.type = "lowpass";
+    pressureLow.frequency.setValueAtTime(2450, time);
+    pressureLow.Q.value = 0.24;
     presence.type = "peaking";
-    presence.frequency.setValueAtTime(2950, time);
-    presence.Q.value = 0.82;
-    presence.gain.value = 3.1;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.0008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.045);
-    src.connect(high);
-    high.connect(low);
-    low.connect(presence);
-    presence.connect(gain);
-    var output = connectSfxOutput(gain, pan || 0);
-    src.start(time, rand(0, 0.12));
-    src.stop(time + 0.075);
-    scheduleAudioDisconnect([src, high, low, presence, gain, output], time + 0.13);
+    presence.frequency.setValueAtTime(2350, time);
+    presence.Q.value = 0.78;
+    presence.gain.value = 4.4;
+    body.type = "peaking";
+    body.frequency.setValueAtTime(430, time);
+    body.Q.value = 0.74;
+    body.gain.value = 2.7;
+    mix.gain.setValueAtTime(0.0001, time);
+    mix.gain.linearRampToValueAtTime(level, time + 0.0007);
+    mix.gain.exponentialRampToValueAtTime(0.0001, time + 0.072);
+    muzzle.connect(muzzleHigh);
+    muzzleHigh.connect(muzzleLow);
+    muzzleLow.connect(presence);
+    pressure.connect(pressureHigh);
+    pressureHigh.connect(pressureLow);
+    pressureLow.connect(body);
+    body.connect(presence);
+    presence.connect(mix);
+    var output = connectSfxOutput(mix, pan || 0);
+    muzzle.start(time, rand(0.001, 0.026));
+    pressure.start(time + 0.001, rand(0.03, 0.07));
+    muzzle.stop(time + 0.085);
+    pressure.stop(time + 0.09);
+    scheduleAudioDisconnect([muzzle, pressure, muzzleHigh, muzzleLow, pressureHigh, pressureLow, presence, body, mix, output], time + 0.15);
   }
 
-  function playWinchesterPressureBody(time, pan, level) {
+  function playWinchesterPressureHit(time, pan, level) {
     var ctx = audioState.ctx;
     if (!ctx) return;
-    var thump = ctx.createOscillator();
-    var punch = ctx.createOscillator();
-    var thumpGain = ctx.createGain();
-    var punchGain = ctx.createGain();
+    var chest = ctx.createOscillator();
+    var wood = ctx.createOscillator();
+    var chestGain = ctx.createGain();
+    var woodGain = ctx.createGain();
     var filter = ctx.createBiquadFilter();
-    var chest = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    thump.type = "sine";
-    punch.type = "triangle";
-    thump.frequency.setValueAtTime(126, time);
-    thump.frequency.exponentialRampToValueAtTime(39, time + 0.12);
-    punch.frequency.setValueAtTime(248, time);
-    punch.frequency.exponentialRampToValueAtTime(82, time + 0.074);
-    thumpGain.gain.value = 0.9;
-    punchGain.gain.value = 0.28;
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(470, time);
-    filter.frequency.exponentialRampToValueAtTime(86, time + 0.18);
-    filter.Q.value = 0.28;
-    chest.type = "peaking";
-    chest.frequency.setValueAtTime(155, time);
-    chest.Q.value = 0.7;
-    chest.gain.value = 3.6;
+    chest.type = "sine";
+    wood.type = "triangle";
+    chest.frequency.setValueAtTime(132, time);
+    chest.frequency.exponentialRampToValueAtTime(86, time + 0.052);
+    wood.frequency.setValueAtTime(235, time + 0.002);
+    wood.frequency.exponentialRampToValueAtTime(142, time + 0.046);
+    chestGain.gain.value = 0.92;
+    woodGain.gain.value = 0.22;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(170, time);
+    filter.Q.value = 0.86;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.003);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.175);
-    thump.connect(thumpGain);
-    punch.connect(punchGain);
-    thumpGain.connect(filter);
-    punchGain.connect(filter);
-    filter.connect(chest);
-    chest.connect(gain);
+    gain.gain.linearRampToValueAtTime(level, time + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.078);
+    chest.connect(chestGain);
+    wood.connect(woodGain);
+    chestGain.connect(filter);
+    woodGain.connect(filter);
+    filter.connect(gain);
     var output = connectSfxOutput(gain, pan || 0);
-    thump.start(time);
-    punch.start(time);
-    thump.stop(time + 0.21);
-    punch.stop(time + 0.14);
-    scheduleAudioDisconnect([thump, punch, thumpGain, punchGain, filter, chest, gain, output], time + 0.25);
+    chest.start(time);
+    wood.start(time + 0.002);
+    chest.stop(time + 0.1);
+    wood.stop(time + 0.082);
+    scheduleAudioDisconnect([chest, wood, chestGain, woodGain, filter, gain, output], time + 0.14);
   }
 
-  function playWinchesterChamberSnap(time, pan, level) {
+  function playWinchesterMuzzleSnap(time, pan, level) {
     var ctx = audioState.ctx;
     if (!ctx) return;
-    var click = ctx.createOscillator();
+    var snap = ctx.createOscillator();
     var ring = ctx.createOscillator();
-    var clickGain = ctx.createGain();
+    var snapGain = ctx.createGain();
     var ringGain = ctx.createGain();
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
-    click.type = "square";
+    snap.type = "square";
     ring.type = "triangle";
-    click.frequency.setValueAtTime(1180, time);
-    click.frequency.exponentialRampToValueAtTime(640, time + 0.032);
-    ring.frequency.setValueAtTime(2380, time + 0.001);
-    ring.frequency.exponentialRampToValueAtTime(1540, time + 0.028);
-    clickGain.gain.value = 0.32;
-    ringGain.gain.value = 0.18;
+    snap.frequency.setValueAtTime(1180, time);
+    snap.frequency.exponentialRampToValueAtTime(780, time + 0.018);
+    ring.frequency.setValueAtTime(2520, time + 0.001);
+    ring.frequency.exponentialRampToValueAtTime(1680, time + 0.024);
+    snapGain.gain.value = 0.18;
+    ringGain.gain.value = 0.16;
     filter.type = "bandpass";
-    filter.frequency.setValueAtTime(1550, time);
-    filter.Q.value = 1.45;
+    filter.frequency.setValueAtTime(1760, time);
+    filter.Q.value = 1.12;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.002);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.044);
-    click.connect(clickGain);
+    gain.gain.linearRampToValueAtTime(level, time + 0.0015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.034);
+    snap.connect(snapGain);
     ring.connect(ringGain);
-    clickGain.connect(filter);
+    snapGain.connect(filter);
     ringGain.connect(filter);
     filter.connect(gain);
     var output = connectSfxOutput(gain, pan || 0);
-    click.start(time);
+    snap.start(time);
     ring.start(time + 0.001);
-    click.stop(time + 0.055);
-    ring.stop(time + 0.05);
-    scheduleAudioDisconnect([click, ring, clickGain, ringGain, filter, gain, output], time + 0.1);
-  }
-
-  function playWinchesterOpenTail(time, pan, level) {
-    var ctx = audioState.ctx;
-    if (!ctx || !audioState.shotNoiseBuffer) return;
-    var src = ctx.createBufferSource();
-    var high = ctx.createBiquadFilter();
-    var low = ctx.createBiquadFilter();
-    var mid = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    src.buffer = audioState.shotNoiseBuffer;
-    src.playbackRate.setValueAtTime(rand(0.74, 0.86), time);
-    high.type = "highpass";
-    high.frequency.setValueAtTime(58, time);
-    high.Q.value = 0.35;
-    low.type = "lowpass";
-    low.frequency.setValueAtTime(2700, time);
-    low.frequency.exponentialRampToValueAtTime(620, time + 0.23);
-    low.Q.value = 0.24;
-    mid.type = "peaking";
-    mid.frequency.setValueAtTime(230, time);
-    mid.Q.value = 0.52;
-    mid.gain.value = 3.2;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.265);
-    src.connect(high);
-    high.connect(low);
-    low.connect(mid);
-    mid.connect(gain);
-    var output = connectSfxOutput(gain, pan * 0.55 || 0);
-    src.start(time, rand(0.1, 0.34));
-    src.stop(time + 0.31);
-    scheduleAudioDisconnect([src, high, low, mid, gain, output], time + 0.37);
+    snap.stop(time + 0.04);
+    ring.stop(time + 0.04);
+    scheduleAudioDisconnect([snap, ring, snapGain, ringGain, filter, gain, output], time + 0.09);
   }
 
   function playElectricToneBurst(time, pan, level, freq, length, bend) {
@@ -5077,95 +5075,17 @@
   }
 
   function playRifleLeverAction(time, pan, level) {
-    playWinchesterLeverThunk(time, pan - 0.06, 0.066 * level, 315, 0.06);
-    playWinchesterBoltSlide(time + 0.048, pan + 0.04, 0.075 * level, 0.086);
-    playWinchesterMetalLatch(time + 0.118, pan - 0.03, 0.066 * level, 1850, 0.038);
-    playWinchesterLeverThunk(time + 0.156, pan + 0.05, 0.058 * level, 430, 0.052);
-    playWinchesterMetalLatch(time + 0.212, pan + 0.02, 0.052 * level, 2720, 0.03);
+    playWinchesterDryLeverClick(time, pan - 0.05, 0.074 * level, 740, 0.034);
+    playWinchesterDryBoltRack(time + 0.044, pan + 0.04, 0.08 * level, 0.07);
+    playWinchesterDryLeverClick(time + 0.112, pan - 0.03, 0.06 * level, 1080, 0.028);
+    playWinchesterDryBoltRack(time + 0.148, pan + 0.04, 0.052 * level, 0.052);
+    playWinchesterDryLeverClick(time + 0.206, pan + 0.02, 0.06 * level, 1900, 0.024);
   }
 
-  function playWinchesterLeverThunk(time, pan, level, freq, length) {
+  function playWinchesterDryLeverClick(time, pan, level, freq, length) {
     var ctx = audioState.ctx;
     if (!ctx) return;
-    length = clamp(Number(length) || 0.055, 0.038, 0.082);
-    var body = ctx.createOscillator();
-    var latch = ctx.createOscillator();
-    var bodyGain = ctx.createGain();
-    var latchGain = ctx.createGain();
-    var filter = ctx.createBiquadFilter();
-    var gain = ctx.createGain();
-    body.type = "triangle";
-    latch.type = "square";
-    body.frequency.setValueAtTime(freq, time);
-    body.frequency.exponentialRampToValueAtTime(Math.max(115, freq * 0.42), time + length);
-    latch.frequency.setValueAtTime(freq * 2.6, time + 0.004);
-    latch.frequency.exponentialRampToValueAtTime(Math.max(220, freq * 1.18), time + length * 0.75);
-    bodyGain.gain.value = 0.72;
-    latchGain.gain.value = 0.12;
-    filter.type = "bandpass";
-    filter.frequency.setValueAtTime(Math.max(430, freq * 1.45), time);
-    filter.Q.value = 1.02;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(level, time + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
-    body.connect(bodyGain);
-    latch.connect(latchGain);
-    bodyGain.connect(filter);
-    latchGain.connect(filter);
-    filter.connect(gain);
-    var output = connectSfxOutput(gain, pan || 0);
-    body.start(time);
-    latch.start(time + 0.004);
-    body.stop(time + length + 0.024);
-    latch.stop(time + length + 0.024);
-    scheduleAudioDisconnect([body, latch, bodyGain, latchGain, filter, gain, output], time + length + 0.09);
-  }
-
-  function playWinchesterBoltSlide(time, pan, level, length) {
-    var ctx = audioState.ctx;
-    if (!ctx || !audioState.shotNoiseBuffer) return;
-    length = clamp(Number(length) || 0.08, 0.055, 0.11);
-    var src = ctx.createBufferSource();
-    var high = ctx.createBiquadFilter();
-    var low = ctx.createBiquadFilter();
-    var tone = ctx.createOscillator();
-    var toneGain = ctx.createGain();
-    var noiseGain = ctx.createGain();
-    var mix = ctx.createGain();
-    src.buffer = audioState.shotNoiseBuffer;
-    src.playbackRate.setValueAtTime(rand(1.28, 1.48), time);
-    high.type = "highpass";
-    high.frequency.setValueAtTime(860, time);
-    high.Q.value = 0.42;
-    low.type = "lowpass";
-    low.frequency.setValueAtTime(4200, time);
-    low.Q.value = 1.1;
-    tone.type = "triangle";
-    tone.frequency.setValueAtTime(920, time + 0.003);
-    tone.frequency.exponentialRampToValueAtTime(540, time + length);
-    toneGain.gain.value = 0.32;
-    noiseGain.gain.value = 0.72;
-    mix.gain.setValueAtTime(0.0001, time);
-    mix.gain.linearRampToValueAtTime(level, time + 0.007);
-    mix.gain.exponentialRampToValueAtTime(0.0001, time + length);
-    src.connect(high);
-    high.connect(low);
-    low.connect(noiseGain);
-    tone.connect(toneGain);
-    noiseGain.connect(mix);
-    toneGain.connect(mix);
-    var output = connectSfxOutput(mix, pan || 0);
-    src.start(time, rand(0.42, 0.72));
-    tone.start(time + 0.003);
-    src.stop(time + length + 0.035);
-    tone.stop(time + length + 0.03);
-    scheduleAudioDisconnect([src, high, low, tone, toneGain, noiseGain, mix, output], time + length + 0.12);
-  }
-
-  function playWinchesterMetalLatch(time, pan, level, freq, length) {
-    var ctx = audioState.ctx;
-    if (!ctx) return;
-    length = clamp(Number(length) || 0.034, 0.022, 0.052);
+    length = clamp(Number(length) || 0.03, 0.018, 0.048);
     var click = ctx.createOscillator();
     var ping = ctx.createOscillator();
     var clickGain = ctx.createGain();
@@ -5173,16 +5093,16 @@
     var filter = ctx.createBiquadFilter();
     var gain = ctx.createGain();
     click.type = "triangle";
-    ping.type = "sine";
+    ping.type = "square";
     click.frequency.setValueAtTime(freq, time);
-    click.frequency.exponentialRampToValueAtTime(Math.max(260, freq * 0.58), time + length);
-    ping.frequency.setValueAtTime(freq * rand(1.85, 2.18), time + 0.001);
-    ping.frequency.exponentialRampToValueAtTime(freq * rand(1.05, 1.22), time + length * 0.86);
-    clickGain.gain.value = 0.88;
-    pingGain.gain.value = 0.18;
+    click.frequency.exponentialRampToValueAtTime(Math.max(360, freq * 0.64), time + length);
+    ping.frequency.setValueAtTime(freq * 1.74, time + 0.001);
+    ping.frequency.exponentialRampToValueAtTime(Math.max(620, freq * 1.08), time + length * 0.75);
+    clickGain.gain.value = 0.72;
+    pingGain.gain.value = 0.16;
     filter.type = "bandpass";
-    filter.frequency.setValueAtTime(Math.max(760, freq * 0.8), time);
-    filter.Q.value = 1.35;
+    filter.frequency.setValueAtTime(Math.max(780, freq * 1.1), time);
+    filter.Q.value = 1.05;
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.linearRampToValueAtTime(level, time + 0.0015);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + length);
@@ -5194,9 +5114,47 @@
     var output = connectSfxOutput(gain, pan || 0);
     click.start(time);
     ping.start(time + 0.001);
-    click.stop(time + length + 0.02);
-    ping.stop(time + length + 0.02);
-    scheduleAudioDisconnect([click, ping, clickGain, pingGain, filter, gain, output], time + length + 0.08);
+    click.stop(time + length + 0.015);
+    ping.stop(time + length + 0.015);
+    scheduleAudioDisconnect([click, ping, clickGain, pingGain, filter, gain, output], time + length + 0.07);
+  }
+
+  function playWinchesterDryBoltRack(time, pan, level, length) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    length = clamp(Number(length) || 0.06, 0.038, 0.078);
+    var slide = ctx.createOscillator();
+    var lock = ctx.createOscillator();
+    var slideGain = ctx.createGain();
+    var lockGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var mix = ctx.createGain();
+    slide.type = "triangle";
+    lock.type = "square";
+    slide.frequency.setValueAtTime(1180, time + 0.002);
+    slide.frequency.exponentialRampToValueAtTime(760, time + length);
+    lock.frequency.setValueAtTime(1540, time + length * 0.42);
+    lock.frequency.exponentialRampToValueAtTime(980, time + length);
+    slideGain.gain.value = 0.28;
+    lockGain.gain.value = 0.12;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(980, time);
+    filter.frequency.exponentialRampToValueAtTime(760, time + length);
+    filter.Q.value = 1.0;
+    mix.gain.setValueAtTime(0.0001, time);
+    mix.gain.linearRampToValueAtTime(level, time + 0.004);
+    mix.gain.exponentialRampToValueAtTime(0.0001, time + length);
+    slide.connect(slideGain);
+    lock.connect(lockGain);
+    slideGain.connect(filter);
+    lockGain.connect(filter);
+    filter.connect(mix);
+    var output = connectSfxOutput(mix, pan || 0);
+    slide.start(time + 0.002);
+    lock.start(time + length * 0.42);
+    slide.stop(time + length + 0.02);
+    lock.stop(time + length + 0.018);
+    scheduleAudioDisconnect([slide, lock, slideGain, lockGain, filter, mix, output], time + length + 0.09);
   }
 
   function playZombieHitSound(x, z, damage, source) {
