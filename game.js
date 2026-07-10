@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   "use strict";
 
   if (!window.THREE) {
@@ -26,25 +26,31 @@
   var INTEREST_POINT_TARGET = Math.max(18, MAP_SIZE_MULTIPLIER * 7);
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
+  var MINIMAP_DYNAMIC_INTERVAL = 1 / 30;
   var MAX_PARTICLES = 180;
-  var PARTICLE_VISUAL_PREWARM = MAX_PARTICLES;
+  var PARTICLE_VISUAL_PREWARM = Math.max(MAX_PARTICLES, 200);
+  var SHRAPNEL_TRAIL_VIEW_PAD = 2.4;
+  var PROJECTILE_STANDARD_INSTANCE_CAPACITY = 512;
   var PROJECTILE_VISUAL_PREWARM = {
-    standard: 48,
-    launcher: 8,
-    electric: 8,
-    fireShard: 8,
+    standard: PROJECTILE_STANDARD_INSTANCE_CAPACITY,
+    launcher: 16,
+    electric: 16,
+    fireShard: 32,
   };
   var MAX_SMOKE_PUFFS = 80;
   var MAX_SHOCKWAVES = 12;
   var SMOKE_PUFF_PREWARM = 96;
   var SHOCKWAVE_PREWARM = 18;
-  var LIGHT_FLASH_PREWARM = 20;
   var MAX_LIGHT_FLASHES = 40;
+  var LIGHT_FLASH_PREWARM = MAX_LIGHT_FLASHES;
   var MAX_DECALS = 48;
+  var SCORCH_DECAL_VISUAL_PREWARM = MAX_DECALS;
   var MAX_DEBRIS = 120;
+  var DEATH_DEBRIS_VISUAL_PREWARM = MAX_DEBRIS;
   var CONTACT_SHADOW_SURFACE_Y = 0.112;
   var MAX_AMMO_CRATES = 4;
   var MAX_XP_ORBS = 90;
+  var XP_ORB_VISUAL_PREWARM = MAX_XP_ORBS;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
   var MINI_AMMO_CRATE_PICKUP_SCALE = 1 / 3;
   var SILVER_CACHE_KILLS_PER_DROP = 3;
@@ -94,6 +100,18 @@
     spitter: 18,
   };
   var ZOMBIE_SPATIAL_CELL_SIZE = 2.8;
+  var ZOMBIE_STEER_CACHE_MIN_DISTANCE = 16;
+  var ZOMBIE_STEER_CACHE_INTERVAL = 1 / 15;
+  var ZOMBIE_STEER_CACHE_DOT = 0.995;
+  var ZOMBIE_CLEAR_DIRECTION_OFFSETS = [0, 0.28, -0.28, 0.58, -0.58, 0.95, -0.95, 1.35, -1.35, Math.PI];
+  var ZOMBIE_CLEAR_DIRECTION_COS = ZOMBIE_CLEAR_DIRECTION_OFFSETS.map(Math.cos);
+  var ZOMBIE_CLEAR_DIRECTION_SIN = ZOMBIE_CLEAR_DIRECTION_OFFSETS.map(Math.sin);
+  // Arena cell coordinates stay well inside +/-2048; keep paired numeric keys collision-free.
+  var SPATIAL_CELL_KEY_STRIDE = 4096;
+  var ENEMY_VISUAL_CULL_PAD = 14;
+  var FIRE_VISUAL_CULL_PAD = 9;
+  var TRAP_VISUAL_CULL_PAD = 7;
+  var LIGHT_VISUAL_CULL_PAD = 12;
   var CLASS_CHOICE_LEVEL = 5;
   var REVOLVER_UPGRADE_LEVEL = 10;
   var REVOLVER_SPECIAL_START_LEVEL = 13;
@@ -105,6 +123,38 @@
   var LAUNCHER_UPGRADE_LEVEL = 10;
   var LAUNCHER_SPECIAL_START_LEVEL = 13;
   var LAUNCHER_SPECIAL_INTERVAL = 3;
+  var MARSHAL_UPGRADE_LEVEL = 10;
+  var MARSHAL_SPECIAL_START_LEVEL = 13;
+  var MARSHAL_SPECIAL_INTERVAL = 3;
+  var MARSHAL_MASTERY_DAMAGE_PER_STACK = 0.03;
+  var MARSHAL_MASTERY_UPGRADE_IDS = {
+    breachMarshal: ["packedBuckshot", "hardCast"],
+    graveWarden: ["fineChoke", "sanctifiedLead"],
+  };
+  var COACH_GUN_BASE_PELLETS = 8;
+  var COACH_GUN_BASE_SPREAD = 0.34;
+  var COACH_GUN_BASE_RANGE = 15.5;
+  var COACH_GUN_POINT_BLANK_RANGE = 4.4;
+  var COACH_GUN_MARK_HITS = 5;
+  var COACH_GUN_MARK_LIFE = 4;
+  var COACH_GUN_MAX_HALLOWED_GROUNDS = 6;
+  var MAX_COACH_GUN_TRACERS = 24;
+  var PALE_DEPUTY_MAX_COUNT = 3;
+  var PALE_DEPUTY_LIFETIME = 12;
+  var PALE_DEPUTY_PELLET_DAMAGE = 0.72;
+  var PALE_DEPUTY_PELLET_COUNT = COACH_GUN_BASE_PELLETS;
+  var PALE_DEPUTY_SPREAD = COACH_GUN_BASE_SPREAD;
+  var PALE_DEPUTY_DAMAGE = PALE_DEPUTY_PELLET_DAMAGE * PALE_DEPUTY_PELLET_COUNT;
+  var PALE_DEPUTY_ATTACK_COOLDOWN = 0.48;
+  var PALE_DEPUTY_ATTACK_RANGE = COACH_GUN_BASE_RANGE;
+  var PALE_DEPUTY_TARGET_RADIUS = COACH_GUN_BASE_RANGE;
+  var PALE_DEPUTY_HARD_LEASH = 7.5;
+  var PALE_DEPUTY_RADIUS = 0.62;
+  var PALE_DEPUTY_MODEL_SCALE = 0.78;
+  var MAX_PALE_DEPUTY_TRACERS = 21;
+  var COACH_GUN_STANDARD_TRACER_COUNT = 7;
+  var COACH_GUN_BREACH_TRACER_COUNT = 8;
+  var COACH_GUN_GRAVE_TRACER_COUNT = 6;
   var LAUNCHER_CHAIN_BASE_EXPLOSIONS = 2;
   var LAUNCHER_CHAIN_MAX_EXPLOSIONS = 10;
   var LAUNCHER_FULL_SALVO_KILL_THRESHOLD = 4;
@@ -137,7 +187,7 @@
   var RIFLE_TRAP_BASE_BLAST_RADIUS = 2.65;
   var RIFLE_TRAP_POWDER_BLAST_RADIUS = 3.45;
   var RIFLE_AUTO_TRAP_BASE_INTERVAL = 5;
-  var RIFLE_AUTO_TRAP_MIN_INTERVAL = 0.5;
+  var RIFLE_AUTO_TRAP_MIN_INTERVAL = 1;
   var RIFLE_AUTO_TRAP_INTERVAL_STEP = 0.5;
   var MAX_LIGHTNING_BOLTS = 28;
   var DUAL_SOFT_AIM_BASE = 0.2;
@@ -186,6 +236,7 @@
   var minimapStaticCanvas = minimapCanvas ? document.createElement("canvas") : null;
   var minimapStaticCtx = minimapStaticCanvas ? minimapStaticCanvas.getContext("2d") : null;
   var minimapStaticDirty = true;
+  var minimapNextDynamicUpdateAt = 0;
   var minimapDynamicCache = {
     ammoCount: "",
   };
@@ -195,6 +246,7 @@
   var revolverUpgradePanel = document.getElementById("revolver-upgrade");
   var rifleUpgradePanel = document.getElementById("rifle-upgrade");
   var launcherUpgradePanel = document.getElementById("launcher-upgrade");
+  var marshalUpgradePanel = document.getElementById("marshal-upgrade");
   var levelUpPanel = document.getElementById("level-up-choice");
   var levelUpSubtitle = document.getElementById("level-up-subtitle");
   var levelUpOptions = document.getElementById("level-up-options");
@@ -202,11 +254,30 @@
   var startBtn = document.getElementById("start-btn");
   var restartBtn = document.getElementById("restart-btn");
   var menuMusicBtn = document.getElementById("menu-music-btn");
+  var pauseMenuBtn = document.getElementById("pause-menu-btn");
+  var pauseMenu = document.getElementById("pause-menu");
+  var pauseMainPanel = document.getElementById("pause-main-panel");
+  var pauseSettingsPanel = document.getElementById("pause-settings-panel");
+  var pauseCloseBtn = document.getElementById("pause-close-btn");
+  var pauseContinueBtn = document.getElementById("pause-continue-btn");
+  var pauseSettingsBtn = document.getElementById("pause-settings-btn");
+  var pauseSettingsBackBtn = document.getElementById("pause-settings-back-btn");
+  var pauseExitBtn = document.getElementById("pause-exit-btn");
+  var controlLayoutBtn = document.getElementById("control-layout-btn");
+  var controlLayoutEditor = document.getElementById("control-layout-editor");
+  var controlLayoutApplyBtn = document.getElementById("control-layout-apply-btn");
+  var controlLayoutResetBtn = document.getElementById("control-layout-reset-btn");
+  var musicVolumeInput = document.getElementById("music-volume");
+  var musicVolumeValue = document.getElementById("music-volume-value");
+  var sfxVolumeInput = document.getElementById("sfx-volume");
+  var sfxVolumeValue = document.getElementById("sfx-volume-value");
   var classChoiceButtons = Array.prototype.slice.call(document.querySelectorAll("[data-class]"));
   var revolverUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-revolver-upgrade]"));
   var rifleUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-rifle-upgrade]"));
   var launcherUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-launcher-upgrade]"));
+  var marshalUpgradeButtons = Array.prototype.slice.call(document.querySelectorAll("[data-marshal-upgrade]"));
   var classWeaponIcons = Array.prototype.slice.call(document.querySelectorAll("[data-weapon-icon]"));
+  var mobileControls = document.getElementById("mobile-controls");
   var moveStick = document.getElementById("move-stick");
   var moveKnob = document.getElementById("move-knob");
   var mobileFire = document.getElementById("mobile-fire");
@@ -226,6 +297,14 @@
   var cameraTarget = new THREE.Vector3(0, 0, 0);
   var menuCameraTarget = new THREE.Vector3(0.5, 2.8, -1.8);
   var cameraBaseOffset = new THREE.Vector3(0, 44, 34);
+  var gameplaySun = null;
+  var gameplaySunOffset = new THREE.Vector3(-18, 42, 26);
+  var gameplaySunRight = new THREE.Vector3();
+  var gameplaySunUp = new THREE.Vector3();
+  var gameplaySunBack = new THREE.Vector3();
+  var gameplayShadowBoundsDirty = true;
+  var gameplayShadowTexelX = 0;
+  var gameplayShadowTexelY = 0;
   var raycaster = new THREE.Raycaster();
   var pointerNdc = new THREE.Vector2(0, 0);
   var groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -284,7 +363,7 @@
   var MAIN_TOWN_LAYOUT = MAIN_TOWNS[0].layout;
   var PLAYER_START = createPlayerStart();
   var obstacleRects = [];
-  var obstacleSpatialGrid = Object.create(null);
+  var obstacleSpatialGrid = new Map();
   var obstacleSpatialGridKeys = [];
   var obstacleSpatialQueryId = 1;
   var obstacleSpatialStats = {
@@ -303,16 +382,39 @@
   var zombiePools = createZombiePoolBuckets();
   var zombiePoolCreated = createZombiePoolCounterBuckets();
   var zombiePoolInUse = createZombiePoolCounterBuckets();
-  var zombieSpatialGrid = Object.create(null);
+  var zombieSpatialGrid = new Map();
   var zombieSpatialGridKeys = [];
   var zombieSpatialBucketPool = [];
   var zombieSeparationScratch = { x: 0, z: 0 };
+  var zombieTeleportSideCountScratch = [0, 0, 0, 0];
   var zombieSpatialDirty = true;
   var zombieSpatialStats = {
     cellCount: 0,
     maxBucketSize: 0,
     occupants: 0,
   };
+  var gameplayWarmupMode = false;
+  var launcherCascadeWarmup = {
+    pending: false,
+    completed: false,
+    stage: 0,
+    steps: 0,
+    lastMs: 0,
+    maxMs: 0,
+  };
+  var launcherShrapnelResourceWarmup = {
+    pending: false,
+    completed: false,
+    stage: 0,
+    steps: 0,
+    lastMs: 0,
+    maxMs: 0,
+    activeItems: [],
+  };
+  var LAUNCHER_CASCADE_WARMUP_STAGE_COUNT = 10;
+  var LAUNCHER_SHRAPNEL_RESOURCE_WARMUP_STAGE_COUNT = 7;
+  var LAUNCHER_SHRAPNEL_RESOURCE_PARTICLE_STAGE_SIZE = MAX_PARTICLES;
+  var LAUNCHER_SHRAPNEL_RESOURCE_PROJECTILE_STAGE_SIZE = 160;
   var firePatchVisualPools = {
     standard: [],
     trail: [],
@@ -331,6 +433,17 @@
   var rifleTrapVisualPool = [];
   var rifleTrapVisualCreated = 0;
   var rifleTrapVisualInUse = 0;
+  var rifleTrapBackgroundPrewarmPending = true;
+  var launcherWarmupTurn = 0;
+  var marshalHallowedVisualPool = [];
+  var marshalHallowedVisualCreated = 0;
+  var marshalHallowedVisualInUse = 0;
+  var paleDeputyPool = [];
+  var paleDeputyCreated = 0;
+  var paleDeputyInUse = 0;
+  var paleDeputyVisibleGroundScratch = {};
+  var paleDeputyFormationScratch = { x: 0, z: 0 };
+  var paleDeputyClearPointScratch = { x: 0, z: 0 };
   var rifleTrapTargetScratch = [];
   var rifleTrapDistanceScratch = [];
   var shockwaveVisualPool = [];
@@ -342,6 +455,9 @@
   var lightFlashPool = [];
   var lightFlashCreated = 0;
   var lightFlashInUse = 0;
+  var scorchDecalVisualPool = [];
+  var scorchDecalVisualCreated = 0;
+  var scorchDecalVisualInUse = 0;
   var particleVisualPools = {
     box: [],
     sphere: [],
@@ -354,6 +470,15 @@
     box: 0,
     sphere: 0,
   };
+  var particleInstancedBatches = Object.create(null);
+  var particleInstancedBatchList = [];
+  var particleMaterialIdCounter = 1;
+  var xpOrbVisualPool = [];
+  var xpOrbVisualCreated = 0;
+  var xpOrbVisualInUse = 0;
+  var deathDebrisVisualPool = [];
+  var deathDebrisVisualCreated = 0;
+  var deathDebrisVisualInUse = 0;
   var projectileVisualPools = {
     standard: [],
     launcher: [],
@@ -372,6 +497,11 @@
     electric: 0,
     fireShard: 0,
   };
+  var projectileStandardInstancedBatches = Object.create(null);
+  var projectileStandardInstancedBatchList = [];
+  var projectileStandardMaterialIdCounter = 1;
+  var gameplayEffectWarmupDone = false;
+  var gameplayEffectWarmupInProgress = false;
   var cameraGroundBounds = { minX: -14, maxX: 14, minZ: -18, maxZ: 18 };
   var cameraMapBounds = {
     minX: -ARENA_W / 2 - 2.5,
@@ -415,6 +545,43 @@
     lastReason: "",
     nextHealthCheck: 0,
   };
+  var deathDebrisWorldPosScratch = new THREE.Vector3();
+  var deathDebrisWorldQuatScratch = new THREE.Quaternion();
+  var launcherShrapnelStartScratch = new THREE.Vector3();
+  var launcherExplosionEnemiesScratch = [];
+  var launcherExplosionDamageScratch = [];
+  var launcherExplosionKillScratch = [];
+  var delayedExplosionDueScratch = [];
+  var launcherShrapnelTrailBudgetScratch = {
+    skip: 0,
+    spawn: 0,
+  };
+  var zombieClearDirectionScratch = { x: 0, z: 1 };
+  var zombieSteerResultScratch = { x: 0, z: 1 };
+  var cameraFollowScratch = { x: 0, z: 0 };
+  var visibleGroundFollowScratch = { x: 0, z: 0 };
+  var enemyVisibleGroundScratch = {};
+  var fireVisibleGroundScratch = {};
+  var trapVisibleGroundScratch = {};
+  var lightVisibleGroundScratch = {};
+  var gameplayShadowAnchorScratch = new THREE.Vector3();
+  var moverObstacleQueryScratch = { mover: null, radius: 0, pushed: false };
+  var pointObstacleQueryScratch = { x: 0, z: 0, radius: 0 };
+  var clearanceObstacleQueryScratch = { x: 0, z: 0, radius: 0, best: 3 };
+  var blockingObstacleQueryScratch = { x1: 0, z1: 0, x2: 0, z2: 0, radius: 0, ignoreRect: null, bestRect: null, bestT: Infinity };
+  // Callers consume these synchronously; do not retain pooled blocking results in state.
+  var blockingObstacleResultPool = [{ rect: null, t: Infinity }, { rect: null, t: Infinity }, { rect: null, t: Infinity }, { rect: null, t: Infinity }];
+  var blockingObstacleResultCursor = 0;
+  var particleInstanceMatrixScratch = new THREE.Matrix4();
+  var particleInstancePositionScratch = new THREE.Vector3();
+  var particleInstanceScaleScratch = new THREE.Vector3();
+  var particleInstanceQuaternion = new THREE.Quaternion();
+  var projectileInstanceMatrixScratch = new THREE.Matrix4();
+  var projectileInstancePositionScratch = new THREE.Vector3();
+  var projectileInstanceScaleScratch = new THREE.Vector3();
+  var projectileInstanceQuaternionScratch = new THREE.Quaternion();
+  var coachGunTracerStartScratch = { x: 0, y: 0, z: 0 };
+  var coachGunTracerSizeScratch = { width: 0, length: 0 };
   var menuState = {
     time: 0,
     pointerX: 0,
@@ -427,11 +594,21 @@
     cameraDrift: 0,
   };
   var MENU_MUSIC_STORAGE_KEY = "dustAndDeadMenuMusic";
+  var AUDIO_VOLUME_STORAGE_PREFIX = "dustAndDeadAudioVolume.";
+  var CONTROL_LAYOUT_STORAGE_KEY = "dustAndDeadControlLayout";
   var MENU_MUSIC_VOLUME = 1;
   var GAME_MUSIC_VOLUME = 1;
   var GAME_MUSIC_INSTRUMENT_BOOST = 4.35;
   var GAME_MUSIC_TEMPO = 116;
   var REVOLVER_HAMMER_LEAD_TIME = 0.045;
+  var LAUNCHER_EXPLOSION_AUDIO_GROUP_WINDOW_MS = 42;
+  var LAUNCHER_EXPLOSION_AUDIO_GROUP_RADIUS = 6.5;
+  var LAUNCHER_EXPLOSION_AUDIO_FULL_WINDOW = 0.12;
+  var LAUNCHER_EXPLOSION_AUDIO_FULL_LIMIT = 7;
+  var LAUNCHER_EXPLOSION_AUDIO_MAX_GROUPS = 8;
+  var LAUNCHER_EXPLOSION_AUDIO_WARMUP_LEVEL = 0.82;
+  var AUDIO_DISCONNECT_BATCH_SIZE = 80;
+  var AUDIO_DISCONNECT_TICK_MS = 16;
   var introActive = !!introScreen && introScreen.classList.contains("is-visible");
   var audioState = {
     ctx: null,
@@ -439,6 +616,7 @@
     musicGain: null,
     sfxGain: null,
     sfxLimiter: null,
+    sfxWarmupDestination: null,
     menuGain: null,
     gameGain: null,
     gameExploreGain: null,
@@ -449,8 +627,24 @@
     zombieHitSfxLastAt: 0,
     zombieHitSfxBurstWindow: 0,
     zombieHitSfxBurstCount: 0,
+    launcherWhistleCount: 0,
     transientAudioNodeCount: 0,
+    audioDisconnectQueue: [],
+    audioDisconnectTimer: null,
+    launcherExplosionAudioWindowStart: 0,
+    launcherExplosionAudioFullCount: 0,
+    launcherExplosionAudioGroups: [],
+    launcherExplosionAudioFlushTimer: null,
+    launcherExplosionAudioGraphReady: false,
+    launcherExplosionAudioStats: {
+      grouped: 0,
+      mergedGroups: 0,
+      fullPlayed: 0,
+      compactPlayed: 0,
+    },
     enabled: readStoredAudioEnabled(),
+    musicVolume: readStoredAudioVolume("music", 1),
+    sfxVolume: readStoredAudioVolume("sfx", 1),
     unlocked: false,
     menu: {
       desired: true,
@@ -473,6 +667,13 @@
       battleTarget: 0,
       danger: 0,
     },
+  };
+  var controlLayoutState = {
+    saved: readStoredControlLayout(),
+    draft: null,
+    draftIsDefault: false,
+    editing: false,
+    drag: null,
   };
   var WEAPONS = {
     revolver: {
@@ -535,6 +736,26 @@
       blastDamage: 4,
       shake: 0.38,
     },
+    coachGun: {
+      id: "coachGun",
+      label: "Coach Gun",
+      shortLabel: "COACH",
+      cost: 0,
+      magazine: 2,
+      reserveStart: 30,
+      reloadTime: 0.62,
+      cooldown: 0.48,
+      damage: 0.72,
+      speed: 36,
+      life: 0.44,
+      range: COACH_GUN_BASE_RANGE,
+      hitRadius: 0.16,
+      width: 0.08,
+      length: 0.48,
+      muzzleDistance: 1.22,
+      muzzleY: 1.25,
+      shake: 0.34,
+    },
   };
   var PLAYER_CLASSES = {
     gunslinger: {
@@ -553,6 +774,11 @@
       id: "demolitionist",
       label: "Demolitionist",
       weapon: "launcher",
+    },
+    marshal: {
+      id: "marshal",
+      label: "Marshal",
+      weapon: "coachGun",
     },
   };
   var REVOLVER_UPGRADES = {
@@ -594,6 +820,16 @@
     pyrotechnician: {
       id: "pyrotechnician",
       label: "Pyrotechnician",
+    },
+  };
+  var MARSHAL_UPGRADES = {
+    breachMarshal: {
+      id: "breachMarshal",
+      label: "Breach Marshal",
+    },
+    graveWarden: {
+      id: "graveWarden",
+      label: "Grave Warden",
     },
   };
   var STANDARD_UPGRADES = [
@@ -789,11 +1025,12 @@
       requires: ["softAim"],
     },
     {
-      id: "killReload",
+      id: "allRightAllLeft",
       branch: "dualRevolvers",
-      title: "Quick Hands",
-      description: "Every 3 kills restores 3 revolver shots.",
-      symbol: "K3",
+      title: "ALL RIGHT",
+      subtitle: "& all left",
+      description: "One fires, one reloads. Kills add up to 4 free rounds.",
+      symbol: "R/L",
       rank: "9",
       suit: "D",
       color: "red",
@@ -962,12 +1199,13 @@
       id: "quickerTrail",
       branch: "trailWarden",
       title: "Quicker Trail",
-      description: "Auto-traps appear 0.5s more often.",
+      description: "Auto-traps appear faster, down to 1s.",
       symbol: "QTR",
       rank: "J",
       suit: "S",
       color: "black",
       repeatable: true,
+      maxStacks: 8,
       requires: ["trailLayer"],
       apply: function () {
         state.rifleAutoTrapFrequency += 1;
@@ -1202,6 +1440,224 @@
       requiresAny: ["napalmShells", "rollingFlame"],
     },
   ];
+  var MARSHAL_SPECIAL_UPGRADES = [
+    {
+      id: "doorKicker",
+      branch: "breachMarshal",
+      title: "Door Kicker",
+      description: "4+ pellets stun and launch the target.",
+      rank: "A",
+      suit: "D",
+      color: "red",
+      starter: true,
+    },
+    {
+      id: "doubleTap",
+      branch: "breachMarshal",
+      title: "Double Tap",
+      description: "A quick second shot fires faster and hits 20% harder.",
+      rank: "K",
+      suit: "H",
+      color: "red",
+      starter: true,
+    },
+    {
+      id: "lastWord",
+      branch: "breachMarshal",
+      title: "Last Word",
+      description: "Your final shell deals +45% damage and knockback.",
+      rank: "Q",
+      suit: "D",
+      color: "red",
+      starter: true,
+    },
+    {
+      id: "shellCatcher",
+      branch: "breachMarshal",
+      title: "Shell Catcher",
+      description: "3 close kills grant one shell; overflow goes to reserve.",
+      rank: "J",
+      suit: "H",
+      color: "red",
+      minLevel: 16,
+    },
+    {
+      id: "buckAndBall",
+      branch: "breachMarshal",
+      title: "Buck and Ball",
+      description: "Each blast carries one long-range heavy ball.",
+      rank: "10",
+      suit: "D",
+      color: "red",
+      minLevel: 16,
+    },
+    {
+      id: "rideTheRecoil",
+      branch: "breachMarshal",
+      title: "Ride the Recoil",
+      description: "Hit 3 enemies to gain +30% speed for 1.25s.",
+      rank: "9",
+      suit: "H",
+      color: "red",
+      minLevel: 16,
+    },
+    {
+      id: "bonebreaker",
+      branch: "breachMarshal",
+      title: "Bonebreaker",
+      description: "Launched enemies hurt and stun what they collide with.",
+      rank: "8",
+      suit: "D",
+      color: "red",
+      minLevel: 19,
+      requires: ["doorKicker"],
+    },
+    {
+      id: "noTimeToBleed",
+      branch: "breachMarshal",
+      title: "No Time to Bleed",
+      description: "Every 6 close kills restore 4 HP.",
+      rank: "7",
+      suit: "H",
+      color: "red",
+      minLevel: 19,
+    },
+    {
+      id: "packedBuckshot",
+      branch: "breachMarshal",
+      title: "Packed Buckshot",
+      description: "+1 pellet per blast. Up to 4 stacks.",
+      rank: "6",
+      suit: "D",
+      color: "red",
+      repeatable: true,
+      maxStacks: 4,
+      minLevel: 16,
+    },
+    {
+      id: "hardCast",
+      branch: "breachMarshal",
+      title: "Hard Cast",
+      description: "+10% close damage and knockback. Max 5 stacks.",
+      rank: "5",
+      suit: "H",
+      color: "red",
+      repeatable: true,
+      maxStacks: 5,
+      minLevel: 16,
+    },
+    {
+      id: "rockSalt",
+      branch: "graveWarden",
+      title: "Rock Salt",
+      description: "Consecrated targets are slowed by 25%.",
+      rank: "A",
+      suit: "S",
+      color: "black",
+      starter: true,
+    },
+    {
+      id: "stillness",
+      branch: "graveWarden",
+      title: "Stillness",
+      description: "Hold fire 1.2s: tighter spread and +45% damage.",
+      rank: "K",
+      suit: "C",
+      color: "black",
+      starter: true,
+    },
+    {
+      id: "lastRites",
+      branch: "graveWarden",
+      title: "Last Rites",
+      description: "A marked Coach Gun kill raises a Pale Deputy for 12s. Max 3.",
+      rank: "Q",
+      suit: "S",
+      color: "black",
+      starter: true,
+    },
+    {
+      id: "graveTithe",
+      branch: "graveWarden",
+      title: "Grave Tithe",
+      description: "Every 2 marked kills grant one shell; overflow goes to reserve.",
+      rank: "J",
+      suit: "C",
+      color: "black",
+      minLevel: 16,
+    },
+    {
+      id: "heavensBounty",
+      branch: "graveWarden",
+      title: "Heaven's Bounty",
+      description: "A dangerous foe is marked every 12s for XP and 2 shells.",
+      rank: "10",
+      suit: "S",
+      color: "black",
+      minLevel: 16,
+    },
+    {
+      id: "passingJudgment",
+      branch: "graveWarden",
+      title: "Passing Judgment",
+      description: "A slain mark passes to two nearby enemies.",
+      rank: "9",
+      suit: "C",
+      color: "black",
+      minLevel: 19,
+      requires: ["lastRites"],
+    },
+    {
+      id: "purifyingSalt",
+      branch: "graveWarden",
+      title: "Purifying Salt",
+      description: "Pellets erase acid; cleansing hastens reload.",
+      rank: "8",
+      suit: "S",
+      color: "black",
+      minLevel: 16,
+    },
+    {
+      id: "hallowedGround",
+      branch: "graveWarden",
+      title: "Hallowed Ground",
+      description: "Marked elite deaths sanctify ground: slow foes, reload +25%.",
+      rank: "7",
+      suit: "C",
+      color: "black",
+      minLevel: 19,
+      requires: ["heavensBounty"],
+    },
+    {
+      id: "fineChoke",
+      branch: "graveWarden",
+      title: "Fine Choke",
+      description: "+7% reach and a tighter pattern. Up to 5 stacks.",
+      rank: "6",
+      suit: "S",
+      color: "black",
+      repeatable: true,
+      maxStacks: 5,
+      minLevel: 16,
+    },
+    {
+      id: "sanctifiedLead",
+      branch: "graveWarden",
+      title: "Sanctified Lead",
+      description: "+12% damage to marked enemies. Up to 5 stacks.",
+      rank: "5",
+      suit: "C",
+      color: "black",
+      repeatable: true,
+      maxStacks: 5,
+      minLevel: 16,
+    },
+  ];
+  var DUAL_REVOLVER_HANDS = ["right", "left"];
+  var DUAL_REVOLVER_HAND_SIDES = { right: -1, left: 1 };
+  var DUAL_REVOLVER_FREE_RELOAD_MAX = 4;
+  var DUAL_REVOLVER_HAND_MAGAZINE = WEAPONS.revolver.magazine;
+
   var UPGRADE_ICONS = {
     swiftBoots: `
       <svg
@@ -1323,11 +1779,8 @@
         '<path d="M8 32s9-15 24-15 24 15 24 15-9 15-24 15S8 32 8 32Z"/>' +
         '<circle cx="32" cy="32" r="7"/><path d="M32 8v7M32 49v7M8 32h7M49 32h7"/>'
     ),
-    killReload: upgradeIcon(
-      '<path d="M11 15l8 8M19 15l-8 8M26 15l8 8M34 15l-8 8M41 15l8 8M49 15l-8 8"/>' +
-        '<path fill="currentColor" opacity=".16" stroke="none" d="M23 34h18l5 6v11l-5 5H23l-5-5V40l5-6Z"/>' +
-        '<path d="M23 34h18l5 6v11l-5 5H23l-5-5V40l5-6Z"/>' +
-        '<path d="M20 45h24M12 44H7M57 44h-5"/>'
+    allRightAllLeft: upgradeIcon(
+      '<path fill="currentColor" fill-rule="evenodd" stroke="none" transform="matrix(0.27 0 0 0.27 -2.6 -2.6)" d="M 48.0 204.6 L 48.0 205.8 L 48.4 206.6 L 49.8 207.6 L 52.5 207.6 L 53.7 206.4 L 53.7 204.6 Z M 43.5 196.0 L 43.5 202.1 L 44.1 202.9 L 45.1 203.3 L 119.2 203.1 L 118.6 201.3 L 118.4 194.8 L 44.7 194.8 Z M 170.1 187.0 L 168.2 187.8 L 168.6 191.1 L 169.9 189.7 Z M 161.9 202.3 L 161.9 203.5 L 163.9 202.7 L 167.0 202.9 L 167.0 205.0 L 168.4 209.7 L 171.1 214.4 L 173.9 217.4 L 177.0 219.7 L 180.7 221.5 L 184.8 222.7 L 187.4 223.1 L 193.1 223.1 L 196.4 222.5 L 199.5 221.5 L 203.3 219.5 L 207.8 215.4 L 209.5 213.1 L 211.3 209.3 L 212.3 204.8 L 212.3 201.3 L 211.7 198.0 L 210.1 193.9 L 207.6 190.3 L 205.2 187.8 L 200.3 184.8 L 195.8 183.3 L 192.7 182.9 L 186.8 183.3 L 182.5 184.5 L 180.9 185.4 L 179.9 182.5 L 174.3 191.3 L 185.2 191.3 L 182.7 188.6 L 182.9 188.2 L 187.8 186.6 L 193.1 186.4 L 197.2 187.2 L 200.1 188.4 L 202.3 189.9 L 205.2 192.5 L 207.4 195.8 L 208.6 198.8 L 209.3 202.3 L 209.0 205.8 L 208.0 209.3 L 206.2 212.5 L 202.7 216.2 L 200.3 217.8 L 195.4 219.9 L 190.3 220.7 L 185.8 220.5 L 180.3 219.0 L 176.6 217.2 L 173.3 214.8 L 170.7 211.9 L 168.0 207.2 L 167.2 204.6 L 167.2 202.9 L 169.4 203.9 L 170.5 205.0 L 171.7 207.0 L 173.5 208.6 L 174.7 209.0 L 176.8 209.0 L 178.4 208.4 L 179.0 207.8 L 178.8 207.0 L 176.2 206.0 L 175.4 205.2 L 174.5 203.7 L 173.5 200.3 L 171.3 197.6 L 169.4 196.6 L 167.8 196.2 L 166.0 199.2 L 163.7 201.3 Z M 129.8 179.4 L 129.6 184.3 L 130.0 185.0 L 145.1 185.0 L 146.4 185.6 L 147.0 186.6 L 146.8 187.6 L 145.1 188.8 L 129.8 189.0 L 129.6 195.0 L 130.0 195.6 L 144.1 195.6 L 146.0 196.0 L 147.0 197.4 L 146.2 198.6 L 145.1 199.0 L 130.0 199.0 L 129.6 199.9 L 129.6 201.1 L 130.0 201.9 L 153.5 202.1 L 154.3 201.5 L 154.3 179.6 L 153.9 179.2 Z M 151.7 156.8 L 151.5 157.2 L 154.3 160.1 L 155.2 162.3 L 155.2 163.7 L 154.5 166.0 L 152.3 168.8 L 154.5 168.6 L 155.4 168.2 L 158.0 165.6 L 158.0 162.7 L 157.2 160.7 L 155.2 158.2 L 153.5 157.2 Z M 136.8 170.7 L 144.5 169.6 L 142.1 167.4 L 141.1 165.4 L 140.7 163.5 L 141.1 160.3 L 142.5 157.8 L 144.1 156.2 L 146.8 154.7 L 148.8 154.1 L 155.2 154.1 L 159.0 155.8 L 161.3 158.0 L 162.1 159.6 L 162.7 162.3 L 162.5 163.9 L 169.6 163.9 L 167.4 163.3 L 166.2 162.5 L 164.3 160.3 L 163.9 158.6 L 162.5 156.2 L 161.1 154.7 L 158.8 153.3 L 154.7 152.1 L 148.2 152.3 L 143.7 154.1 L 140.9 156.8 L 139.8 158.2 L 138.6 161.7 L 138.8 167.0 L 138.0 169.2 Z M 196.0 145.8 L 192.9 148.6 L 193.5 149.0 L 195.0 148.8 L 196.0 147.8 Z M 195.2 144.9 L 194.3 144.5 L 192.7 144.9 L 191.7 146.6 L 192.1 147.8 Z M 209.9 134.3 L 208.8 133.3 L 182.5 133.3 L 181.5 134.1 L 181.3 136.0 L 182.3 138.8 L 182.9 142.7 L 182.7 149.0 L 181.5 154.1 L 179.9 157.6 L 178.6 159.4 L 175.6 162.7 L 172.3 164.7 L 170.5 165.4 L 169.4 165.4 L 169.6 177.6 L 179.9 177.8 L 180.7 178.0 L 180.7 178.4 L 178.8 178.8 L 168.6 179.0 L 168.2 176.0 L 168.0 165.6 L 162.9 165.4 L 161.1 166.0 L 157.8 168.6 L 154.3 169.9 L 129.0 172.9 L 128.0 173.7 L 125.1 174.3 L 123.9 175.6 L 123.5 176.6 L 123.5 180.1 L 123.1 182.1 L 122.3 183.5 L 121.3 184.5 L 120.0 185.2 L 119.4 186.2 L 126.4 186.6 L 126.6 186.8 L 126.2 187.2 L 62.7 187.4 L 62.3 186.4 L 61.4 185.6 L 58.6 185.4 L 57.6 186.0 L 57.2 187.2 L 57.4 187.4 L 57.0 187.8 L 56.3 187.6 L 54.5 188.4 L 53.9 189.7 L 53.9 191.7 L 55.3 193.1 L 118.6 193.1 L 119.0 190.3 L 119.4 189.0 L 119.8 188.8 L 120.2 190.9 L 120.0 202.9 L 121.5 204.1 L 123.7 205.0 L 124.5 206.0 L 125.8 206.8 L 158.2 207.0 L 160.1 205.6 L 160.3 201.5 L 162.7 200.1 L 164.1 198.6 L 166.2 195.2 L 166.6 193.5 L 166.6 189.7 L 166.2 188.2 L 164.1 184.8 L 161.7 182.5 L 158.0 180.7 L 160.3 180.7 L 163.1 181.9 L 164.3 182.7 L 166.4 184.8 L 167.4 186.6 L 167.8 186.6 L 169.9 185.6 L 171.3 184.3 L 172.3 182.9 L 173.1 180.7 L 176.8 180.7 L 179.4 179.9 L 183.3 177.8 L 188.0 174.3 L 191.1 171.5 L 194.6 167.4 L 199.5 159.8 L 202.9 152.7 L 207.6 140.0 L 209.9 135.8 Z M 128.2 178.4 L 129.4 177.6 L 155.4 177.8 L 156.0 178.8 L 156.0 202.1 L 155.6 202.9 L 154.7 203.5 L 128.8 203.3 L 128.0 202.3 Z M 193.7 143.5 L 195.6 143.9 L 196.8 145.1 L 197.2 146.2 L 197.2 147.4 L 196.8 148.4 L 195.8 149.4 L 194.1 150.0 L 192.1 149.4 L 190.9 147.8 L 190.9 145.8 L 191.3 144.9 L 192.1 144.1 Z M 96.2 133.9 L 100.8 132.1 L 102.9 136.6 L 105.5 140.2 L 109.2 143.7 L 114.1 146.8 L 118.2 148.4 L 121.7 149.2 L 124.7 149.6 L 128.8 149.6 L 134.1 148.8 L 137.4 147.8 L 141.1 146.2 L 144.1 144.3 L 146.8 142.3 L 150.9 138.0 L 153.7 133.7 L 154.9 131.1 L 152.3 134.5 L 149.2 137.6 L 144.5 141.1 L 141.3 142.7 L 137.2 144.1 L 132.7 144.9 L 126.8 144.9 L 122.7 144.1 L 119.6 143.1 L 116.4 141.5 L 113.5 139.4 L 110.0 136.0 L 108.6 133.9 L 107.2 130.9 L 107.4 130.4 L 113.1 129.6 L 108.6 126.2 L 103.3 120.9 L 99.0 128.2 Z M 51.9 106.8 L 48.6 109.8 L 50.4 110.0 L 51.2 109.6 L 52.1 108.4 Z M 50.8 105.7 L 48.6 105.7 L 47.6 107.0 L 47.8 108.8 L 50.4 106.6 Z M 102.5 114.7 L 105.7 111.5 L 109.2 108.8 L 112.9 106.8 L 116.0 105.5 L 122.9 104.1 L 127.8 104.1 L 131.5 104.7 L 134.3 105.5 L 138.6 107.6 L 143.5 111.3 L 145.6 113.5 L 147.4 116.6 L 147.0 117.0 L 141.7 118.4 L 147.0 121.5 L 152.3 125.6 L 156.2 116.6 L 157.6 112.1 L 153.5 114.5 L 150.3 109.6 L 146.8 106.2 L 142.7 103.3 L 138.8 101.5 L 134.9 100.2 L 131.1 99.6 L 125.8 99.6 L 122.7 100.0 L 117.2 101.7 L 111.5 104.7 L 108.6 107.0 L 106.2 109.4 Z M 90.4 85.3 L 87.4 87.8 L 87.2 90.0 L 87.6 92.1 L 88.8 94.7 L 91.0 97.2 L 92.3 98.0 L 94.3 98.6 L 94.5 98.0 L 91.9 95.5 L 90.4 92.5 L 90.4 89.4 L 90.8 88.2 L 93.1 84.9 Z M 110.0 82.9 L 101.7 84.1 L 103.7 85.7 L 105.1 88.2 L 105.7 90.2 L 105.7 93.3 L 104.5 96.6 L 102.1 99.2 L 100.0 100.4 L 97.6 101.3 L 91.7 101.5 L 88.8 100.6 L 87.0 99.6 L 84.7 97.4 L 83.7 95.5 L 83.1 93.3 L 83.1 90.0 L 81.3 90.6 L 76.1 90.6 L 78.4 91.5 L 80.4 93.3 L 83.3 99.0 L 85.5 101.3 L 88.8 102.9 L 91.3 103.5 L 94.9 103.7 L 98.0 103.3 L 100.0 102.7 L 102.5 101.5 L 106.2 97.8 L 107.4 95.3 L 108.0 92.7 L 107.6 89.0 L 107.8 86.1 L 108.6 84.3 Z M 75.5 61.4 L 74.7 62.3 L 74.1 63.7 L 74.3 65.9 L 76.4 64.9 L 75.7 63.5 Z M 91.3 49.4 L 91.3 73.5 L 117.4 73.5 L 117.6 67.8 L 117.2 67.4 L 100.6 67.4 L 99.2 66.1 L 99.0 65.5 L 99.2 64.5 L 100.2 63.5 L 101.3 63.1 L 117.4 63.1 L 117.4 55.9 L 100.6 55.7 L 99.8 55.3 L 99.0 54.1 L 99.6 52.9 L 101.1 52.3 L 117.4 52.3 L 117.6 49.6 L 117.2 49.2 L 91.9 49.0 Z M 128.8 47.6 L 129.4 49.0 L 129.8 56.5 L 193.7 56.5 L 195.0 57.2 L 204.8 57.2 L 205.6 56.5 L 206.0 55.7 L 206.0 48.8 L 204.8 47.6 Z M 33.3 122.3 L 34.5 123.3 L 62.5 123.3 L 63.5 122.5 L 63.7 120.4 L 62.5 117.0 L 61.7 111.3 L 61.9 105.7 L 62.7 101.7 L 63.9 98.6 L 65.9 95.3 L 68.6 92.7 L 70.6 91.3 L 74.3 89.8 L 73.9 82.7 L 73.9 77.8 L 61.7 77.6 L 61.4 77.4 L 61.9 77.0 L 64.5 76.6 L 74.9 76.6 L 75.3 77.4 L 75.7 89.0 L 82.3 88.8 L 83.9 88.0 L 87.4 85.1 L 90.0 84.1 L 117.6 80.4 L 119.0 79.4 L 121.9 79.0 L 122.7 78.6 L 123.9 77.4 L 124.3 76.4 L 124.7 70.0 L 126.0 68.2 L 128.0 67.0 L 128.8 65.7 L 120.9 65.1 L 120.9 64.7 L 185.6 64.5 L 186.0 65.5 L 187.0 66.3 L 189.9 66.3 L 190.9 65.5 L 191.1 64.5 L 191.5 64.1 L 192.7 64.1 L 194.1 63.1 L 194.8 61.4 L 194.6 59.6 L 193.3 58.4 L 129.4 58.4 L 128.6 62.3 L 128.2 62.9 L 127.8 62.1 L 128.2 48.2 L 127.2 46.7 L 124.5 45.9 L 122.1 43.9 L 86.1 43.9 L 84.5 45.5 L 84.3 49.6 L 81.7 51.2 L 80.0 52.9 L 78.2 56.1 L 77.6 58.6 L 77.6 61.7 L 78.4 64.7 L 80.4 68.0 L 82.9 70.2 L 86.8 72.3 L 85.1 72.5 L 81.9 71.2 L 79.8 69.8 L 78.2 68.2 L 77.2 66.3 L 76.8 66.3 L 73.9 67.8 L 72.1 69.6 L 71.0 71.5 L 70.6 73.9 L 70.2 74.3 L 66.8 74.3 L 64.3 74.9 L 60.0 77.2 L 56.1 79.8 L 53.3 82.3 L 49.2 86.8 L 44.5 93.9 L 39.6 104.5 L 36.1 114.9 L 33.3 120.9 Z M 48.4 104.7 L 50.8 104.5 L 51.6 104.9 L 53.1 106.8 L 53.1 108.8 L 52.7 109.6 L 50.8 111.1 L 48.2 110.9 L 46.5 109.0 L 46.5 106.6 Z M 89.6 48.2 L 90.8 47.4 L 118.6 47.6 L 119.6 48.8 L 119.6 73.7 L 119.2 74.5 L 118.2 75.3 L 117.0 75.5 L 90.2 75.3 L 89.2 74.1 L 89.2 49.0 Z M 193.1 43.7 L 193.1 46.1 L 199.7 45.9 L 199.2 43.9 L 197.6 42.7 L 194.6 42.5 L 193.7 42.9 Z M 63.9 42.7 L 64.5 43.5 L 66.3 44.1 L 67.8 45.5 L 68.6 47.0 L 69.4 50.2 L 70.6 52.3 L 72.9 54.3 L 75.3 55.3 L 76.4 55.5 L 78.4 51.9 L 80.0 50.2 L 82.7 48.4 L 82.7 47.4 L 78.6 48.4 L 75.1 47.6 L 73.3 45.9 L 71.9 43.5 L 70.6 42.3 L 68.6 41.2 L 65.3 41.4 L 64.5 41.9 Z M 216.4 40.2 L 209.7 51.2 L 210.9 51.2 L 211.7 51.6 L 212.7 52.9 L 213.1 54.1 L 212.9 57.6 L 211.5 59.6 L 210.7 60.0 L 209.0 59.8 L 216.4 71.5 L 216.4 66.8 L 216.0 63.5 L 216.2 62.1 L 229.9 66.1 L 220.5 58.6 L 220.7 58.4 L 241.3 55.7 L 221.5 53.7 L 221.1 53.3 L 229.1 46.1 L 216.8 50.6 L 216.4 45.9 Z"/>'
     ),
     silverBullet: upgradeIcon(
       '<path fill="currentColor" opacity=".18" stroke="none" d="M17 36c11-15 23-23 36-24 1 13-8 25-24 36L17 36Z"/>' +
@@ -1461,14 +1914,319 @@
         '<path d="M16 54c0-5 4-8 7-12 0 5 3 7 6 9M48 54c0-5-4-8-7-12 0 5-3 7-6 9"/>' +
         '<path d="M32 47c5 5 8 9 8 14M32 47c-5 5-8 9-8 14"/>'
     ),
+    doorKicker: upgradeIcon(
+      '<path fill="currentColor" opacity=".13" stroke="none" d="M10 12h28v42H10z"/><path d="M10 54V12h28v42M24 12v42M31 32h2"/><path d="M43 39l9-8 5 6-8 9-9 2 3-9Z"/><path d="M47 26l5-6M52 28l8-2M49 30l7 5"/>'
+    ),
+    doubleTap: upgradeIcon(
+      '<path d="M14 44V18h11v26l-2 7h-7l-2-7ZM39 44V18h11v26l-2 7h-7l-2-7ZM14 39h11M39 39h11"/><path d="M8 11l5 2 3-5 2 5 6-2-3 5 4 4-6-1-2 6-2-6-6 1 4-4-5-5ZM36 10l5 2 3-5 2 5 6-2-3 5 4 4-6-1-2 6-2-6-6 1 4-4-5-5Z"/>'
+    ),
+    lastWord: upgradeIcon(
+      '<circle cx="32" cy="32" r="24" stroke-dasharray="10 5"/><path d="M27 43V17h10v26l-2 7h-6l-2-7ZM27 39h10"/><path fill="currentColor" opacity=".14" stroke="none" d="m32 7 3 7 7 1-6 5 2 7-6-4-6 4 2-7-6-5 7-1 3-7Z"/>'
+    ),
+    shellCatcher: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M27 5h10v21l-2 5h-6l-2-5V5Z"/>' +
+        '<path d="M27 5h10v21l-2 5h-6l-2-5V5ZM27 11h10M27 24h10"/>' +
+        '<path d="M8 42c3-3 7-2 10 1l8 7V37c0-3 5-3 5 0v8-5c0-3 5-3 5 0v6-3c0-3 5-3 5 0v5-2c0-3 5-3 5 0v4c0 6-5 10-12 10h-5c-5 0-9-2-13-7l-4-5c-2-2-1-4 1-6Z"/>'
+    ),
+    buckAndBall: upgradeIcon(
+      '<circle cx="32" cy="32" r="9" fill="currentColor" opacity=".18"/><circle cx="32" cy="32" r="9"/><circle cx="32" cy="10" r="3"/><circle cx="48" cy="16" r="3"/><circle cx="54" cy="32" r="3"/><circle cx="48" cy="48" r="3"/><circle cx="32" cy="54" r="3"/><circle cx="16" cy="48" r="3"/><circle cx="10" cy="32" r="3"/><circle cx="16" cy="16" r="3"/>'
+    ),
+    rideTheRecoil: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M7 29h12l9-8 9 4-4 4h20l8 4-8 4H31l-8 9H9l6-9H7l-4-4 4-4Z"/>' +
+        '<path d="M7 29h12l9-8 9 4-4 4h20l8 4-8 4H31l-8 9H9l6-9H7l-4-4 4-4Z"/>' +
+        '<path d="M21 14H5m0 0 8-8M5 14l8 8M36 29h19M36 35h19M55 25l6-5M57 32h6M55 39l6 5"/>'
+    ),
+    bonebreaker: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M12 24c-3-4-9-3-10 2-1 3 1 6 4 7-3 2-4 6-1 9 3 3 9 2 11-3h32c2 5 8 6 11 3 3-3 2-7-1-9 3-1 5-4 4-7-1-5-7-6-10-2H12Z"/>' +
+        '<path d="M12 24c-3-4-9-3-10 2-1 3 1 6 4 7-3 2-4 6-1 9 3 3 9 2 11-3h32c2 5 8 6 11 3 3-3 2-7-1-9 3-1 5-4 4-7-1-5-7-6-10-2H12Z"/>' +
+        '<path d="m33 18-6 12 7 2-5 14 12-17-8-2 5-9"/>'
+    ),
+    noTimeToBleed: upgradeIcon(
+      '<path fill="currentColor" opacity=".13" stroke="none" d="M32 53S10 41 10 24c0-10 13-15 22-4 9-11 22-6 22 4 0 17-22 29-22 29Z"/><path d="M32 53S10 41 10 24c0-10 13-15 22-4 9-11 22-6 22 4 0 17-22 29-22 29Z"/><circle cx="32" cy="31" r="10"/><path d="M32 25v7l5 3M20 12l5 5M44 12l-5 5"/>'
+    ),
+    packedBuckshot: upgradeIcon(
+      '<g fill="currentColor" opacity=".22" stroke="none"><circle cx="18" cy="18" r="4"/><circle cx="32" cy="18" r="4"/><circle cx="46" cy="18" r="4"/><circle cx="18" cy="32" r="4"/><circle cx="32" cy="32" r="4"/><circle cx="46" cy="32" r="4"/><circle cx="18" cy="46" r="4"/><circle cx="32" cy="46" r="4"/><circle cx="46" cy="46" r="4"/></g><g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="18" cy="18" r="4"/><circle cx="32" cy="18" r="4"/><circle cx="46" cy="18" r="4"/><circle cx="18" cy="32" r="4"/><circle cx="32" cy="32" r="4"/><circle cx="46" cy="32" r="4"/><circle cx="18" cy="46" r="4"/><circle cx="32" cy="46" r="4"/><circle cx="46" cy="46" r="4"/></g><path d="M57 8v14M50 15h14"/>'
+    ),
+    hardCast: upgradeIcon(
+      '<path fill="currentColor" opacity=".18" stroke="none" d="m30 14 11 4 7 10-2 12-10 8-12-3-7-10 2-12 11-9Z"/>' +
+        '<path d="m30 14 11 4 7 10-2 12-10 8-12-3-7-10 2-12 11-9ZM5 24h9M3 32h11M5 40h9M51 20l6-6M53 30h8M51 40l6 6"/>'
+    ),
+    rockSalt: upgradeIcon(
+      '<path fill="currentColor" opacity=".12" stroke="none" d="M18 16h25l5 34H13l5-34Z"/><path d="M18 16h25l5 34H13l5-34ZM22 16l3-7h12l3 7"/><path d="m23 29 4-5 4 5-4 5-4-5Zm11 9 4-5 4 5-4 5-4-5ZM17 42l3-4 3 4-3 4-3-4Z"/>'
+    ),
+    stillness: upgradeIcon(
+      '<circle cx="32" cy="34" r="21"/><path d="M27 8h10M32 8v5M32 21v13l8 5"/><circle cx="32" cy="34" r="4"/><path d="M8 34h8M48 34h8M32 10v8M32 50v8"/>'
+    ),
+    lastRites: upgradeIcon(
+      '<path fill="currentColor" opacity=".12" stroke="none" d="M21 53V25c0-9 5-15 11-15s11 6 11 15v28H21Z"/><path d="M21 53V25c0-9 5-15 11-15s11 6 11 15v28M15 53h34M32 19v18M25 27h14M13 22C7 27 7 39 13 44M51 22c6 5 6 17 0 22M8 16C-1 25 0 43 8 50M56 16c9 9 8 27 0 34"/>'
+    ),
+    graveTithe: upgradeIcon(
+      '<path fill="currentColor" opacity=".12" stroke="none" d="M6 48V36c0-4 2-6 5-6s5 2 5 6v12H6Zm11 0V32c0-4 2-6 5-6s5 2 5 6v16H17Zm11 0V38c0-4 2-6 5-6s5 2 5 6v10H28Z"/>' +
+        '<path d="M4 48h34M6 48V36c0-4 2-6 5-6s5 2 5 6v12M17 48V32c0-4 2-6 5-6s5 2 5 6v16M28 48V38c0-4 2-6 5-6s5 2 5 6v10M19 32h6M22 29v7M9 18c12-8 29-7 42 3M44 13l7 8-9 2M47 27h10v21l-2 6h-6l-2-6V27ZM47 44h10"/>'
+    ),
+    heavensBounty: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="m32 7 6 11 12 2-8 9 2 12-12-5-12 5 2-12-8-9 12-2 6-11Z"/><path d="m32 7 6 11 12 2-8 9 2 12-12-5-12 5 2-12-8-9 12-2 6-11ZM22 47c3-6 17-6 20 0M25 47v7h14v-7M27 27c0-6 10-6 10 0 0 4-2 7-5 7s-5-3-5-7Z"/>'
+    ),
+    passingJudgment: upgradeIcon(
+      '<circle cx="32" cy="16" r="8"/><circle cx="14" cy="48" r="7"/><circle cx="50" cy="48" r="7"/><path d="M32 24v8M32 32 14 41M32 32l18 9M28 16h8M32 12v8M11 48h6M47 48h6"/>'
+    ),
+    purifyingSalt: upgradeIcon(
+      '<path fill="currentColor" opacity=".14" stroke="none" d="M47 7c7 10 11 18 11 25 0 7-5 12-12 12s-12-5-12-12c0-7 6-15 13-25Z"/>' +
+        '<path d="M47 7c7 10 11 18 11 25 0 7-5 12-12 12s-12-5-12-12c0-7 6-15 13-25ZM33 47l25-29"/>' +
+        '<path d="M10 17l5 5-5 5-5-5 5-5Zm11 11 5 5-5 5-5-5 5-5ZM10 38l5 5-5 5-5-5 5-5ZM2 22h3M8 33h4M2 43h3"/>'
+    ),
+    hallowedGround: upgradeIcon(
+      '<ellipse cx="32" cy="49" rx="25" ry="9" fill="currentColor" opacity=".12" stroke="none"/><ellipse cx="32" cy="49" rx="25" ry="9"/><path d="M22 47V23c0-8 4-13 10-13s10 5 10 13v24M32 18v18M25 26h14M10 49c5-4 10-6 15-7M54 49c-5-4-10-6-15-7"/>'
+    ),
+    fineChoke: upgradeIcon(
+      '<circle cx="21" cy="32" r="9"/><circle cx="43" cy="32" r="9"/><path d="M4 18h13M4 18l6-6M4 18l6 6M60 18H47M60 18l-6-6M60 18l-6 6M4 46h13M4 46l6-6M4 46l6 6M60 46H47M60 46l-6-6M60 46l-6 6"/>'
+    ),
+    sanctifiedLead: upgradeIcon(
+      '<path fill="currentColor" opacity=".13" stroke="none" d="M27 46V20l5-9 5 9v26l-3 7h-4l-3-7Z"/><path d="M27 46V20l5-9 5 9v26l-3 7h-4l-3-7ZM27 40h10"/><circle cx="32" cy="31" r="22"/><path d="M32 3v8M32 53v8M4 31h8M52 31h8M42 12l-5 6"/>'
+    ),
     default: upgradeIcon(
       '<path fill="currentColor" opacity=".16" stroke="none" d="M32 8l7 15 16 2-12 11 3 16-14-8-14 8 3-16L9 25l16-2 7-15Z"/>' +
         '<path d="M32 8l7 15 16 2-12 11 3 16-14-8-14 8 3-16L9 25l16-2 7-15Z"/>'
     ),
   };
+  var COACH_GUN_REFERENCE_PATH = `
+      M 426 113
+      L 406 113
+      L 404 120
+      L 404 133
+      L 408 142
+      L 412 145
+      L 415 142
+      L 412 136
+      L 413 123
+      L 418 117
+      Z
+
+      M 579 68
+      L 585 81
+      L 585 91
+      L 580 103
+      L 585 108
+      L 592 111
+      L 809 111
+      L 820 105
+      L 825 95
+      L 825 82
+      L 822 76
+      L 810 68
+      Z
+
+      M 1053 86
+      L 1052 71
+      L 1045 62
+      L 1052 52
+      L 1052 34
+      L 1045 26
+      L 1034 28
+      L 1030 19
+      L 1024 15
+      L 1008 16
+      L 1004 20
+      L 1001 28
+      L 513 28
+      L 513 56
+      L 1034 56
+      L 1039 61
+      L 1039 63
+      L 1034 68
+      L 828 68
+      L 832 72
+      L 836 81
+      L 836 95
+      L 1036 95
+      L 1043 98
+      L 1051 92
+      Z
+
+      M 1042 68
+      L 1047 71
+      L 1049 76
+      L 1049 84
+      L 1045 92
+      L 1041 92
+      L 1037 88
+      L 1036 84
+      L 1037 73
+      Z
+
+      M 1041 31
+      L 1046 32
+      L 1049 39
+      L 1049 48
+      L 1044 55
+      L 1041 55
+      L 1036 47
+      L 1036 39
+      Z
+
+      M 574 80
+      L 571 73
+      L 566 68
+      L 506 68
+      L 502 64
+      L 502 28
+      L 486 28
+      L 463 34
+      L 459 34
+      L 455 31
+      L 440 33
+      L 433 30
+      L 419 13
+      L 409 10
+      L 404 13
+      L 403 17
+      L 409 21
+      L 415 29
+      L 418 42
+      L 417 46
+      L 386 55
+      L 376 55
+      L 368 61
+      L 341 70
+      L 295 90
+      L 281 89
+      L 261 77
+      L 243 76
+      L 22 100
+      L 16 103
+      L 11 109
+      L 10 119
+      L 20 164
+      L 27 225
+      L 30 232
+      L 36 238
+      L 43 241
+      L 50 241
+      L 240 169
+      L 244 169
+      L 254 176
+      L 269 182
+      L 293 185
+      L 299 182
+      L 310 163
+      L 328 144
+      L 343 133
+      L 362 124
+      L 368 124
+      L 372 128
+      L 374 138
+      L 378 146
+      L 385 153
+      L 392 157
+      L 399 159
+      L 444 159
+      L 451 157
+      L 463 148
+      L 469 136
+      L 470 127
+      L 467 115
+      L 465 113
+      L 453 113
+      L 459 118
+      L 461 122
+      L 462 133
+      L 458 142
+      L 453 147
+      L 445 151
+      L 398 151
+      L 391 148
+      L 384 141
+      L 381 134
+      L 381 126
+      L 384 119
+      L 391 114
+      L 397 113
+      L 388 111
+      L 376 103
+      L 371 93
+      L 371 84
+      L 373 78
+      L 385 65
+      L 398 58
+      L 418 51
+      L 446 45
+      L 480 43
+      L 486 47
+      L 486 51
+      L 482 55
+      L 454 55
+      L 440 57
+      L 415 63
+      L 392 73
+      L 384 80
+      L 382 84
+      L 382 93
+      L 389 100
+      L 398 103
+      L 566 103
+      L 570 100
+      L 574 93
+      Z
+
+      M 449 76
+      L 450 73
+      L 456 68
+      L 476 68
+      L 483 74
+      L 483 82
+      L 476 88
+      L 455 88
+      L 450 83
+      Z
+    `;
+
+  function coachGunWeaponIcon(variant) {
+    var breach = variant === "breach";
+    var grave = variant === "grave";
+    var fill = "currentColor";
+    var breachAccent = "var(--coach-gun-breach-accent,#321b0e)";
+    var graveAccent = "var(--coach-gun-grave-accent,#b77932)";
+    var referenceShape =
+      '<path d="' +
+      COACH_GUN_REFERENCE_PATH +
+      '" fill="' +
+      fill +
+      '" fill-rule="evenodd" clip-rule="evenodd" shape-rendering="geometricPrecision"/>';
+
+    if (breach) {
+      return (
+        '<defs><clipPath id="coach-gun-breach-cut"><rect x="0" y="0" width="916" height="252"/></clipPath></defs>' +
+        '<g transform="translate(6.5 16) scale(.12)">' +
+        '<g clip-path="url(#coach-gun-breach-cut)">' +
+        referenceShape +
+        '</g>' +
+        '<path d="M486 28h28v80h-28V28ZM579 68l6 13v10l-5 12 5 5 7 3h217l11-6 5-10V82l-3-6-12-8H579ZM900 24h48v31h-48V24ZM900 68h48v31h-48V68ZM892 22h12v79h-12V22Z" fill="' +
+        breachAccent +
+        '"/>' +
+        '</g>'
+      );
+    }
+
+    if (grave) {
+      return (
+        '<g transform="translate(.1 16) scale(.12)">' +
+        referenceShape +
+        '<path d="M135 100h30v30h30v30h-30v48h-30v-48h-30v-30h30V100ZM579 68l6 13v10l-5 12 5 5 7 3h217l11-6 5-10V82l-3-6-12-8H579ZM972 27h18v70h-18V27ZM1010 20h18v82h-18V20Z" fill="' +
+        graveAccent +
+        '"/>' +
+        '</g>'
+      );
+    }
+
+    return '<g transform="translate(.1 16) scale(.12)">' + referenceShape + '</g>';
+  }
+
   var WEAPON_ICONS = {
     revolver:
       '<g fill="currentColor"><path d="M65 24h57c3 0 5 2 5 5v7H65V24Z"/><path d="M37 22h29c8 0 14 6 14 14s-6 14-14 14H37c-8 0-14-6-14-14s6-14 14-14Z"/><path d="M34 29c-5-3-9-8-10-14 6 1 11 4 15 9l-5 5Z"/><path d="M37 40c-14 3-26 13-34 24h30c4-10 10-17 20-23l-16-1Z"/><path d="M56 44h14c4 6-1 13-9 13h-6c-6-3-6-10 1-13Z"/><path d="M112 18h12l3 6h-17l2-6Z"/></g><g fill="rgba(25, 15, 8, 0.78)"><path d="M70 31h49v3H70z"/><path d="M69 38h43v3H69z"/><path d="M60 48c-2 3 0 6 4 6s6-2 6-6h-4c0 2-1 3-3 3-2 0-3-1-1-3h-2Z"/></g><circle cx="50" cy="34" r="3.2" fill="currentColor"/>',
+    coachGun: coachGunWeaponIcon("standard"),
+    coachGunBreach: coachGunWeaponIcon("breach"),
+    coachGunGrave: coachGunWeaponIcon("grave"),
     rifle:
       '<g fill="currentColor" transform="translate(-2 12.8) scale(0.108)">' +
       '<path d="M39 211 C34 188 31 158 28 137 C90 124 173 110 243 105 C270 103 286 113 295 125 C315 119 338 108 365 98 C385 91 403 99 412 118 C390 128 367 141 326 166 C250 184 164 207 86 225 C61 231 45 225 39 211 Z"/>' +
@@ -1503,6 +2261,8 @@
 
   var state = {
     mode: "menu",
+    paused: false,
+    controlLayoutEditing: false,
     time: 0,
     wave: 1,
     score: 0,
@@ -1519,6 +2279,7 @@
     player: null,
     enemies: [],
     bullets: [],
+    coachGunTracers: [],
     particles: [],
     flashes: [],
     shockwaves: [],
@@ -1534,6 +2295,9 @@
     delayedExplosions: [],
     xpOrbs: [],
     rifleTraps: [],
+    marshalHallowedGrounds: [],
+    paleDeputies: [],
+    paleDeputyTracers: [],
     level: 1,
     xp: 0,
     xpToNext: 20,
@@ -1551,6 +2315,9 @@
     launcherUpgrade: null,
     launcherUpgradePending: false,
     launcherUpgradeOffered: false,
+    marshalUpgrade: null,
+    marshalUpgradePending: false,
+    marshalUpgradeOffered: false,
     standardUpgradePending: false,
     standardUpgradeLevel: 0,
     standardUpgradeChoices: [],
@@ -1569,13 +2336,18 @@
     attackRangeBonus: 0,
     fanTheHammerTimer: 0,
     duelistFocus: 0,
-    dualKillReloadCounter: 0,
     bigIronShotsFired: 0,
     bigIronRuptures: 0,
     silverBulletAmmoKills: 0,
     leadBloomShots: 0,
     dualShotSide: -1,
     lastDualShotSide: 0,
+    dualActiveHand: "right",
+    dualLastShotHand: "",
+    dualHandAmmo: { right: 0, left: 0 },
+    dualHandReloadTimers: { right: 0, left: 0 },
+    dualHandFreeReloads: { right: 0, left: 0 },
+    dualFreeReloadsEarned: 0,
     rifleMagazineMultiplier: 1,
     launcherMagazineMultiplier: 1,
     rifleShotsFired: 0,
@@ -1604,12 +2376,37 @@
     launcherFireBuffActive: false,
     launcherFireAmmoAccumulator: 0,
     launcherExplosionSpreadSamples: [],
+    marshalShotSequence: 0,
+    marshalLastShotTime: -99,
+    marshalDoubleTapReadyUntil: 0,
+    marshalRecoilSpeedTimer: 0,
+    marshalShellCatcherKills: 0,
+    marshalCloseKills: 0,
+    marshalGraveTitheKills: 0,
+    marshalBountyTimer: 12,
+    marshalBountyEnemy: null,
+    marshalBountiesMarked: 0,
+    marshalBountiesClaimed: 0,
+    marshalMarksApplied: 0,
+    marshalMarksPassed: 0,
+    marshalFearBursts: 0,
+    marshalGeneratedShells: 0,
+    marshalPaleDeputiesRaised: 0,
+    marshalPaleDeputySpawnBlocked: 0,
+    marshalPaleDeputyShots: 0,
+    marshalPaleDeputyKills: 0,
+    marshalPaleDeputyRepositions: 0,
+    marshalPaleDeputyTracers: 0,
+    marshalAcidCleansed: 0,
+    marshalPurifyReloadTimer: 0,
+    marshalHallowedGroundsCreated: 0,
+    marshalLastVolley: null,
     revolverDamageMultiplier: 1,
     revolverMagazineBonus: 0,
     revolverAmmoPickupBonus: 0,
     rifleAmmoPickupBonus: 0,
     weapon: "revolver",
-    ownedWeapons: { revolver: true, rifle: false, launcher: false },
+    ownedWeapons: { revolver: true, rifle: false, launcher: false, coachGun: false },
     ammo: {},
     ammoReserve: {},
     reloadTimers: {},
@@ -1625,17 +2422,23 @@
   initClassWeaponIcons();
   initMaterials();
   initParticleVisualPools();
+  initXpOrbVisualPool();
+  initDeathDebrisVisualPool();
   initProjectileVisualPools();
   initZombiePools();
+  initPaleDeputyPool();
   initFirePatchVisualPools();
   initAcidPuddleVisualPool();
   initRifleTrapVisualPool();
   initExplosionEffectPools();
+  initScorchDecalVisualPool();
   initLights();
   buildEnvironment();
   initMenuScene();
   resetRun("menu");
+  applyMarshalPreviewFromQuery();
   resize();
+  warmupGameplayEffectResources();
   bindInput();
   updateHud();
   render();
@@ -1711,6 +2514,25 @@
     mats.zombieBlood = material(0x5b1010, 0.85, 0.02);
     mats.acid = material(0x9cff47, 0.36, 0.02, 0x79ff22, 0.72);
     mats.acidDark = material(0x3f7a20, 0.66, 0.01, 0x56d11d, 0.24);
+    mats.acidSpitCore = new THREE.MeshBasicMaterial({
+      color: 0xdfff1a,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: false,
+    });
+    mats.acidSpitShadow = new THREE.MeshBasicMaterial({
+      color: 0x64ff00,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+    });
+    mats.acidSpitHot = new THREE.MeshBasicMaterial({
+      color: 0xffff66,
+      transparent: true,
+      opacity: 0.74,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
     mats.slimeCore = new THREE.MeshStandardMaterial({
       color: 0x9dff48,
       roughness: 0.24,
@@ -1829,6 +2651,7 @@
     });
     mats.bullet = material(0xffdc67, 0.25, 0.2, 0xffb52f, 0.45);
     mats.rifleTracer = material(0xf8f5d7, 0.2, 0.25, 0xffe27a, 0.35);
+    mats.coachTracer = material(0xffe5a4, 0.28, 0.16, 0xff9e38, 0.48);
     mats.grenade = material(0x293226, 0.62, 0.22);
     mats.explosion = material(0xff7b2e, 0.35, 0.02, 0xff6a16, 0.75);
     mats.flash = material(0xfff0a6, 0.2, 0.02, 0xffaa32, 0.9);
@@ -1867,6 +2690,52 @@
       transparent: true,
       opacity: 0.92,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.paleDeputyBone = material(0xd8d3bb, 0.72, 0.03, 0x9adfff, 0.08);
+    mats.paleDeputyBoneShadow = material(0x85887d, 0.82, 0.02, 0x526568, 0.05);
+    mats.paleDeputyDuster = material(0x273238, 0.8, 0.04, 0x274c58, 0.1);
+    mats.paleDeputyTrim = material(0x526568, 0.66, 0.08, 0x6bbfd1, 0.14);
+    mats.paleDeputyHat = material(0x211f1d, 0.76, 0.04);
+    mats.paleDeputyBadge = material(0xd7ad55, 0.38, 0.32, 0xffd56d, 0.34);
+    mats.paleDeputyGlow = new THREE.MeshBasicMaterial({
+      color: 0xe8fbff,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.paleDeputySeal = new THREE.MeshBasicMaterial({
+      color: 0x78dfff,
+      transparent: true,
+      opacity: 0.56,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.paleDeputySealGold = new THREE.MeshBasicMaterial({
+      color: 0xffcf69,
+      transparent: true,
+      opacity: 0.48,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.paleDeputyTracer = material(0xdffcff, 0.16, 0.2, 0x73ddff, 0.92);
+    mats.consecratedMark = new THREE.MeshBasicMaterial({
+      color: 0xffe6a2,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    mats.hallowedGround = new THREE.MeshBasicMaterial({
+      color: 0xffd976,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
     });
     mats.rifleElectricGlow = new THREE.MeshBasicMaterial({
@@ -1924,12 +2793,17 @@
 
   function configureRenderer(instance) {
     instance.domElement.style.background = "#cfa269";
-    instance.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    instance.setPixelRatio(getRendererPixelRatio());
     instance.shadowMap.enabled = true;
     instance.shadowMap.type = THREE.PCFSoftShadowMap;
     instance.outputColorSpace = THREE.SRGBColorSpace;
     instance.toneMapping = THREE.ACESFilmicToneMapping;
     instance.toneMappingExposure = 1.03;
+  }
+
+  function getRendererPixelRatio() {
+    if (MOBILE_RENDER_MODE) return 1;
+    return Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
   }
 
   function attachRendererRecovery(instance) {
@@ -1946,8 +2820,10 @@
       renderDiagnostics.contextLost = false;
       renderDiagnostics.recoveries += 1;
       renderDiagnostics.lastReason = "contextrestored";
+      gameplayEffectWarmupDone = false;
       configureRenderer(instance);
       resize();
+      warmupGameplayEffectResources();
       render();
     });
   }
@@ -1956,17 +2832,19 @@
     var hemi = new THREE.HemisphereLight(0xffe5bd, 0x574034, 1.7);
     scene.add(hemi);
 
-    var sun = new THREE.DirectionalLight(0xffd292, 3.1);
-    sun.position.set(-18, 42, 26);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -ARENA_W / 2 - 10;
-    sun.shadow.camera.right = ARENA_W / 2 + 10;
-    sun.shadow.camera.top = ARENA_D / 2 + 10;
-    sun.shadow.camera.bottom = -ARENA_D / 2 - 10;
-    sun.shadow.camera.near = 8;
-    sun.shadow.camera.far = 88;
-    scene.add(sun);
+    gameplaySun = new THREE.DirectionalLight(0xffd292, 3.1);
+    gameplaySun.position.copy(gameplaySunOffset);
+    gameplaySun.castShadow = true;
+    gameplaySun.shadow.mapSize.set(2048, 2048);
+    gameplaySun.shadow.camera.near = 8;
+    gameplaySun.shadow.camera.far = 88;
+    gameplaySun.target.position.set(0, 0, 0);
+    scene.add(gameplaySun, gameplaySun.target);
+
+    gameplaySunBack.copy(gameplaySunOffset).normalize();
+    gameplaySunRight.set(0, 1, 0).cross(gameplaySunBack).normalize();
+    gameplaySunUp.copy(gameplaySunBack).cross(gameplaySunRight).normalize();
+    updateGameplayShadowBounds();
 
     var rim = new THREE.DirectionalLight(0x8fc5ff, 0.65);
     rim.position.set(30, 20, -24);
@@ -2380,22 +3258,48 @@
 
   function buildTerrainPatches() {
     var count = Math.round((BASE_ARENA_W * BASE_ARENA_D) / 48 * MAP_LINEAR_SCALE);
+    var darkCount = Math.ceil(count / 3);
+    var sandCount = count - darkCount;
+    var geometry = getSharedGeometry("terrain-patch-box", function () {
+      return new THREE.BoxGeometry(1, 1, 1);
+    });
+    var darkBatch = new THREE.InstancedMesh(geometry, mats.sandDark, darkCount);
+    var sandBatch = new THREE.InstancedMesh(geometry, mats.sand, sandCount);
+    var darkIndex = 0;
+    var sandIndex = 0;
+    var transform = new THREE.Object3D();
     for (var i = 0; i < count; i++) {
-      var patchMat = i % 3 === 0 ? mats.sandDark : mats.sand;
       var px = mapRand(-ARENA_W / 2 - 4, ARENA_W / 2 + 4);
       var pz = mapRand(-ARENA_D / 2 - 3, ARENA_D / 2 + 3);
       var pw = mapRand(0.5, 2.1);
       var pd = mapRand(0.15, 0.62);
       var patchY = 0.006 + mapRand(-0.001, 0.001);
-      var patch = addBox(worldRoot, pw, 0.035, pd, patchMat, px, patchY, pz);
-      patch.rotation.y = mapRand(0, Math.PI);
-      patch.castShadow = false;
-      patch.receiveShadow = false;
-      patch.userData.isTerrainPatch = true;
-      patch.userData.noDebris = true;
-      patch.userData.surfaceTopY = patchY + 0.035 / 2;
-      terrainPatchMeshes.push(patch);
+      transform.position.set(px, patchY, pz);
+      transform.rotation.set(0, mapRand(0, Math.PI), 0);
+      transform.scale.set(pw, 0.035, pd);
+      transform.updateMatrix();
+      if (i % 3 === 0) darkBatch.setMatrixAt(darkIndex++, transform.matrix);
+      else sandBatch.setMatrixAt(sandIndex++, transform.matrix);
+      terrainPatchMeshes.push({
+        castShadow: false,
+        receiveShadow: false,
+        userData: { isTerrainPatch: true, noDebris: true, surfaceTopY: patchY + 0.035 / 2 },
+      });
     }
+    configureTerrainPatchBatch(darkBatch);
+    configureTerrainPatchBatch(sandBatch);
+    worldRoot.add(darkBatch, sandBatch);
+  }
+
+  function configureTerrainPatchBatch(batch) {
+    batch.name = "terrain patches";
+    batch.castShadow = false;
+    batch.receiveShadow = false;
+    batch.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    batch.instanceMatrix.needsUpdate = true;
+    batch.userData.disposeGeometry = false;
+    batch.userData.noDebris = true;
+    if (typeof batch.computeBoundingSphere === "function") batch.computeBoundingSphere();
   }
 
   function buildGeneratedTown() {
@@ -3926,16 +4830,29 @@
   }
 
   function resetRun(mode) {
+    camera.zoom = 1;
+    camera.updateProjectionMatrix();
     releaseAllEnemiesToPool();
     releaseAllFirePatches();
     releaseAllRifleTraps();
+    releaseAllMarshalHallowedGrounds();
+    releaseAllPaleDeputies();
+    releaseAllPaleDeputyTracersToPool();
     releaseAllParticlesToPool();
+    releaseAllXpOrbsToPool();
+    releaseAllDeathDebrisToPool();
+    releaseAllCoachGunTracersToPool();
     releaseAllProjectilesToPool();
+    resetLauncherExplosionAudioMixer();
+    resetLauncherCascadeWarmup();
+    resetLauncherShrapnelResourceWarmup();
     clearDynamic();
     ammoCratePointer = null;
     mobileAimTarget.active = false;
     mobileAimTarget.marker = null;
     state.mode = mode || "playing";
+    state.paused = false;
+    state.controlLayoutEditing = false;
     state.time = 0;
     state.wave = 1;
     state.score = 0;
@@ -3951,6 +4868,7 @@
     state.shake = 0;
     state.enemies = [];
     state.bullets = [];
+    state.coachGunTracers = [];
     state.particles = [];
     state.flashes = [];
     state.shockwaves = [];
@@ -3966,6 +4884,9 @@
     state.delayedExplosions = [];
     state.xpOrbs = [];
     state.rifleTraps = [];
+    state.marshalHallowedGrounds = [];
+    state.paleDeputies = [];
+    state.paleDeputyTracers = [];
     state.level = 1;
     state.xp = 0;
     state.xpToNext = getXpToNextLevel(state.level);
@@ -3983,6 +4904,9 @@
     state.launcherUpgrade = null;
     state.launcherUpgradePending = false;
     state.launcherUpgradeOffered = false;
+    state.marshalUpgrade = null;
+    state.marshalUpgradePending = false;
+    state.marshalUpgradeOffered = false;
     state.standardUpgradePending = false;
     state.standardUpgradeLevel = 0;
     state.standardUpgradeChoices = [];
@@ -4001,13 +4925,18 @@
     state.attackRangeBonus = 0;
     state.fanTheHammerTimer = 0;
     state.duelistFocus = 0;
-    state.dualKillReloadCounter = 0;
     state.bigIronShotsFired = 0;
     state.bigIronRuptures = 0;
     state.silverBulletAmmoKills = 0;
     state.leadBloomShots = 0;
     state.dualShotSide = -1;
     state.lastDualShotSide = 0;
+    state.dualActiveHand = "right";
+    state.dualLastShotHand = "";
+    state.dualHandAmmo = { right: 0, left: 0 };
+    state.dualHandReloadTimers = { right: 0, left: 0 };
+    state.dualHandFreeReloads = { right: 0, left: 0 };
+    state.dualFreeReloadsEarned = 0;
     state.rifleMagazineMultiplier = 1;
     state.launcherMagazineMultiplier = 1;
     state.rifleShotsFired = 0;
@@ -4036,6 +4965,31 @@
     state.launcherFireBuffActive = false;
     state.launcherFireAmmoAccumulator = 0;
     state.launcherExplosionSpreadSamples = [];
+    state.marshalShotSequence = 0;
+    state.marshalLastShotTime = -99;
+    state.marshalDoubleTapReadyUntil = 0;
+    state.marshalRecoilSpeedTimer = 0;
+    state.marshalShellCatcherKills = 0;
+    state.marshalCloseKills = 0;
+    state.marshalGraveTitheKills = 0;
+    state.marshalBountyTimer = 12;
+    state.marshalBountyEnemy = null;
+    state.marshalBountiesMarked = 0;
+    state.marshalBountiesClaimed = 0;
+    state.marshalMarksApplied = 0;
+    state.marshalMarksPassed = 0;
+    state.marshalFearBursts = 0;
+    state.marshalGeneratedShells = 0;
+    state.marshalPaleDeputiesRaised = 0;
+    state.marshalPaleDeputySpawnBlocked = 0;
+    state.marshalPaleDeputyShots = 0;
+    state.marshalPaleDeputyKills = 0;
+    state.marshalPaleDeputyRepositions = 0;
+    state.marshalPaleDeputyTracers = 0;
+    state.marshalAcidCleansed = 0;
+    state.marshalPurifyReloadTimer = 0;
+    state.marshalHallowedGroundsCreated = 0;
+    state.marshalLastVolley = null;
     state.revolverDamageMultiplier = 1;
     state.revolverMagazineBonus = 0;
     state.revolverAmmoPickupBonus = 0;
@@ -4045,7 +4999,7 @@
     state.zombieTeleports = 0;
     state.waveSuspended = false;
     state.weapon = "revolver";
-    state.ownedWeapons = { revolver: true, rifle: false, launcher: false };
+    state.ownedWeapons = { revolver: true, rifle: false, launcher: false, coachGun: false };
     initAmmoState();
     resetAmmoVisualState();
     pointerDown = false;
@@ -4091,6 +5045,9 @@
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
     setPanel(levelUpPanel, false);
+    finishControlLayoutEdit(false);
+    showPauseMenuView("main");
+    syncPauseMenuUi();
     syncMusicForMode();
     updateHud();
   }
@@ -4171,6 +5128,267 @@
     } catch (err) {}
   }
 
+  function readStoredAudioVolume(kind, fallback) {
+    try {
+      if (!window.localStorage) return fallback;
+      var raw = window.localStorage.getItem(AUDIO_VOLUME_STORAGE_PREFIX + kind);
+      if (raw == null || raw === "") return fallback;
+      var stored = Number(raw);
+      return Number.isFinite(stored) ? clamp(stored, 0, 2) : fallback;
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  function storeAudioVolume(kind, volume) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(AUDIO_VOLUME_STORAGE_PREFIX + kind, String(clamp(volume, 0, 2)));
+    } catch (err) {}
+  }
+
+  function applyAudioVolumes() {
+    if (audioState.musicGain) audioState.musicGain.gain.value = clamp(audioState.musicVolume, 0, 2);
+    if (audioState.sfxGain) audioState.sfxGain.gain.value = clamp(audioState.sfxVolume, 0, 2);
+  }
+
+  function setAudioVolume(kind, percent) {
+    var value = clamp((Number(percent) || 0) / 100, 0, 2);
+    if (kind === "music") {
+      audioState.musicVolume = value;
+    } else if (kind === "sfx") {
+      audioState.sfxVolume = value;
+    } else {
+      return;
+    }
+    storeAudioVolume(kind, value);
+    applyAudioVolumes();
+    updatePauseVolumeControls();
+  }
+
+  function getAudioVolumePercent(kind) {
+    var value = kind === "sfx" ? audioState.sfxVolume : audioState.musicVolume;
+    return Math.round(clamp(value == null ? 1 : value, 0, 2) * 100);
+  }
+
+  function updatePauseVolumeControls() {
+    var musicPercent = getAudioVolumePercent("music");
+    var sfxPercent = getAudioVolumePercent("sfx");
+    if (musicVolumeInput && musicVolumeInput.value !== String(musicPercent)) musicVolumeInput.value = String(musicPercent);
+    if (sfxVolumeInput && sfxVolumeInput.value !== String(sfxPercent)) sfxVolumeInput.value = String(sfxPercent);
+    if (musicVolumeValue) musicVolumeValue.textContent = musicPercent + "%";
+    if (sfxVolumeValue) sfxVolumeValue.textContent = sfxPercent + "%";
+  }
+
+  function normalizeControlPoint(point) {
+    if (!point) return null;
+    var x = Number(point.x);
+    var y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return {
+      x: clamp(x, 0, 100),
+      y: clamp(y, 0, 100),
+    };
+  }
+
+  function normalizeControlLayout(layout) {
+    if (!layout) return null;
+    var move = normalizeControlPoint(layout.move);
+    var fire = normalizeControlPoint(layout.fire);
+    if (!move || !fire) return null;
+    return { move: move, fire: fire };
+  }
+
+  function cloneControlLayout(layout) {
+    var normalized = normalizeControlLayout(layout);
+    return normalized ? { move: { x: normalized.move.x, y: normalized.move.y }, fire: { x: normalized.fire.x, y: normalized.fire.y } } : null;
+  }
+
+  function readStoredControlLayout() {
+    try {
+      if (!window.localStorage) return null;
+      return normalizeControlLayout(JSON.parse(window.localStorage.getItem(CONTROL_LAYOUT_STORAGE_KEY) || "null"));
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function storeControlLayout(layout) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(CONTROL_LAYOUT_STORAGE_KEY, JSON.stringify(normalizeControlLayout(layout)));
+    } catch (err) {}
+  }
+
+  function clearStoredControlLayout() {
+    try {
+      if (window.localStorage) window.localStorage.removeItem(CONTROL_LAYOUT_STORAGE_KEY);
+    } catch (err) {}
+  }
+
+  function getCssNumber(style, name, fallback) {
+    var value = style ? parseFloat(style.getPropertyValue(name)) : NaN;
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function getDefaultControlLayout() {
+    var width = Math.max(1, window.innerWidth || 1);
+    var height = Math.max(1, window.innerHeight || 1);
+    var style = window.getComputedStyle ? window.getComputedStyle(mobileControls || root) : null;
+    var slop = getCssNumber(style, "--mobile-control-hit-slop", 10);
+    var moveVisual = getCssNumber(style, "--move-stick-visual-size", 122);
+    var fireVisual = getCssNumber(style, "--mobile-fire-visual-size", 92);
+    var moveSize = moveVisual + slop * 2;
+    var fireSize = fireVisual + slop * 2;
+    var sideLeft = Math.max(18 - slop, 0);
+    var sideRight = Math.max(22 - slop, 0);
+    var bottom = Math.max(22 - slop, 0);
+    return {
+      move: {
+        x: clamp(((sideLeft + moveSize / 2) / width) * 100, 0, 100),
+        y: clamp(((height - bottom - moveSize / 2) / height) * 100, 0, 100),
+      },
+      fire: {
+        x: clamp(((width - sideRight - fireSize / 2) / width) * 100, 0, 100),
+        y: clamp(((height - bottom - fireSize / 2) / height) * 100, 0, 100),
+      },
+    };
+  }
+
+  function setControlLayoutVars(layout) {
+    var normalized = normalizeControlLayout(layout);
+    if (!normalized) {
+      root.style.removeProperty("--move-stick-left");
+      root.style.removeProperty("--move-stick-top");
+      root.style.removeProperty("--mobile-fire-left");
+      root.style.removeProperty("--mobile-fire-top");
+      return;
+    }
+    root.style.setProperty("--move-stick-left", normalized.move.x.toFixed(3) + "%");
+    root.style.setProperty("--move-stick-top", normalized.move.y.toFixed(3) + "%");
+    root.style.setProperty("--mobile-fire-left", normalized.fire.x.toFixed(3) + "%");
+    root.style.setProperty("--mobile-fire-top", normalized.fire.y.toFixed(3) + "%");
+  }
+
+  function applySavedControlLayout() {
+    setControlLayoutVars(controlLayoutState.saved);
+    root.classList.toggle("has-custom-controls", !!controlLayoutState.saved);
+  }
+
+  function updateControlLayoutEditorUi() {
+    var visible = !!controlLayoutState.editing;
+    state.controlLayoutEditing = visible;
+    if (controlLayoutEditor) {
+      controlLayoutEditor.classList.toggle("is-visible", visible);
+      controlLayoutEditor.setAttribute("aria-hidden", visible ? "false" : "true");
+    }
+    updateModeClass();
+  }
+
+  function beginControlLayoutEdit() {
+    if (!canOpenPauseMenu()) return;
+    clearActiveInput();
+    state.paused = true;
+    controlLayoutState.editing = true;
+    controlLayoutState.drag = null;
+    controlLayoutState.draft = cloneControlLayout(controlLayoutState.saved) || getDefaultControlLayout();
+    controlLayoutState.draftIsDefault = !controlLayoutState.saved;
+    setControlLayoutVars(controlLayoutState.draft);
+    syncPauseMenuUi();
+    updateControlLayoutEditorUi();
+  }
+
+  function finishControlLayoutEdit(apply) {
+    if (!controlLayoutState.editing && !state.controlLayoutEditing) {
+      applySavedControlLayout();
+      return;
+    }
+    endControlLayoutDrag();
+    if (apply) {
+      if (controlLayoutState.draftIsDefault) {
+        controlLayoutState.saved = null;
+        clearStoredControlLayout();
+      } else {
+        controlLayoutState.saved = cloneControlLayout(controlLayoutState.draft);
+        storeControlLayout(controlLayoutState.saved);
+      }
+    }
+    controlLayoutState.editing = false;
+    controlLayoutState.draft = null;
+    controlLayoutState.draftIsDefault = false;
+    applySavedControlLayout();
+    showPauseMenuView("settings");
+    updateControlLayoutEditorUi();
+  }
+
+  function resetControlLayoutDraft() {
+    controlLayoutState.draft = getDefaultControlLayout();
+    controlLayoutState.draftIsDefault = true;
+    setControlLayoutVars(controlLayoutState.draft);
+  }
+
+  function getControlLayoutElement(kind) {
+    return kind === "fire" ? mobileFire : moveStick;
+  }
+
+  function beginControlLayoutDrag(event, kind) {
+    if (!controlLayoutState.editing) return false;
+    var el = getControlLayoutElement(kind);
+    if (!el) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    var rect = el.getBoundingClientRect();
+    controlLayoutState.drag = {
+      kind: kind,
+      pointerId: event.pointerId,
+      offsetX: event.clientX - (rect.left + rect.width / 2),
+      offsetY: event.clientY - (rect.top + rect.height / 2),
+      width: rect.width,
+      height: rect.height,
+    };
+    el.classList.add("is-layout-dragging");
+    try {
+      el.setPointerCapture(event.pointerId);
+    } catch (err) {}
+    updateControlLayoutDrag(event.clientX, event.clientY);
+    return true;
+  }
+
+  function updateControlLayoutDrag(clientX, clientY) {
+    var drag = controlLayoutState.drag;
+    if (!drag || !controlLayoutState.draft) return;
+    var width = Math.max(1, window.innerWidth || 1);
+    var height = Math.max(1, window.innerHeight || 1);
+    var centerX = clientX - drag.offsetX;
+    var centerY = clientY - drag.offsetY;
+    centerX = clamp(centerX, drag.width / 2, width - drag.width / 2);
+    centerY = clamp(centerY, drag.height / 2, height - drag.height / 2);
+    var point = {
+      x: (centerX / width) * 100,
+      y: (centerY / height) * 100,
+    };
+    if (drag.kind === "fire") {
+      controlLayoutState.draft.fire = point;
+    } else {
+      controlLayoutState.draft.move = point;
+    }
+    controlLayoutState.draftIsDefault = false;
+    setControlLayoutVars(controlLayoutState.draft);
+  }
+
+  function handleControlLayoutDragMove(event) {
+    var drag = controlLayoutState.drag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    event.preventDefault();
+    updateControlLayoutDrag(event.clientX, event.clientY);
+  }
+
+  function endControlLayoutDrag(event) {
+    var drag = controlLayoutState.drag;
+    if (!drag || (event && event.pointerId !== drag.pointerId)) return;
+    var el = getControlLayoutElement(drag.kind);
+    if (el) el.classList.remove("is-layout-dragging");
+    controlLayoutState.drag = null;
+  }
+
   function getAudioContextConstructor() {
     return window.AudioContext || window.webkitAudioContext || null;
   }
@@ -4195,8 +5413,8 @@
       audioState.gameExploreGain = ctx.createGain();
       audioState.gameBattleGain = ctx.createGain();
       audioState.masterGain.gain.value = 1;
-      audioState.musicGain.gain.value = 1;
-      audioState.sfxGain.gain.value = 1;
+      audioState.musicGain.gain.value = clamp(audioState.musicVolume, 0, 2);
+      audioState.sfxGain.gain.value = clamp(audioState.sfxVolume, 0, 2);
       audioState.sfxLimiter.threshold.value = -5;
       audioState.sfxLimiter.knee.value = 10;
       audioState.sfxLimiter.ratio.value = 9;
@@ -4276,6 +5494,7 @@
     var finish = function () {
       audioState.unlocked = ctx.state !== "suspended";
       if (startMenuAfterUnlock || audioState.menu.desired || audioState.game.desired) syncMusicForMode();
+      if (audioState.unlocked) warmupLauncherExplosionAudioGraph();
       updateMenuMusicButton();
     };
 
@@ -4301,6 +5520,7 @@
     if (audioState.enabled) {
       audioState.enabled = false;
       storeAudioEnabled(false);
+      stopAllLauncherGrenadeWhistles(0.08);
       stopMenuMusic(0.45);
       stopGameMusic(0.45);
       updateMenuMusicButton();
@@ -4402,7 +5622,7 @@
   }
 
   function isGameplayMusicMode() {
-    return state.mode === "playing" || state.mode === "class-choice" || state.mode === "revolver-upgrade" || state.mode === "rifle-upgrade" || state.mode === "launcher-upgrade" || state.mode === "level-up";
+    return state.mode === "playing" || state.mode === "class-choice" || state.mode === "revolver-upgrade" || state.mode === "rifle-upgrade" || state.mode === "launcher-upgrade" || state.mode === "marshal-upgrade" || state.mode === "level-up";
   }
 
   function startGameMusic() {
@@ -4805,6 +6025,21 @@
     playRevolverMechanics(shotTime + 0.08, pan, 0.026 * level);
   }
 
+  function playCoachGunShotSound(position, dir, lastShell) {
+    if (!audioState.enabled) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+    var now = ctx.currentTime;
+    var pan = clamp(dir && isFinite(dir.x) ? dir.x * 0.16 : 0, -0.7, 0.7);
+    var level = lastShell ? 1.08 : 1;
+    playGunshotNoiseLayer(now, pan, 1.58 * level, 64, 9600, 0.28, 0.001, 0.19, rand(0, 0.18));
+    playGunshotNoiseLayer(now + 0.004, pan * 0.78, 1.12 * level, 46, 3300, 0.24, 0.002, 0.28, rand(0.08, 0.42));
+    playGunshotBody(now, pan, 0.82 * level, true);
+    playGunshotNoiseLayer(now + 0.055, -pan * 0.28, 0.34 * level, 120, 1500, 0.34, 0.008, 0.38, rand(0.25, 0.58));
+    playRevolverMechanics(now + 0.12, pan, 0.035 * level);
+  }
+
   function playGunshotNoiseLayer(time, pan, level, highFreq, lowFreq, q, attack, duration, offset) {
     var ctx = audioState.ctx;
     if (!ctx || !audioState.shotNoiseBuffer) return;
@@ -4854,6 +6089,531 @@
     thump.start(time);
     thump.stop(time + 0.16);
     scheduleAudioDisconnect([thump, filter, gain, output], time + 0.2);
+  }
+
+  function playLauncherLaunchSound(position, dir) {
+    if (!audioState.enabled) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+    warmupLauncherExplosionAudioGraph();
+
+    var now = ctx.currentTime;
+    var pan = getProjectileSfxPan(position, dir, 0.24);
+    playLauncherTubeThump(now, pan, 0.58);
+    playGunshotNoiseLayer(now + 0.004, pan, 0.52, 70, 2100, 0.24, 0.002, 0.15, rand(0.04, 0.34));
+    playGunshotNoiseLayer(now + 0.018, pan * 0.82, 0.2, 760, 5600, 0.36, 0.003, 0.11, rand(0.3, 0.74));
+    playGunshotNoiseLayer(now + 0.062, pan * 0.5, 0.075, 1700, 7200, 0.48, 0.004, 0.08, rand(0.58, 0.92));
+  }
+
+  function playLauncherTubeThump(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var body = ctx.createOscillator();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    body.type = "sine";
+    body.frequency.setValueAtTime(88, time);
+    body.frequency.exponentialRampToValueAtTime(34, time + 0.11);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(210, time);
+    filter.frequency.exponentialRampToValueAtTime(72, time + 0.16);
+    filter.Q.value = 0.26;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.18);
+    body.connect(filter);
+    filter.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    body.start(time);
+    body.stop(time + 0.2);
+    scheduleAudioDisconnect([body, filter, gain, output], time + 0.24);
+  }
+
+  function startLauncherGrenadeWhistle(grenade) {
+    if (!audioState.enabled || !grenade) return null;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return null;
+
+    var now = ctx.currentTime;
+    var life = clamp(Number(grenade.maxLife) || 0.7, 0.16, 2.2);
+    var whistle = ctx.createOscillator();
+    var air = ctx.createOscillator();
+    var lfo = ctx.createOscillator();
+    var lfoGain = ctx.createGain();
+    var whistleGain = ctx.createGain();
+    var airGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    var pan = getProjectileSfxPan(grenade, { x: grenade.dirX, z: grenade.dirZ }, 0.16);
+
+    whistle.type = "sine";
+    air.type = "triangle";
+    lfo.type = "sine";
+    whistle.frequency.setValueAtTime(rand(1180, 1340), now);
+    whistle.frequency.exponentialRampToValueAtTime(rand(840, 980), now + life);
+    air.frequency.setValueAtTime(rand(1760, 1940), now);
+    air.frequency.exponentialRampToValueAtTime(rand(1180, 1360), now + life);
+    lfo.frequency.setValueAtTime(rand(5.8, 7.4), now);
+    lfoGain.gain.value = rand(12, 22);
+    whistleGain.gain.value = 0.82;
+    airGain.gain.value = 0.18;
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(1280, now);
+    filter.Q.value = 5.8;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.013, now + 0.065);
+    gain.gain.setTargetAtTime(0.009, now + 0.12, 0.42);
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(whistle.detune);
+    whistle.connect(whistleGain);
+    air.connect(airGain);
+    whistleGain.connect(filter);
+    airGain.connect(filter);
+    filter.connect(gain);
+    var output = connectSfxOutput(gain, pan);
+    whistle.start(now);
+    air.start(now);
+    lfo.start(now);
+
+    audioState.launcherWhistleCount += 1;
+    return {
+      active: true,
+      whistle: whistle,
+      air: air,
+      lfo: lfo,
+      lfoGain: lfoGain,
+      whistleGain: whistleGain,
+      airGain: airGain,
+      filter: filter,
+      gain: gain,
+      output: output,
+    };
+  }
+
+  function updateLauncherGrenadeWhistle(grenade) {
+    var handle = grenade && grenade.launcherWhistle;
+    var ctx = audioState.ctx;
+    if (!handle || !handle.active || !ctx) return;
+    var now = ctx.currentTime;
+    var progress = clamp((grenade.age || 0) / Math.max(0.001, grenade.maxLife || 1), 0, 1);
+    if (handle.output && handle.output.pan) {
+      handle.output.pan.setTargetAtTime(getProjectileSfxPan(grenade, null, 0.18), now, 0.045);
+    }
+    if (handle.filter && handle.filter.frequency) {
+      handle.filter.frequency.setTargetAtTime(1280 + Math.sin(state.time * 8.5 + progress * 5) * 120, now, 0.06);
+    }
+    if (handle.gain && handle.gain.gain) {
+      handle.gain.gain.setTargetAtTime(0.007 + Math.sin(progress * Math.PI) * 0.006, now, 0.06);
+    }
+  }
+
+  function stopLauncherGrenadeWhistle(handle, fadeSeconds) {
+    if (!handle || !handle.active) return;
+    handle.active = false;
+    audioState.launcherWhistleCount = Math.max(0, audioState.launcherWhistleCount - 1);
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var now = ctx.currentTime;
+    var fade = clamp(fadeSeconds == null ? 0.055 : Number(fadeSeconds) || 0.055, 0.018, 0.18);
+    var stopAt = now + fade;
+    if (handle.gain && handle.gain.gain) {
+      handle.gain.gain.cancelScheduledValues(now);
+      handle.gain.gain.setValueAtTime(Math.max(0.0001, handle.gain.gain.value || 0.0001), now);
+      handle.gain.gain.exponentialRampToValueAtTime(0.0001, stopAt);
+    }
+    try {
+      handle.whistle.stop(stopAt + 0.025);
+    } catch (err) {}
+    try {
+      handle.air.stop(stopAt + 0.025);
+    } catch (err) {}
+    try {
+      handle.lfo.stop(stopAt + 0.025);
+    } catch (err) {}
+    scheduleAudioDisconnect(
+      [handle.whistle, handle.air, handle.lfo, handle.lfoGain, handle.whistleGain, handle.airGain, handle.filter, handle.gain, handle.output],
+      stopAt + 0.09
+    );
+  }
+
+  function stopAllLauncherGrenadeWhistles(fadeSeconds) {
+    for (var i = 0; i < state.bullets.length; i++) {
+      if (state.bullets[i] && state.bullets[i].launcherWhistle) stopLauncherGrenadeWhistle(state.bullets[i].launcherWhistle, fadeSeconds);
+    }
+  }
+
+  function playLauncherExplosionSound(x, z, radius, kind) {
+    if (!audioState.enabled) return;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+
+    var now = ctx.currentTime;
+    var impactScale = clamp((Number(radius) || getLauncherBlastRadius()) / WEAPONS.launcher.blastRadius, 0.68, 1.65);
+    var childScale = kind === "chain" ? 0.74 : kind === "cluster" ? 0.58 : 1;
+    var level = impactScale * childScale * 0.86;
+    var pan = getProjectileSfxPan({ x: x, z: z }, null, 0);
+
+    if (kind === "main") {
+      reserveLauncherExplosionFullAudio(now, true);
+      playLauncherExplosionLayers(now, pan, level, impactScale, "full", 1);
+      return;
+    }
+
+    queueLauncherExplosionGroupAudio(x, z, pan, level, impactScale, kind || "chain");
+  }
+
+  function playLauncherExplosionLayers(time, pan, level, scale, profile, count) {
+    var burstSize = Math.max(1, count || 1);
+    if (profile === "compact") {
+      var compactLift = burstSize > 1 ? clamp(1 + Math.log(burstSize) * 0.05, 1, 1.18) : 1;
+      playLauncherExplosionImpact(time, pan, 0.88 * level * compactLift, scale);
+      playLauncherExplosionCrack(time + 0.003, pan, 0.54 * level);
+      playLauncherExplosionBlastNoise(time + 0.006, pan, 0.46 * level, scale);
+      audioState.launcherExplosionAudioStats.compactPlayed += 1;
+      return;
+    }
+
+    if (profile === "group") {
+      var massLift = burstSize > 1 ? clamp(1 + Math.log(burstSize) * 0.08, 1, 1.28) : 1;
+      playLauncherExplosionImpact(time, pan, 1.16 * level * massLift, scale);
+      playLauncherExplosionCrack(time + 0.003, pan, 0.76 * level);
+      playLauncherExplosionBlastNoise(time + 0.006, pan, 0.98 * level, scale);
+      playLauncherExplosionDebrisTail(time + 0.044, pan, 0.34 * level, scale);
+      audioState.launcherExplosionAudioStats.fullPlayed += 1;
+      return;
+    }
+
+    playLauncherExplosionImpact(time, pan, 1.18 * level, scale);
+    playLauncherExplosionCrack(time + 0.003, pan, 0.82 * level);
+    playLauncherExplosionBlastNoise(time + 0.006, pan, 0.92 * level, scale);
+    playLauncherExplosionDebrisTail(time + 0.045, pan, 0.38 * level, scale);
+    audioState.launcherExplosionAudioStats.fullPlayed += 1;
+  }
+
+  function warmupLauncherExplosionAudioGraph() {
+    if (audioState.launcherExplosionAudioGraphReady || !audioState.enabled) return false;
+    var ctx = audioState.ctx || ensureAudioContext();
+    if (!ctx || ctx.state !== "running" || !audioState.sfxGain) return false;
+    if (!audioState.shotNoiseBuffer) audioState.shotNoiseBuffer = createGunshotNoiseBuffer(ctx);
+
+    var warmupGain = ctx.createGain();
+    warmupGain.gain.value = 0;
+    warmupGain.connect(audioState.sfxGain);
+
+    var stats = audioState.launcherExplosionAudioStats;
+    var previousGrouped = stats.grouped;
+    var previousMergedGroups = stats.mergedGroups;
+    var previousFullPlayed = stats.fullPlayed;
+    var previousCompactPlayed = stats.compactPlayed;
+    var previousDestination = audioState.sfxWarmupDestination;
+    var previousGraphReady = audioState.launcherExplosionAudioGraphReady;
+
+    try {
+      audioState.sfxWarmupDestination = warmupGain;
+      playLauncherExplosionLayers(ctx.currentTime + 0.018, 0, LAUNCHER_EXPLOSION_AUDIO_WARMUP_LEVEL, 1, "full", 1);
+      audioState.launcherExplosionAudioGraphReady = true;
+      scheduleAudioDisconnect([warmupGain], ctx.currentTime + 0.75);
+      return true;
+    } catch (err) {
+      audioState.launcherExplosionAudioGraphReady = previousGraphReady;
+      try {
+        warmupGain.disconnect();
+      } catch (disconnectErr) {}
+      return false;
+    } finally {
+      audioState.sfxWarmupDestination = previousDestination;
+      stats.grouped = previousGrouped;
+      stats.mergedGroups = previousMergedGroups;
+      stats.fullPlayed = previousFullPlayed;
+      stats.compactPlayed = previousCompactPlayed;
+    }
+  }
+
+  function reserveLauncherExplosionFullAudio(time, priority) {
+    if (time - audioState.launcherExplosionAudioWindowStart > LAUNCHER_EXPLOSION_AUDIO_FULL_WINDOW) {
+      audioState.launcherExplosionAudioWindowStart = time;
+      audioState.launcherExplosionAudioFullCount = 0;
+    }
+    if (priority) {
+      audioState.launcherExplosionAudioFullCount = Math.min(
+        LAUNCHER_EXPLOSION_AUDIO_FULL_LIMIT,
+        audioState.launcherExplosionAudioFullCount + 1
+      );
+      return true;
+    }
+    if (audioState.launcherExplosionAudioFullCount >= LAUNCHER_EXPLOSION_AUDIO_FULL_LIMIT) return false;
+    audioState.launcherExplosionAudioFullCount += 1;
+    return true;
+  }
+
+  function queueLauncherExplosionGroupAudio(x, z, pan, level, scale, kind) {
+    var groups = audioState.launcherExplosionAudioGroups;
+    var group = findLauncherExplosionAudioGroup(x, z);
+    if (!group && groups.length >= LAUNCHER_EXPLOSION_AUDIO_MAX_GROUPS) {
+      group = findNearestLauncherExplosionAudioGroup(x, z);
+      audioState.launcherExplosionAudioStats.mergedGroups += 1;
+    }
+    if (!group) {
+      group = {
+        x: x,
+        z: z,
+        count: 0,
+        energy: 0,
+        maxLevel: 0,
+        maxScale: 0,
+        panSum: 0,
+        weight: 0,
+        primaryKind: kind || "chain",
+      };
+      groups.push(group);
+    }
+    addLauncherExplosionAudioToGroup(group, x, z, pan, level, scale, kind);
+    audioState.launcherExplosionAudioStats.grouped += 1;
+    scheduleLauncherExplosionAudioFlush();
+  }
+
+  function findLauncherExplosionAudioGroup(x, z) {
+    var groups = audioState.launcherExplosionAudioGroups;
+    var maxDistSq = LAUNCHER_EXPLOSION_AUDIO_GROUP_RADIUS * LAUNCHER_EXPLOSION_AUDIO_GROUP_RADIUS;
+    var best = null;
+    var bestDistSq = maxDistSq;
+    for (var i = 0; i < groups.length; i++) {
+      var dx = x - groups[i].x;
+      var dz = z - groups[i].z;
+      var distSq = dx * dx + dz * dz;
+      if (distSq <= bestDistSq) {
+        bestDistSq = distSq;
+        best = groups[i];
+      }
+    }
+    return best;
+  }
+
+  function findNearestLauncherExplosionAudioGroup(x, z) {
+    var groups = audioState.launcherExplosionAudioGroups;
+    var best = null;
+    var bestDistSq = Infinity;
+    for (var i = 0; i < groups.length; i++) {
+      var dx = x - groups[i].x;
+      var dz = z - groups[i].z;
+      var distSq = dx * dx + dz * dz;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = groups[i];
+      }
+    }
+    return best;
+  }
+
+  function addLauncherExplosionAudioToGroup(group, x, z, pan, level, scale, kind) {
+    var weight = Math.max(0.08, level || 0.08);
+    var nextWeight = group.weight + weight;
+    group.x = (group.x * group.weight + x * weight) / nextWeight;
+    group.z = (group.z * group.weight + z * weight) / nextWeight;
+    group.panSum += (pan || 0) * weight;
+    group.weight = nextWeight;
+    group.count += 1;
+    group.energy += weight * weight;
+    group.maxLevel = Math.max(group.maxLevel, weight);
+    group.maxScale = Math.max(group.maxScale, scale || 1);
+    if (kind === "chain" || (kind !== "cluster" && kind !== "echo")) group.primaryKind = kind || group.primaryKind;
+  }
+
+  function scheduleLauncherExplosionAudioFlush() {
+    if (audioState.launcherExplosionAudioFlushTimer) return;
+    audioState.launcherExplosionAudioFlushTimer = window.setTimeout(flushLauncherExplosionAudioGroups, LAUNCHER_EXPLOSION_AUDIO_GROUP_WINDOW_MS);
+  }
+
+  function flushLauncherExplosionAudioGroups() {
+    audioState.launcherExplosionAudioFlushTimer = null;
+    if (!audioState.launcherExplosionAudioGroups.length) return;
+    var ctx = audioState.ctx;
+    if (!audioState.enabled || !ctx || ctx.state !== "running") {
+      audioState.launcherExplosionAudioGroups.length = 0;
+      return;
+    }
+    var groups = audioState.launcherExplosionAudioGroups.splice(0, audioState.launcherExplosionAudioGroups.length);
+    var now = ctx.currentTime;
+    for (var i = 0; i < groups.length; i++) {
+      playLauncherExplosionAudioGroup(groups[i], now + i * 0.006);
+    }
+  }
+
+  function playLauncherExplosionAudioGroup(group, time) {
+    if (!group || !group.count) return;
+    var count = group.count;
+    var level = group.maxLevel;
+    if (count > 1) level = clamp(group.maxLevel * (1 + Math.log(count) * 0.26), 0.12, 2.15);
+    else level = clamp(Math.sqrt(group.energy), 0.08, 1.35);
+    var scale = clamp(group.maxScale * (count > 1 ? 1 + Math.log(count) * 0.045 : 1), 0.58, 1.82);
+    var pan = group.weight > 0 ? clamp(group.panSum / group.weight, -0.76, 0.76) : 0;
+    var profile = reserveLauncherExplosionFullAudio(time, false) ? "group" : "compact";
+    playLauncherExplosionLayers(time, pan, level, scale, profile, count);
+  }
+
+  function resetLauncherExplosionAudioMixer() {
+    if (audioState.launcherExplosionAudioFlushTimer) {
+      window.clearTimeout(audioState.launcherExplosionAudioFlushTimer);
+      audioState.launcherExplosionAudioFlushTimer = null;
+    }
+    audioState.launcherExplosionAudioGroups.length = 0;
+    audioState.launcherExplosionAudioWindowStart = 0;
+    audioState.launcherExplosionAudioFullCount = 0;
+    audioState.launcherExplosionAudioStats.grouped = 0;
+    audioState.launcherExplosionAudioStats.mergedGroups = 0;
+    audioState.launcherExplosionAudioStats.fullPlayed = 0;
+    audioState.launcherExplosionAudioStats.compactPlayed = 0;
+  }
+
+  function playLauncherExplosionImpact(time, pan, level, scale) {
+    var ctx = audioState.ctx;
+    if (!ctx) return;
+    var sub = ctx.createOscillator();
+    var body = ctx.createOscillator();
+    var subGain = ctx.createGain();
+    var bodyGain = ctx.createGain();
+    var filter = ctx.createBiquadFilter();
+    var mix = ctx.createGain();
+    sub.type = "sine";
+    body.type = "triangle";
+    sub.frequency.setValueAtTime(62 * scale, time);
+    sub.frequency.exponentialRampToValueAtTime(28, time + 0.24);
+    body.frequency.setValueAtTime(138 * scale, time);
+    body.frequency.exponentialRampToValueAtTime(42, time + 0.16);
+    subGain.gain.setValueAtTime(0.0001, time);
+    subGain.gain.linearRampToValueAtTime(0.72 * level, time + 0.006);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.34);
+    bodyGain.gain.setValueAtTime(0.0001, time);
+    bodyGain.gain.linearRampToValueAtTime(0.42 * level, time + 0.003);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.18);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(320, time);
+    filter.frequency.exponentialRampToValueAtTime(86, time + 0.28);
+    filter.Q.value = 0.34;
+    mix.gain.setValueAtTime(0.0001, time);
+    mix.gain.linearRampToValueAtTime(1, time + 0.004);
+    mix.gain.exponentialRampToValueAtTime(0.0001, time + 0.38);
+    sub.connect(subGain);
+    body.connect(bodyGain);
+    subGain.connect(filter);
+    bodyGain.connect(filter);
+    filter.connect(mix);
+    var output = connectSfxOutput(mix, pan || 0);
+    sub.start(time);
+    body.start(time);
+    sub.stop(time + 0.4);
+    body.stop(time + 0.22);
+    scheduleAudioDisconnect([sub, body, subGain, bodyGain, filter, mix, output], time + 0.46);
+  }
+
+  function playLauncherExplosionCrack(time, pan, level) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    var crack = ctx.createBufferSource();
+    var high = ctx.createBiquadFilter();
+    var peak = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    crack.buffer = audioState.shotNoiseBuffer;
+    crack.playbackRate.setValueAtTime(rand(1.18, 1.38), time);
+    high.type = "highpass";
+    high.frequency.setValueAtTime(780, time);
+    high.Q.value = 0.48;
+    peak.type = "peaking";
+    peak.frequency.setValueAtTime(2300, time);
+    peak.Q.value = 0.9;
+    peak.gain.value = 5.5;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.0015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
+    crack.connect(high);
+    high.connect(peak);
+    peak.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    crack.start(time, rand(0.02, 0.18));
+    crack.stop(time + 0.075);
+    scheduleAudioDisconnect([crack, high, peak, gain, output], time + 0.12);
+  }
+
+  function playLauncherExplosionBlastNoise(time, pan, level, scale) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    var blast = ctx.createBufferSource();
+    var high = ctx.createBiquadFilter();
+    var low = ctx.createBiquadFilter();
+    var gain = ctx.createGain();
+    blast.buffer = audioState.shotNoiseBuffer;
+    blast.playbackRate.setValueAtTime(rand(0.62, 0.78), time);
+    high.type = "highpass";
+    high.frequency.setValueAtTime(58, time);
+    high.Q.value = 0.22;
+    low.type = "lowpass";
+    low.frequency.setValueAtTime(4200 * scale, time);
+    low.frequency.exponentialRampToValueAtTime(560, time + 0.44);
+    low.Q.value = 0.18;
+    gain.gain.setValueAtTime(0.0001, time);
+    gain.gain.linearRampToValueAtTime(level, time + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.54);
+    blast.connect(high);
+    high.connect(low);
+    low.connect(gain);
+    var output = connectSfxOutput(gain, pan || 0);
+    blast.start(time, rand(0, 0.12));
+    blast.stop(time + 0.62);
+    scheduleAudioDisconnect([blast, high, low, gain, output], time + 0.7);
+  }
+
+  function playLauncherExplosionDebrisTail(time, pan, level, scale) {
+    var ctx = audioState.ctx;
+    if (!ctx || !audioState.shotNoiseBuffer) return;
+    var dust = ctx.createBufferSource();
+    var grit = ctx.createBufferSource();
+    var dustFilter = ctx.createBiquadFilter();
+    var gritFilter = ctx.createBiquadFilter();
+    var dustGain = ctx.createGain();
+    var gritGain = ctx.createGain();
+    var mix = ctx.createGain();
+    dust.buffer = audioState.shotNoiseBuffer;
+    grit.buffer = audioState.shotNoiseBuffer;
+    dust.playbackRate.setValueAtTime(rand(0.42, 0.55), time);
+    grit.playbackRate.setValueAtTime(rand(1.52, 1.86), time);
+    dustFilter.type = "bandpass";
+    dustFilter.frequency.setValueAtTime(540 * scale, time);
+    dustFilter.Q.value = 0.6;
+    gritFilter.type = "highpass";
+    gritFilter.frequency.setValueAtTime(2300, time);
+    gritFilter.Q.value = 0.42;
+    dustGain.gain.setValueAtTime(0.0001, time);
+    dustGain.gain.linearRampToValueAtTime(0.85 * level, time + 0.026);
+    dustGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.72);
+    gritGain.gain.setValueAtTime(0.0001, time);
+    gritGain.gain.linearRampToValueAtTime(0.26 * level, time + 0.012);
+    gritGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.26);
+    mix.gain.setValueAtTime(1, time);
+    mix.gain.exponentialRampToValueAtTime(0.0001, time + 0.76);
+    dust.connect(dustFilter);
+    dustFilter.connect(dustGain);
+    grit.connect(gritFilter);
+    gritFilter.connect(gritGain);
+    dustGain.connect(mix);
+    gritGain.connect(mix);
+    var output = connectSfxOutput(mix, pan || 0);
+    dust.start(time, rand(0.18, 0.48));
+    grit.start(time, rand(0.55, 0.9));
+    dust.stop(time + 0.78);
+    grit.stop(time + 0.34);
+    scheduleAudioDisconnect([dust, grit, dustFilter, gritFilter, dustGain, gritGain, mix, output], time + 0.86);
+  }
+
+  function getProjectileSfxPan(position, dir, aimWeight) {
+    var aimPan = dir && isFinite(dir.x) ? dir.x * (aimWeight == null ? 0.18 : aimWeight) : 0;
+    var worldPan = 0;
+    if (position && state.player && isFinite(position.x)) {
+      worldPan = clamp((position.x - state.player.x) / 18, -0.58, 0.58);
+    }
+    return clamp(worldPan + aimPan, -0.76, 0.76);
   }
 
   function playRevolverHammerCock(time, pan, level) {
@@ -5096,7 +6856,7 @@
 
   function connectSfxOutput(source, pan) {
     var ctx = audioState.ctx;
-    var destination = audioState.sfxGain || audioState.masterGain;
+    var destination = audioState.sfxWarmupDestination || audioState.sfxGain || audioState.masterGain;
     if (!destination) return;
     if (ctx && typeof ctx.createStereoPanner === "function") {
       var panner = ctx.createStereoPanner();
@@ -5119,14 +6879,55 @@
     if (!cleanNodes.length) return;
     audioState.transientAudioNodeCount += cleanNodes.length;
     var delay = Math.max(80, (stopAt - (ctx ? ctx.currentTime : 0)) * 1000 + 80);
-    window.setTimeout(function () {
-      for (var i = 0; i < cleanNodes.length; i++) {
+    audioState.audioDisconnectQueue.push({
+      nodes: cleanNodes,
+      dueAt: getAudioWallClockMs() + delay,
+    });
+    scheduleAudioDisconnectFlush(delay);
+  }
+
+  function getAudioWallClockMs() {
+    return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+  }
+
+  function scheduleAudioDisconnectFlush(delayMs) {
+    if (audioState.audioDisconnectTimer) return;
+    audioState.audioDisconnectTimer = window.setTimeout(flushAudioDisconnectQueue, Math.max(8, Math.min(delayMs || AUDIO_DISCONNECT_TICK_MS, 250)));
+  }
+
+  function flushAudioDisconnectQueue() {
+    audioState.audioDisconnectTimer = null;
+    var queue = audioState.audioDisconnectQueue;
+    if (!queue.length) return;
+    var now = getAudioWallClockMs();
+    var disconnected = 0;
+    var nextDue = Infinity;
+    var readIndex = 0;
+    var writeIndex = 0;
+    for (; readIndex < queue.length && disconnected < AUDIO_DISCONNECT_BATCH_SIZE; readIndex++) {
+      var item = queue[readIndex];
+      if (item.dueAt > now) {
+        if (item.dueAt < nextDue) nextDue = item.dueAt;
+        queue[writeIndex++] = item;
+        continue;
+      }
+      for (var n = 0; n < item.nodes.length; n++) {
         try {
-          cleanNodes[i].disconnect();
+          item.nodes[n].disconnect();
         } catch (err) {}
       }
-      audioState.transientAudioNodeCount = Math.max(0, audioState.transientAudioNodeCount - cleanNodes.length);
-    }, delay);
+      disconnected += item.nodes.length;
+      audioState.transientAudioNodeCount = Math.max(0, audioState.transientAudioNodeCount - item.nodes.length);
+    }
+    while (readIndex < queue.length) queue[writeIndex++] = queue[readIndex++];
+    queue.length = writeIndex;
+    if (!queue.length) return;
+    var hasDue = false;
+    for (var q = 0; q < queue.length; q++) {
+      if (queue[q].dueAt <= now) hasDue = true;
+      else if (queue[q].dueAt < nextDue) nextDue = queue[q].dueAt;
+    }
+    scheduleAudioDisconnectFlush(hasDue ? AUDIO_DISCONNECT_TICK_MS : Math.max(8, nextDue - now));
   }
 
   function connectGameOutput(source, destination, pan) {
@@ -5404,11 +7205,23 @@
       gameSchedulerActive: !!audioState.game.scheduler,
       tempo: audioState.menu.tempo,
       gameTempo: audioState.game.tempo,
-      volume: MENU_MUSIC_VOLUME,
-      gameVolume: GAME_MUSIC_VOLUME,
+      volume: MENU_MUSIC_VOLUME * clamp(audioState.musicVolume, 0, 2),
+      gameVolume: GAME_MUSIC_VOLUME * clamp(audioState.musicVolume, 0, 2),
+      musicVolume: clamp(audioState.musicVolume, 0, 2),
+      sfxVolume: clamp(audioState.sfxVolume, 0, 2),
       menuNodeCount: audioState.menu.nodes.length,
       gameNodeCount: audioState.game.nodes.length,
       transientAudioNodeCount: audioState.transientAudioNodeCount,
+      pendingAudioDisconnectGroups: audioState.audioDisconnectQueue.length,
+      pendingLauncherExplosionAudioGroups: audioState.launcherExplosionAudioGroups.length,
+      launcherExplosionAudioGraphReady: !!audioState.launcherExplosionAudioGraphReady,
+      launcherExplosionAudioStats: {
+        grouped: audioState.launcherExplosionAudioStats.grouped,
+        mergedGroups: audioState.launcherExplosionAudioStats.mergedGroups,
+        fullPlayed: audioState.launcherExplosionAudioStats.fullPlayed,
+        compactPlayed: audioState.launcherExplosionAudioStats.compactPlayed,
+      },
+      launcherWhistleCount: audioState.launcherWhistleCount,
       gameDanger: Number(gameDanger.toFixed(3)),
       gameBattleTarget: Number(audioState.game.battleTarget.toFixed(3)),
       gameBattleAmount: Number(audioState.game.battleAmount.toFixed(3)),
@@ -5422,6 +7235,8 @@
       var child = dynamicRoot.children[0];
       if (child.userData && child.userData.pooledZombie && child.userData.pooledZombie.pooled) {
         releaseZombieToPool(child.userData.pooledZombie);
+      } else if (child.userData && child.userData.pooledPaleDeputy) {
+        releasePaleDeputyEntity(child.userData.pooledPaleDeputy);
       } else {
         removeObject3D(child);
       }
@@ -5430,16 +7245,28 @@
       var effectChild = effectRoot.children[0];
       if (effectChild.userData && effectChild.userData.firePatchVisual) {
         releaseFirePatchVisual(effectChild.userData.firePatchVisual);
+      } else if (effectChild.userData && effectChild.userData.marshalHallowedVisual) {
+        releaseMarshalHallowedVisual(effectChild.userData.marshalHallowedVisual);
       } else if (effectChild.userData && effectChild.userData.rifleTrapVisual) {
         releaseRifleTrapVisual(effectChild.userData.rifleTrapVisual);
       } else if (effectChild.userData && effectChild.userData.particleVisual) {
         releaseParticleVisual(effectChild.userData.particleVisual);
+      } else if (effectChild.userData && effectChild.userData.particleBatch) {
+        detachParticleInstancedBatch(effectChild.userData.particleBatch);
+      } else if (effectChild.userData && effectChild.userData.projectileStandardBatch) {
+        detachStandardProjectileBatch(effectChild.userData.projectileStandardBatch);
+      } else if (effectChild.userData && effectChild.userData.xpOrbVisual) {
+        releaseXpOrbVisual(effectChild.userData.xpOrbVisual);
+      } else if (effectChild.userData && effectChild.userData.deathDebrisVisual) {
+        releaseDeathDebrisVisual(effectChild.userData.deathDebrisVisual);
       } else if (effectChild.userData && effectChild.userData.projectileVisual) {
         releaseProjectileVisual(effectChild.userData.projectileVisual);
       } else if (effectChild.userData && effectChild.userData.shockwaveVisual) {
         releaseShockwaveVisual(effectChild.userData.shockwaveVisual);
       } else if (effectChild.userData && effectChild.userData.smokePuffVisual) {
         releaseSmokePuffVisual(effectChild.userData.smokePuffVisual);
+      } else if (effectChild.userData && effectChild.userData.scorchDecalVisual) {
+        releaseScorchDecalVisual(effectChild.userData.scorchDecalVisual);
       } else if (effectChild.isLight && effectChild.userData && effectChild.userData.lightFlashVisual) {
         releaseLightFlashVisual(effectChild.userData.lightFlashVisual);
       } else {
@@ -5495,6 +7322,31 @@
       rememberBase(addBox(weaponRig, 0.54, 0.44, 0.26, mats.black, 0.12, 0.09, 1.28)),
       rememberBase(addBox(weaponRig, 0.2, 0.16, 0.42, mats.metal, -0.05, -0.08, 0.15)),
     ];
+    var coachGunParts = [
+      rememberBase(addSharedBox(weaponRig, 0.11, 0.1, 1.34, mats.metal, 0.035, 0.1, 0.98)),
+      rememberBase(addSharedBox(weaponRig, 0.11, 0.1, 1.34, mats.metal, 0.185, 0.1, 0.98)),
+      rememberBase(addSharedBox(weaponRig, 0.34, 0.25, 0.34, mats.black, 0.11, 0.03, 0.35)),
+      rememberBase(addSharedBox(weaponRig, 0.4, 0.24, 0.58, mats.wood, 0.04, -0.04, 0.02)),
+      rememberBase(addSharedBox(weaponRig, 0.29, 0.16, 0.42, mats.wood, 0.11, 0.015, 0.7)),
+      rememberBase(addSharedBox(weaponRig, 0.06, 0.11, 0.08, mats.rifleTracer, 0.11, 0.19, 1.63)),
+    ];
+    var breachCoachGunParts = [
+      rememberBase(addSharedBox(weaponRig, 0.14, 0.12, 0.84, mats.metal, 0.025, 0.1, 0.74)),
+      rememberBase(addSharedBox(weaponRig, 0.14, 0.12, 0.84, mats.metal, 0.195, 0.1, 0.74)),
+      rememberBase(addSharedBox(weaponRig, 0.38, 0.29, 0.38, mats.black, 0.11, 0.03, 0.34)),
+      rememberBase(addSharedBox(weaponRig, 0.4, 0.24, 0.54, mats.wood, 0.04, -0.04, 0.02)),
+      rememberBase(addSharedBox(weaponRig, 0.31, 0.18, 0.3, mats.wood, 0.11, 0.015, 0.58)),
+      rememberBase(addSharedBox(weaponRig, 0.36, 0.2, 0.08, mats.black, 0.11, 0.1, 1.16)),
+    ];
+    var graveCoachGunParts = [
+      rememberBase(addSharedBox(weaponRig, 0.09, 0.08, 1.62, mats.metal, 0.05, 0.1, 1.12)),
+      rememberBase(addSharedBox(weaponRig, 0.09, 0.08, 1.62, mats.metal, 0.17, 0.1, 1.12)),
+      rememberBase(addSharedBox(weaponRig, 0.3, 0.23, 0.34, mats.black, 0.11, 0.03, 0.34)),
+      rememberBase(addSharedBox(weaponRig, 0.38, 0.22, 0.6, mats.wood, 0.04, -0.04, 0.01)),
+      rememberBase(addSharedBox(weaponRig, 0.24, 0.13, 0.52, mats.wood, 0.11, 0.015, 0.79)),
+      rememberBase(addSharedBox(weaponRig, 0.05, 0.13, 0.07, mats.rifleTracer, 0.11, 0.2, 1.92)),
+      rememberBase(addSharedBox(weaponRig, 0.18, 0.04, 0.18, mats.gold, 0.11, 0.2, 0.42)),
+    ];
     var leftHolster = rememberBase(addBox(g, 0.22, 0.2, 0.34, mats.metal, -0.58, 0.95, -0.45));
     var rightHolster = rememberBase(addBox(g, 0.16, 0.16, 0.44, mats.metal, 0.58, 0.95, -0.45));
     var belt = rememberBase(addBox(g, 1.2, 0.12, 0.12, mats.black, 0, 1.2, 0.42));
@@ -5503,6 +7355,9 @@
       revolver: revolverParts,
       rifle: rifleParts,
       launcher: launcherParts,
+      coachGun: coachGunParts,
+      coachGunBreach: breachCoachGunParts,
+      coachGunGrave: graveCoachGunParts,
       dualRevolvers: offhandRevolverParts,
     };
     g.userData.animParts = {
@@ -5602,7 +7457,7 @@
   function findZombieSpawnPoint(radius, options) {
     var strict = options && options.strict;
     var sideOrder = getZombieSpawnSideOrder(options);
-    var rect = getCurrentVisibleGroundRect();
+    var rect = options && options.visibleGround ? options.visibleGround : getCurrentVisibleGroundRect();
     var minX = -ARENA_W / 2 - ENEMY_BOUNDS_EXTRA + radius;
     var maxX = ARENA_W / 2 + ENEMY_BOUNDS_EXTRA - radius;
     var minZ = -ARENA_D / 2 - ENEMY_BOUNDS_EXTRA + radius;
@@ -5682,9 +7537,15 @@
     return chooseZombieSurroundSides(kind, ignoreEnemy)[0];
   }
 
-  function chooseZombieSurroundSides(kind, ignoreEnemy) {
-    var rect = getCurrentVisibleGroundRect();
-    var counts = getZombieSurroundSideCounts(rect, ignoreEnemy);
+  function chooseZombieSurroundSides(kind, ignoreEnemy, visibleGround, cachedCounts) {
+    var rect = visibleGround || getCurrentVisibleGroundRect();
+    var counts;
+    if (cachedCounts) {
+      counts = [cachedCounts[0], cachedCounts[1], cachedCounts[2], cachedCounts[3]];
+      if (ignoreEnemy && ignoreEnemy.spawnSide >= 0 && ignoreEnemy.spawnSide < 4) counts[ignoreEnemy.spawnSide] -= 1;
+    } else {
+      counts = getZombieSurroundSideCounts(rect, ignoreEnemy);
+    }
     var key = kind === "teleport" ? "zombieTeleportSideCursor" : "zombieSpawnSideCursor";
     var start = Math.max(0, Math.floor(state[key] || 0)) % 4;
     return [0, 1, 2, 3].sort(function (a, b) {
@@ -5722,17 +7583,17 @@
     return dx < 0 ? 2 : 3;
   }
 
-  function getCurrentVisibleGroundRect() {
+  function getCurrentVisibleGroundRect(out) {
     var p = state.player;
-    var follow = clampCameraTarget(p ? p.x : 0, p ? p.z : 0);
-    return {
-      minX: follow.x + cameraGroundBounds.minX,
-      maxX: follow.x + cameraGroundBounds.maxX,
-      minZ: follow.z + cameraGroundBounds.minZ,
-      maxZ: follow.z + cameraGroundBounds.maxZ,
-      targetX: follow.x,
-      targetZ: follow.z,
-    };
+    var follow = clampCameraTarget(p ? p.x : 0, p ? p.z : 0, visibleGroundFollowScratch);
+    var result = out || {};
+    result.minX = follow.x + cameraGroundBounds.minX;
+    result.maxX = follow.x + cameraGroundBounds.maxX;
+    result.minZ = follow.z + cameraGroundBounds.minZ;
+    result.maxZ = follow.z + cameraGroundBounds.maxZ;
+    result.targetX = follow.x;
+    result.targetZ = follow.z;
+    return result;
   }
 
   function pointOutsideVisibleGround(x, z, pad, rect) {
@@ -5787,6 +7648,303 @@
     });
   }
 
+  function initPaleDeputyPool() {
+    while (paleDeputyPool.length < PALE_DEPUTY_MAX_COUNT) {
+      paleDeputyPool.push(createPaleDeputyEntity());
+    }
+  }
+
+  function createPaleDeputyEntity() {
+    var group = new THREE.Group();
+    group.name = "pale deputy revenant";
+    addContactShadow(group, 1.72, 1.42, 0.17);
+
+    var outerSeal = new THREE.Mesh(
+      getSharedGeometry("pale-deputy-outer-seal", function () {
+        return new THREE.RingGeometry(0.78, 0.93, 40);
+      }),
+      mats.paleDeputySeal
+    );
+    outerSeal.rotation.x = -Math.PI / 2;
+    outerSeal.position.y = 0.075;
+    outerSeal.castShadow = false;
+    outerSeal.receiveShadow = false;
+    outerSeal.renderOrder = 3;
+    outerSeal.userData.disposeGeometry = false;
+    outerSeal.userData.noDebris = true;
+    rememberBase(outerSeal);
+    group.add(outerSeal);
+
+    var innerSeal = new THREE.Mesh(
+      getSharedGeometry("pale-deputy-inner-seal", function () {
+        return new THREE.RingGeometry(0.34, 0.43, 32);
+      }),
+      mats.paleDeputySealGold
+    );
+    innerSeal.rotation.x = -Math.PI / 2;
+    innerSeal.position.y = 0.082;
+    innerSeal.castShadow = false;
+    innerSeal.receiveShadow = false;
+    innerSeal.renderOrder = 4;
+    innerSeal.userData.disposeGeometry = false;
+    innerSeal.userData.noDebris = true;
+    rememberBase(innerSeal);
+    group.add(innerSeal);
+
+    var sealMarkers = [];
+    for (var markerIndex = 0; markerIndex < 4; markerIndex++) {
+      var markerAngle = markerIndex * Math.PI / 2;
+      var marker = rememberBase(addSharedBox(
+        group,
+        markerIndex % 2 ? 0.08 : 0.28,
+        0.035,
+        markerIndex % 2 ? 0.28 : 0.08,
+        markerIndex % 2 ? mats.paleDeputySeal : mats.paleDeputySealGold,
+        Math.sin(markerAngle) * 0.62,
+        0.09,
+        Math.cos(markerAngle) * 0.62
+      ));
+      marker.castShadow = false;
+      marker.receiveShadow = false;
+      marker.userData.noDebris = true;
+      sealMarkers.push(marker);
+    }
+
+    var body = new THREE.Group();
+    body.name = "pale deputy body";
+    body.scale.setScalar(PALE_DEPUTY_MODEL_SCALE);
+    rememberBase(body);
+    group.add(body);
+
+    var leftLeg = new THREE.Group();
+    leftLeg.position.set(-0.24, 0.68, 0);
+    rememberBase(leftLeg);
+    body.add(leftLeg);
+    rememberBase(addSharedBox(leftLeg, 0.38, 0.82, 0.42, mats.paleDeputyDuster, 0, 0, 0));
+    rememberBase(addSharedBox(leftLeg, 0.44, 0.28, 0.62, mats.paleDeputyHat, 0, -0.42, 0.09));
+    rememberBase(addSharedBox(leftLeg, 0.18, 0.09, 0.65, mats.paleDeputyTrim, 0, -0.28, 0.08));
+
+    var rightLeg = new THREE.Group();
+    rightLeg.position.set(0.24, 0.68, 0);
+    rememberBase(rightLeg);
+    body.add(rightLeg);
+    rememberBase(addSharedBox(rightLeg, 0.38, 0.82, 0.42, mats.paleDeputyDuster, 0, 0, 0));
+    rememberBase(addSharedBox(rightLeg, 0.44, 0.28, 0.62, mats.paleDeputyHat, 0, -0.42, 0.09));
+    rememberBase(addSharedBox(rightLeg, 0.18, 0.09, 0.65, mats.paleDeputyTrim, 0, -0.28, 0.08));
+
+    var torso = rememberBase(addSharedBox(body, 1.02, 1.22, 0.68, mats.paleDeputyDuster, 0, 1.53, 0));
+    var chest = rememberBase(addSharedBox(body, 0.66, 0.82, 0.72, mats.paleDeputyBoneShadow, 0, 1.65, 0.03));
+    var belt = rememberBase(addSharedBox(body, 1.08, 0.13, 0.76, mats.paleDeputyHat, 0, 1.13, 0));
+    var beltBuckle = rememberBase(addSharedBox(body, 0.22, 0.18, 0.08, mats.paleDeputyBadge, 0, 1.15, 0.41));
+    var leftLapel = rememberBase(addSharedBox(body, 0.14, 0.64, 0.08, mats.paleDeputyBadge, -0.22, 1.75, 0.4));
+    var rightLapel = rememberBase(addSharedBox(body, 0.14, 0.64, 0.08, mats.paleDeputyBadge, 0.22, 1.75, 0.4));
+    leftLapel.rotation.z = -0.38;
+    rightLapel.rotation.z = 0.38;
+    rememberBase(leftLapel);
+    rememberBase(rightLapel);
+
+    var badge = new THREE.Mesh(
+      getSharedGeometry("pale-deputy-star", function () {
+        var shape = new THREE.Shape();
+        for (var starPoint = 0; starPoint < 10; starPoint++) {
+          var starRadius = starPoint % 2 === 0 ? 1 : 0.43;
+          var starAngle = -Math.PI / 2 + (starPoint * Math.PI) / 5;
+          var starX = Math.cos(starAngle) * starRadius;
+          var starY = Math.sin(starAngle) * starRadius;
+          if (!starPoint) shape.moveTo(starX, starY);
+          else shape.lineTo(starX, starY);
+        }
+        shape.closePath();
+        return new THREE.ShapeGeometry(shape);
+      }),
+      mats.paleDeputyBadge
+    );
+    badge.position.set(-0.34, 1.91, 0.395);
+    badge.scale.setScalar(0.19);
+    badge.castShadow = true;
+    badge.receiveShadow = false;
+    badge.userData.disposeGeometry = false;
+    badge.userData.noDebris = true;
+    rememberBase(badge);
+    body.add(badge);
+
+    var leftTail = new THREE.Group();
+    leftTail.position.set(-0.27, 1.16, -0.08);
+    rememberBase(leftTail);
+    body.add(leftTail);
+    rememberBase(addSharedBox(leftTail, 0.48, 1.18, 0.26, mats.paleDeputyDuster, 0, -0.52, 0));
+    rememberBase(addSharedBox(leftTail, 0.1, 1.03, 0.29, mats.paleDeputyTrim, -0.2, -0.52, 0));
+
+    var rightTail = new THREE.Group();
+    rightTail.position.set(0.27, 1.16, -0.08);
+    rememberBase(rightTail);
+    body.add(rightTail);
+    rememberBase(addSharedBox(rightTail, 0.48, 1.18, 0.26, mats.paleDeputyDuster, 0, -0.52, 0));
+    rememberBase(addSharedBox(rightTail, 0.1, 1.03, 0.29, mats.paleDeputyTrim, 0.2, -0.52, 0));
+
+    var leftArm = new THREE.Group();
+    leftArm.position.set(-0.68, 1.64, 0.02);
+    rememberBase(leftArm);
+    body.add(leftArm);
+    rememberBase(addSharedBox(leftArm, 0.32, 1.0, 0.36, mats.paleDeputyDuster, 0, -0.12, 0));
+    rememberBase(addSharedBox(leftArm, 0.31, 0.27, 0.33, mats.paleDeputyBone, 0, -0.62, 0.06));
+    rememberBase(addSharedBox(leftArm, 0.39, 0.14, 0.42, mats.paleDeputyTrim, 0, 0.31, 0));
+
+    var weaponRig = new THREE.Group();
+    weaponRig.position.set(0.7, 1.55, 0.25);
+    rememberBase(weaponRig);
+    body.add(weaponRig);
+    rememberBase(addSharedBox(weaponRig, 0.34, 0.84, 0.34, mats.paleDeputyDuster, 0, -0.12, -0.04));
+    rememberBase(addSharedBox(weaponRig, 0.33, 0.27, 0.34, mats.paleDeputyBone, 0, -0.55, 0.1));
+    rememberBase(addSharedBox(weaponRig, 0.36, 0.14, 0.43, mats.paleDeputyTrim, 0, 0.27, -0.04));
+    var weaponLeftBarrel = rememberBase(addSharedBox(weaponRig, 0.11, 0.1, 1.34, mats.metal, 0.035, -0.43, 0.98));
+    var weaponRightBarrel = rememberBase(addSharedBox(weaponRig, 0.11, 0.1, 1.34, mats.metal, 0.185, -0.43, 0.98));
+    var weaponReceiver = rememberBase(addSharedBox(weaponRig, 0.34, 0.25, 0.34, mats.black, 0.11, -0.5, 0.35));
+    var weaponStock = rememberBase(addSharedBox(weaponRig, 0.4, 0.24, 0.58, mats.wood, 0.04, -0.57, 0.02));
+    var weaponForeEnd = rememberBase(addSharedBox(weaponRig, 0.29, 0.16, 0.42, mats.wood, 0.11, -0.515, 0.7));
+    var weaponMuzzle = rememberBase(addSharedBox(weaponRig, 0.06, 0.11, 0.08, mats.rifleTracer, 0.11, -0.34, 1.63));
+    weaponLeftBarrel.name = "pale deputy coach gun left barrel";
+    weaponRightBarrel.name = "pale deputy coach gun right barrel";
+    weaponReceiver.name = "pale deputy coach gun receiver";
+    weaponStock.name = "pale deputy coach gun stock";
+    weaponForeEnd.name = "pale deputy coach gun fore-end";
+    weaponMuzzle.castShadow = false;
+    weaponMuzzle.userData.noDebris = true;
+
+    var neck = rememberBase(addSharedBox(body, 0.42, 0.34, 0.38, mats.paleDeputyBoneShadow, 0, 2.18, 0));
+    var skull = rememberBase(addSharedBox(body, 0.82, 0.68, 0.74, mats.paleDeputyBone, 0, 2.54, 0));
+    var jaw = rememberBase(addSharedBox(body, 0.55, 0.24, 0.57, mats.paleDeputyBoneShadow, 0, 2.2, 0.08));
+    var noseVoid = rememberBase(addSharedBox(body, 0.13, 0.19, 0.08, mats.paleDeputyHat, 0, 2.49, 0.4));
+    var mouthVoid = rememberBase(addSharedBox(body, 0.38, 0.08, 0.08, mats.paleDeputyHat, 0, 2.25, 0.39));
+    var leftEyeGlow = rememberBase(addSharedBox(body, 0.18, 0.13, 0.09, mats.paleDeputyGlow, -0.2, 2.61, 0.4));
+    var rightEyeGlow = rememberBase(addSharedBox(body, 0.18, 0.13, 0.09, mats.paleDeputyGlow, 0.2, 2.61, 0.4));
+    leftEyeGlow.castShadow = false;
+    rightEyeGlow.castShadow = false;
+    leftEyeGlow.userData.noDebris = true;
+    rightEyeGlow.userData.noDebris = true;
+
+    var hatBrim = rememberBase(addSharedBox(body, 1.62, 0.14, 1.22, mats.paleDeputyHat, 0, 2.9, 0));
+    var hatCrown = rememberBase(addSharedBox(body, 0.88, 0.48, 0.78, mats.paleDeputyHat, 0, 3.19, -0.02));
+    var hatBand = rememberBase(addSharedBox(body, 0.94, 0.11, 0.83, mats.paleDeputyBadge, 0, 3.02, -0.02));
+    var hatNotch = rememberBase(addSharedBox(body, 0.34, 0.13, 0.84, mats.paleDeputyTrim, 0.19, 3.34, -0.02));
+
+    var entity = {
+      active: false,
+      pooled: true,
+      x: 0,
+      z: 0,
+      radius: PALE_DEPUTY_RADIUS,
+      life: 0,
+      startLife: PALE_DEPUTY_LIFETIME,
+      attackTimer: 0,
+      target: null,
+      targetRefreshTimer: 0,
+      walkPhase: 0,
+      moveAmount: 0,
+      shotPulse: 0,
+      phase: 0,
+      speed: BASE_PLAYER_SPEED,
+      actualMoveSpeed: BASE_PLAYER_SPEED,
+      group: group,
+      body: body,
+      source: { type: "paleDeputy", alliedSummon: true },
+      previewDisplay: false,
+      parts: {
+        leftLeg: leftLeg,
+        rightLeg: rightLeg,
+        torso: torso,
+        chest: chest,
+        belt: belt,
+        beltBuckle: beltBuckle,
+        leftLapel: leftLapel,
+        rightLapel: rightLapel,
+        badge: badge,
+        leftTail: leftTail,
+        rightTail: rightTail,
+        leftArm: leftArm,
+        weaponRig: weaponRig,
+        weaponLeftBarrel: weaponLeftBarrel,
+        weaponRightBarrel: weaponRightBarrel,
+        weaponReceiver: weaponReceiver,
+        weaponStock: weaponStock,
+        weaponForeEnd: weaponForeEnd,
+        weaponMuzzle: weaponMuzzle,
+        neck: neck,
+        skull: skull,
+        jaw: jaw,
+        noseVoid: noseVoid,
+        mouthVoid: mouthVoid,
+        leftEyeGlow: leftEyeGlow,
+        rightEyeGlow: rightEyeGlow,
+        hatBrim: hatBrim,
+        hatCrown: hatCrown,
+        hatBand: hatBand,
+        hatNotch: hatNotch,
+        outerSeal: outerSeal,
+        innerSeal: innerSeal,
+        sealMarkers: sealMarkers,
+      },
+    };
+    entity.source.deputy = entity;
+    group.userData.pooledPaleDeputy = entity;
+    group.userData.paleDeputyParts = entity.parts;
+    group.userData.paleDeputyModelVersion = 1;
+    group.visible = false;
+    group.position.set(0, -1000, 0);
+    paleDeputyCreated += 1;
+    return entity;
+  }
+
+  function acquirePaleDeputyEntity(x, z) {
+    var entity = paleDeputyPool.length ? paleDeputyPool.pop() : createPaleDeputyEntity();
+    entity.active = true;
+    entity.pooled = false;
+    entity.x = Number(x) || 0;
+    entity.z = Number(z) || 0;
+    entity.life = PALE_DEPUTY_LIFETIME;
+    entity.startLife = PALE_DEPUTY_LIFETIME;
+    entity.attackTimer = 0.18;
+    entity.target = null;
+    entity.targetRefreshTimer = 0;
+    entity.walkPhase = 0;
+    entity.moveAmount = 0;
+    entity.shotPulse = 0;
+    entity.phase = ((state.marshalPaleDeputiesRaised || 0) % PALE_DEPUTY_MAX_COUNT) * 2.0943951;
+    entity.speed = getPaleDeputyPlayerSpeed();
+    entity.actualMoveSpeed = entity.speed;
+    entity.previewDisplay = false;
+    entity.group.visible = true;
+    entity.group.scale.setScalar(1);
+    scaleFromBase(entity.body, 1, 1, 1);
+    entity.group.position.set(entity.x, 0, entity.z);
+    dynamicRoot.add(entity.group);
+    paleDeputyInUse += 1;
+    return entity;
+  }
+
+  function releasePaleDeputyEntity(entity) {
+    if (!entity) return;
+    if (!entity.active && paleDeputyPool.indexOf(entity) !== -1) return;
+    if (entity.group.parent) entity.group.parent.remove(entity.group);
+    entity.active = false;
+    entity.pooled = true;
+    entity.target = null;
+    entity.life = 0;
+    entity.attackTimer = 0;
+    entity.previewDisplay = false;
+    entity.group.visible = false;
+    entity.group.position.set(0, -1000, 0);
+    entity.group.rotation.set(0, 0, 0);
+    entity.group.scale.setScalar(1);
+    paleDeputyInUse = Math.max(0, paleDeputyInUse - 1);
+    if (paleDeputyPool.indexOf(entity) === -1) paleDeputyPool.push(entity);
+  }
+
+  function getPaleDeputyPlayerSpeed() {
+    if (!state.player) return BASE_PLAYER_SPEED;
+    return state.player.speed * ((state.marshalRecoilSpeedTimer || 0) > 0 ? 1.3 : 1);
+  }
+
   function initFirePatchVisualPools() {
     prewarmFirePatchVisualPool("standard", FIRE_PATCH_VISUAL_PREWARM.standard);
     prewarmFirePatchVisualPool("trail", FIRE_PATCH_VISUAL_PREWARM.trail);
@@ -5802,6 +7960,15 @@
 
   function initParticleVisualPools() {
     prewarmParticleVisualPool("box", PARTICLE_VISUAL_PREWARM);
+    prewarmParticleVisualPool("sphere", PARTICLE_VISUAL_PREWARM);
+  }
+
+  function initXpOrbVisualPool() {
+    prewarmXpOrbVisualPool(XP_ORB_VISUAL_PREWARM);
+  }
+
+  function initDeathDebrisVisualPool() {
+    prewarmDeathDebrisVisualPool(DEATH_DEBRIS_VISUAL_PREWARM);
   }
 
   function initProjectileVisualPools() {
@@ -5811,13 +7978,214 @@
   }
 
   function prewarmTrailWardenTrapVisuals() {
-    prewarmRifleTrapVisualPool(RIFLE_TRAP_VISUAL_ACTIVE_PREWARM);
+    rifleTrapBackgroundPrewarmPending = rifleTrapVisualCreated < RIFLE_TRAP_VISUAL_ACTIVE_PREWARM;
   }
 
   function initExplosionEffectPools() {
     prewarmShockwaveVisualPool(SHOCKWAVE_PREWARM);
     prewarmSmokePuffVisualPool(SMOKE_PUFF_PREWARM);
     prewarmLightFlashPool(LIGHT_FLASH_PREWARM);
+  }
+
+  function initScorchDecalVisualPool() {
+    prewarmScorchDecalVisualPool(SCORCH_DECAL_VISUAL_PREWARM);
+  }
+
+  function warmupGameplayEffectResources() {
+    if (gameplayEffectWarmupDone || gameplayEffectWarmupInProgress || renderDiagnostics.contextLost) return false;
+    gameplayEffectWarmupInProgress = true;
+    var warmupItems = [];
+    var previousShake = state.shake || 0;
+    var origin = getGameplayWarmupOrigin();
+    try {
+      warmupParticleInstancedBatches(origin, warmupItems);
+      warmupProjectileVisuals(origin, warmupItems);
+      warmupExplosionEffectVisuals(origin, warmupItems);
+      warmupHazardVisuals(origin, warmupItems);
+      warmupXpOrbVisuals(origin, warmupItems);
+      warmupDeathDebrisVisuals(origin, warmupItems);
+      warmupPaleDeputyVisual(origin, warmupItems);
+      renderGameplayWarmupFrame(origin);
+      gameplayEffectWarmupDone = true;
+      return true;
+    } catch (err) {
+      return false;
+    } finally {
+      for (var i = warmupItems.length - 1; i >= 0; i--) releaseWarmupVisual(warmupItems[i]);
+      state.shake = previousShake;
+      gameplayEffectWarmupInProgress = false;
+    }
+  }
+
+  function getGameplayWarmupOrigin() {
+    if (state.player) return { x: state.player.x || 0, z: state.player.z || 0 };
+    return { x: PLAYER_START.x || 0, z: PLAYER_START.z || 0 };
+  }
+
+  function rememberWarmupVisual(items, type, visual) {
+    if (visual) items.push({ type: type, visual: visual });
+    return visual;
+  }
+
+  function warmupParticleInstancedBatches(origin, items) {
+    var boxMaterials = [
+      mats.explosion,
+      mats.flash,
+      mats.rifleTracer,
+      mats.coachTracer,
+      mats.ammoRound,
+      mats.zombieBlood,
+      mats.zombieSkin,
+      mats.fireHot,
+      mats.fireCore,
+      mats.fireOrange,
+      mats.gold,
+      mats.trapMetal,
+      mats.acidSpitHot,
+      mats.acidSpitShadow,
+      mats.paleDeputyTracer,
+      mats.paleDeputyBadge,
+    ];
+    var sphereMaterials = [mats.xp, mats.xpLight, mats.acid, mats.acidDark, mats.acidSpitCore, mats.slimeCore];
+    warmupParticleMaterials("box", boxMaterials, origin, items, 0.08);
+    warmupParticleMaterials("sphere", sphereMaterials, origin, items, 0.09);
+  }
+
+  function warmupParticleMaterials(kind, materials, origin, items, size) {
+    for (var i = 0; i < materials.length; i++) {
+      if (!materials[i]) continue;
+      rememberWarmupVisual(
+        items,
+        "particle",
+        acquireParticleVisual(kind, origin.x + (i % 8) * 0.16, 0.75 + Math.floor(i / 8) * 0.12, origin.z - 1.8, size, materials[i])
+      );
+    }
+  }
+
+  function warmupProjectileVisuals(origin, items) {
+    var angle = Math.PI * 0.12;
+    var bulletSize = getWeaponProjectileVisualSize(WEAPONS.revolver);
+    var rifleSize = getWeaponProjectileVisualSize(WEAPONS.rifle);
+    var coachSize = getWeaponProjectileVisualSize(WEAPONS.coachGun);
+    for (var i = 0; i < PROJECTILE_STANDARD_INSTANCE_CAPACITY; i++) {
+      var materialIndex = i % 5;
+      var material = materialIndex === 0 ? mats.rifleTracer : materialIndex === 1 ? mats.flash : materialIndex === 2 ? mats.coachTracer : materialIndex === 3 ? mats.paleDeputyTracer : mats.bullet;
+      var size = materialIndex === 0 ? rifleSize : materialIndex === 2 ? coachSize : materialIndex === 3 ? { width: 0.105, length: 1.12 } : bulletSize;
+      rememberWarmupVisual(
+        items,
+        "projectile",
+        acquireProjectileVisual(
+          "standard",
+          { x: origin.x + (i % 32) * 0.045 - 0.72, y: 1.05 + Math.floor(i / 32) * 0.012, z: origin.z - 2.4 },
+          angle,
+          size,
+          material
+        )
+      );
+    }
+    rememberWarmupVisual(items, "projectile", acquireProjectileVisual("launcher", { x: origin.x - 0.4, y: 1.1, z: origin.z - 2.7 }, angle, null, null));
+    rememberWarmupVisual(items, "projectile", acquireProjectileVisual("electric", { x: origin.x, y: 1.1, z: origin.z - 2.7 }, angle, rifleSize, null));
+    rememberWarmupVisual(items, "projectile", acquireProjectileVisual("fireShard", { x: origin.x + 0.4, y: 0.58, z: origin.z - 2.7 }, angle, null, null));
+  }
+
+  function warmupExplosionEffectVisuals(origin, items) {
+    rememberWarmupVisual(items, "shockwave", acquireShockwaveVisual(origin.x - 1.4, origin.z - 1.4, 0xffe0a0));
+    rememberWarmupVisual(items, "shockwave", acquireShockwaveVisual(origin.x + 1.4, origin.z - 1.4, 0xffb347));
+    rememberWarmupVisual(items, "smoke", acquireSmokePuffVisual(origin.x - 0.4, 0.9, origin.z - 1.2, 0.9));
+    rememberWarmupVisual(items, "smoke", acquireSmokePuffVisual(origin.x + 0.4, 0.7, origin.z - 1.2, 0.62));
+    rememberWarmupVisual(items, "scorch", acquireScorchDecalVisual(origin.x, origin.z - 1.35, 2.1));
+    rememberWarmupVisual(items, "light", acquireLightFlashVisual(origin.x, 1.2, origin.z - 1.2, 0xff7a22, 3.2, 8));
+  }
+
+  function warmupHazardVisuals(origin, items) {
+    rememberWarmupVisual(items, "firePatch", acquireFirePatchVisual(origin.x - 1.5, origin.z + 1.2, getLauncherFireRadius(), false));
+    rememberWarmupVisual(items, "firePatch", acquireFirePatchVisual(origin.x + 1.5, origin.z + 1.2, Math.max(0.8, getLauncherFireRadius() * 0.72), true));
+    rememberWarmupVisual(items, "acidPuddle", acquireAcidPuddleVisual(origin.x, origin.z + 1.8));
+  }
+
+  function warmupXpOrbVisuals(origin, items) {
+    var count = Math.min(XP_ORB_VISUAL_PREWARM, 36);
+    for (var i = 0; i < count; i++) {
+      rememberWarmupVisual(
+        items,
+        "xpOrb",
+        acquireXpOrbVisual(origin.x + (i % 12) * 0.12 - 0.66, origin.z + 2.4 + Math.floor(i / 12) * 0.12, i % 4 === 0 ? 0.31 : 0.24, i % 4 === 0 ? 0.14 : 0.105)
+      );
+    }
+  }
+
+  function warmupDeathDebrisVisuals(origin, items) {
+    var sources = getDeathDebrisWarmupSources();
+    if (!sources.length) return;
+    var count = Math.min(DEATH_DEBRIS_VISUAL_PREWARM, MAX_DEBRIS);
+    for (var i = 0; i < count; i++) {
+      var source = sources[i % sources.length];
+      if (!source) continue;
+      source.updateWorldMatrix(true, false);
+      source.getWorldPosition(deathDebrisWorldPosScratch);
+      source.getWorldQuaternion(deathDebrisWorldQuatScratch);
+      deathDebrisWorldPosScratch.set(origin.x + (i % 12) * 0.12 - 0.66, 0.45 + (i % 5) * 0.08, origin.z + 3.1 + Math.floor(i / 12) * 0.12);
+      rememberWarmupVisual(items, "debris", acquireDeathDebrisVisual(source, deathDebrisWorldPosScratch, deathDebrisWorldQuatScratch));
+    }
+  }
+
+  function warmupPaleDeputyVisual(origin, items) {
+    var deputy = acquirePaleDeputyEntity(origin.x + 1.8, origin.z - 0.8);
+    deputy.group.position.set(deputy.x, 0, deputy.z);
+    rememberWarmupVisual(items, "paleDeputy", deputy);
+  }
+
+  function getDeathDebrisWarmupSources() {
+    var sources = [];
+    Object.keys(zombiePools).forEach(function (type) {
+      var zombie = zombiePools[type] && zombiePools[type][0];
+      var parts = zombie && zombie.group && zombie.group.userData ? zombie.group.userData.deathDebrisParts : null;
+      if (!parts || !parts.length) return;
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i] && parts[i].isMesh) sources.push(parts[i]);
+      }
+    });
+    return sources;
+  }
+
+  function renderGameplayWarmupFrame(origin, options) {
+    if (!renderer || !scene || !camera || renderDiagnostics.contextLost) return;
+    var savedPosition = camera.position.clone();
+    var savedQuaternion = camera.quaternion.clone();
+    var savedTarget = cameraTarget.clone();
+    var shouldCompile = !options || options.compile !== false;
+    try {
+      var follow = clampCameraTarget(origin.x, origin.z, cameraFollowScratch);
+      cameraTarget.set(follow.x, 0, follow.z);
+      camera.position.set(cameraTarget.x + cameraBaseOffset.x, cameraBaseOffset.y, cameraTarget.z + cameraBaseOffset.z);
+      camera.lookAt(cameraTarget);
+      camera.updateMatrixWorld(true);
+      updateGameplayShadowCamera(follow);
+      scene.updateMatrixWorld(true);
+      if (shouldCompile && typeof renderer.compile === "function") renderer.compile(scene, camera);
+      renderer.render(scene, camera);
+    } catch (err) {
+      renderDiagnostics.lastReason = "warmup-render-error";
+    } finally {
+      camera.position.copy(savedPosition);
+      camera.quaternion.copy(savedQuaternion);
+      cameraTarget.copy(savedTarget);
+    }
+  }
+
+  function releaseWarmupVisual(item) {
+    if (!item || !item.visual) return;
+    if (item.type === "particle") releaseParticleVisual(item.visual);
+    else if (item.type === "projectile") releaseProjectileVisual(item.visual);
+    else if (item.type === "shockwave") releaseShockwaveVisual(item.visual);
+    else if (item.type === "smoke") releaseSmokePuffVisual(item.visual);
+    else if (item.type === "scorch") releaseScorchDecalVisual(item.visual);
+    else if (item.type === "light") releaseLightFlashVisual(item.visual);
+    else if (item.type === "firePatch") releaseFirePatchVisual(item.visual);
+    else if (item.type === "acidPuddle") releaseAcidPuddleVisual(item.visual);
+    else if (item.type === "xpOrb") releaseXpOrbVisual(item.visual);
+    else if (item.type === "debris") releaseDeathDebrisVisual(item.visual);
+    else if (item.type === "paleDeputy") releasePaleDeputyEntity(item.visual);
   }
 
   function prewarmZombiePool(type, count) {
@@ -5856,6 +8224,18 @@
     }
   }
 
+  function prewarmXpOrbVisualPool(count) {
+    while (xpOrbVisualPool.length < count) {
+      xpOrbVisualPool.push(createXpOrbVisual());
+    }
+  }
+
+  function prewarmDeathDebrisVisualPool(count) {
+    while (deathDebrisVisualPool.length < count) {
+      deathDebrisVisualPool.push(createDeathDebrisVisual());
+    }
+  }
+
   function prewarmProjectileVisualPool(kind, count) {
     var key = getProjectileVisualPoolKey(kind);
     var pool = projectileVisualPools[key];
@@ -5879,6 +8259,12 @@
   function prewarmLightFlashPool(count) {
     while (lightFlashPool.length < count) {
       lightFlashPool.push(createLightFlashVisual());
+    }
+  }
+
+  function prewarmScorchDecalVisualPool(count) {
+    while (scorchDecalVisualPool.length < count) {
+      scorchDecalVisualPool.push(createScorchDecalVisual());
     }
   }
 
@@ -5996,6 +8382,21 @@
       parasiteBackLeg = rememberBase(addSharedBox(g, 0.46 * s, 0.1 * s, 0.12 * s, mats.parasiteFlesh, 0, headY + 0.08 * s, -0.24 * s));
     }
     addHealthBar(g, s, config.tall ? headY + 0.62 * s : null);
+    var marshalMark = new THREE.Mesh(
+      getSharedGeometry("marshal-mark-ring", function () {
+        return new THREE.RingGeometry(0.74, 0.94, 24);
+      }),
+      mats.consecratedMark
+    );
+    marshalMark.name = "consecrated mark";
+    marshalMark.rotation.x = -Math.PI / 2;
+    marshalMark.position.y = 0.055;
+    marshalMark.renderOrder = 3;
+    marshalMark.visible = false;
+    marshalMark.userData.noDebris = true;
+    g.add(marshalMark);
+    g.userData.marshalMark = marshalMark;
+    g.userData.deathDebrisParts = collectDeathDebrisParts(g);
     g.userData.animParts = {
       leftLeg: leftLeg,
       rightLeg: rightLeg,
@@ -6046,15 +8447,29 @@
       stuckTimer: 0,
       steerX: 0,
       steerZ: 1,
+      cachedSteerX: 0,
+      cachedSteerZ: 1,
+      cachedSteerWantX: 0,
+      cachedSteerWantZ: 1,
+      cachedSteerTimer: 0,
       avoidSide: pooled && type === "fastZombie" ? 1 : rng() < 0.5 ? -1 : 1,
       navGoal: null,
+      navGoalStorage: { x: 0, z: 0, holdUntil: 0, expires: 0 },
       catchupReadyAt: 0,
       teleportCount: 0,
       fireSlowTimer: 0,
+      marshalStunTimer: 0,
+      marshalFearTimer: 0,
+      marshalFearX: 0,
+      marshalFearZ: 0,
+      marshalMarkTimer: 0,
+      marshalBountyTimer: 0,
+      marshalBounty: false,
       acidCooldown: type === "spitter" ? rand(0.65, 1.35) : 0,
       acidShots: 0,
       spitWindup: 0,
       spitTarget: null,
+      spitTargetStorage: { x: 0, z: 0 },
       spitPulse: 0,
     };
     zombie.pooled = !!pooled;
@@ -6096,11 +8511,23 @@
     zombie.stuckTimer = 0;
     zombie.steerX = 0;
     zombie.steerZ = 1;
+    zombie.cachedSteerX = 0;
+    zombie.cachedSteerZ = 1;
+    zombie.cachedSteerWantX = 0;
+    zombie.cachedSteerWantZ = 1;
+    zombie.cachedSteerTimer = 0;
     zombie.avoidSide = rng() < 0.5 ? -1 : 1;
     zombie.navGoal = null;
     zombie.catchupReadyAt = 0;
     zombie.teleportCount = 0;
     zombie.fireSlowTimer = 0;
+    zombie.marshalStunTimer = 0;
+    zombie.marshalFearTimer = 0;
+    zombie.marshalFearX = 0;
+    zombie.marshalFearZ = 0;
+    zombie.marshalMarkTimer = 0;
+    zombie.marshalBountyTimer = 0;
+    zombie.marshalBounty = false;
     zombie.acidCooldown = type === "spitter" ? rand(0.65, 1.35) : 0;
     zombie.acidShots = 0;
     zombie.spitWindup = 0;
@@ -6111,6 +8538,7 @@
     zombie.group.position.set(0, 0, 0);
     zombie.group.rotation.set(0, 0, 0);
     zombie.group.scale.setScalar(1);
+    if (zombie.group.userData.marshalMark) zombie.group.userData.marshalMark.visible = false;
     updateEnemyHealthBar(zombie);
     return zombie;
   }
@@ -6126,8 +8554,15 @@
     zombie.hitPulse = 0;
     zombie.moveAmount = 0;
     zombie.navGoal = null;
+    zombie.cachedSteerTimer = 0;
     zombie.spitTarget = null;
     zombie.spitPulse = 0;
+    zombie.marshalStunTimer = 0;
+    zombie.marshalFearTimer = 0;
+    zombie.marshalMarkTimer = 0;
+    zombie.marshalBountyTimer = 0;
+    zombie.marshalBounty = false;
+    if (zombie.group.userData.marshalMark) zombie.group.userData.marshalMark.visible = false;
     zombie.active = false;
     zombiePoolInUse[zombie.type] = Math.max(0, (zombiePoolInUse[zombie.type] || 0) - 1);
     zombiePools[zombie.type].push(zombie);
@@ -6185,8 +8620,14 @@
   }
 
   function update(dt) {
+    if (state.paused) {
+      updateHud();
+      return;
+    }
+
     state.time += dt;
     state.shake = Math.max(0, state.shake - dt * 5.5);
+    updateRifleTrapBackgroundPrewarm();
 
     if (state.player) {
       updateAim();
@@ -6205,6 +8646,7 @@
       return;
     }
 
+    updateMarshalSystems(dt);
     updateReloads(dt);
     updateRifleTimers(dt);
     updatePlayer(dt);
@@ -6216,15 +8658,574 @@
     updateRifleTraps(dt);
     updateEnemies(dt);
     updateRifleTraps(0);
+    updatePaleDeputies(dt);
     updateAcidProjectiles(dt);
     updateAcidPuddles(dt);
     updateFirePatches(dt);
     updateDelayedExplosions(dt);
     updateBullets(dt);
+    updateCoachGunTracers(dt);
+    updatePaleDeputyTracers(dt);
     updateParticles(dt);
     updateVisualEffects(dt);
     updateWaveProgress(dt);
+    updateLauncherBackgroundWarmup(dt);
     updateHud();
+  }
+
+  function updateRifleTrapBackgroundPrewarm() {
+    if (!rifleTrapBackgroundPrewarmPending) return;
+    if (rifleTrapVisualCreated >= RIFLE_TRAP_VISUAL_ACTIVE_PREWARM) {
+      rifleTrapBackgroundPrewarmPending = false;
+      return;
+    }
+    rifleTrapVisualPool.push(createRifleTrapVisual());
+    if (rifleTrapVisualCreated >= RIFLE_TRAP_VISUAL_ACTIVE_PREWARM) rifleTrapBackgroundPrewarmPending = false;
+  }
+
+  function updateLauncherBackgroundWarmup(dt) {
+    releaseLauncherShrapnelResourceWarmupItems();
+    var shrapnelPending = launcherShrapnelResourceWarmup.pending;
+    var cascadePending = launcherCascadeWarmup.pending;
+    if (shrapnelPending && cascadePending) {
+      if (launcherWarmupTurn === 0) updateLauncherShrapnelResourceWarmup(dt);
+      else updateLauncherCascadeWarmup(dt);
+      launcherWarmupTurn = launcherWarmupTurn === 0 ? 1 : 0;
+    } else if (shrapnelPending) {
+      updateLauncherShrapnelResourceWarmup(dt);
+    } else if (cascadePending) {
+      updateLauncherCascadeWarmup(dt);
+    }
+  }
+
+  function resetLauncherCascadeWarmup() {
+    launcherCascadeWarmup.pending = false;
+    launcherCascadeWarmup.completed = false;
+    launcherCascadeWarmup.stage = 0;
+    launcherCascadeWarmup.steps = 0;
+    launcherCascadeWarmup.lastMs = 0;
+    launcherCascadeWarmup.maxMs = 0;
+  }
+
+  function resetLauncherShrapnelResourceWarmup() {
+    releaseLauncherShrapnelResourceWarmupItems();
+    launcherShrapnelResourceWarmup.pending = false;
+    launcherShrapnelResourceWarmup.completed = false;
+    launcherShrapnelResourceWarmup.stage = 0;
+    launcherShrapnelResourceWarmup.steps = 0;
+    launcherShrapnelResourceWarmup.lastMs = 0;
+    launcherShrapnelResourceWarmup.maxMs = 0;
+  }
+
+  function releaseLauncherShrapnelResourceWarmupItems() {
+    var items = launcherShrapnelResourceWarmup.activeItems;
+    if (!items || !items.length) return;
+    for (var i = items.length - 1; i >= 0; i--) releaseWarmupVisual(items[i]);
+    items.length = 0;
+  }
+
+  function requestLauncherCascadeWarmup() {
+    if (launcherCascadeWarmup.completed || launcherCascadeWarmup.pending) return;
+    launcherCascadeWarmup.pending = true;
+    launcherCascadeWarmup.stage = 0;
+    launcherCascadeWarmup.steps = 0;
+    launcherCascadeWarmup.lastMs = 0;
+    launcherCascadeWarmup.maxMs = 0;
+  }
+
+  function requestLauncherShrapnelResourceWarmup() {
+    if (launcherShrapnelResourceWarmup.completed || launcherShrapnelResourceWarmup.pending) return;
+    launcherShrapnelResourceWarmup.pending = true;
+    launcherShrapnelResourceWarmup.stage = 0;
+    launcherShrapnelResourceWarmup.steps = 0;
+    launcherShrapnelResourceWarmup.lastMs = 0;
+    launcherShrapnelResourceWarmup.maxMs = 0;
+  }
+
+  function updateLauncherShrapnelResourceWarmup(dt) {
+    if (!launcherShrapnelResourceWarmup.pending) return;
+    if (state.paused || state.mode !== "playing") return;
+    if (state.playerClass !== "demolitionist" || state.launcherUpgrade !== "bombardier") return;
+    var started = typeof performance !== "undefined" && performance.now ? performance.now() : 0;
+    if (!runLauncherShrapnelResourceWarmupStage(launcherShrapnelResourceWarmup.stage)) return;
+    var elapsed = started ? performance.now() - started : 0;
+    launcherShrapnelResourceWarmup.lastMs = elapsed;
+    if (elapsed > launcherShrapnelResourceWarmup.maxMs) launcherShrapnelResourceWarmup.maxMs = elapsed;
+    launcherShrapnelResourceWarmup.stage += 1;
+    launcherShrapnelResourceWarmup.steps += 1;
+    if (launcherShrapnelResourceWarmup.stage >= LAUNCHER_SHRAPNEL_RESOURCE_WARMUP_STAGE_COUNT) {
+      launcherShrapnelResourceWarmup.pending = false;
+      launcherShrapnelResourceWarmup.completed = true;
+    }
+  }
+
+  function runLauncherShrapnelResourceWarmupStage(stage) {
+    if (renderDiagnostics.contextLost) return false;
+    var warmupItems = [];
+    var origin = getLauncherShrapnelResourceWarmupOrigin(stage);
+    try {
+      var warmed = 0;
+      if (stage <= 3) {
+        warmed += warmupLauncherShrapnelTrailParticles(origin, warmupItems, LAUNCHER_SHRAPNEL_RESOURCE_PARTICLE_STAGE_SIZE, stage);
+      } else if (stage <= 5) {
+        warmed += warmupLauncherShrapnelProjectiles(origin, warmupItems, LAUNCHER_SHRAPNEL_RESOURCE_PROJECTILE_STAGE_SIZE, stage);
+      } else {
+        warmed += warmupLauncherShrapnelTrailParticles(origin, warmupItems, Math.floor(LAUNCHER_SHRAPNEL_RESOURCE_PARTICLE_STAGE_SIZE * 0.5), stage);
+        warmed += warmupLauncherShrapnelProjectiles(origin, warmupItems, Math.floor(LAUNCHER_SHRAPNEL_RESOURCE_PROJECTILE_STAGE_SIZE * 0.5), stage);
+      }
+      if (warmed <= 0) return false;
+      launcherShrapnelResourceWarmup.activeItems = warmupItems;
+      return true;
+    } catch (err) {
+      for (var i = warmupItems.length - 1; i >= 0; i--) releaseWarmupVisual(warmupItems[i]);
+      return false;
+    }
+  }
+
+  function getLauncherShrapnelResourceWarmupOrigin(stage) {
+    return {
+      x: ARENA_W + 160 + (stage % 3) * 3,
+      z: ARENA_D + 160 + Math.floor(stage / 3) * 3,
+    };
+  }
+
+  function warmupLauncherShrapnelTrailParticles(origin, items, count, stage) {
+    var batch = getParticleInstancedBatch("box", mats.flash);
+    var available = Math.max(0, MAX_PARTICLES - (batch.count || 0));
+    var amount = Math.min(Math.max(0, Math.floor(Number(count) || 0)), available);
+    if (amount <= 0) return 0;
+    for (var i = 0; i < amount; i++) {
+      var angle = (Math.PI * 2 * i) / amount + (stage || 0) * 0.19;
+      var ring = 0.2 + (i % 9) * 0.055;
+      rememberWarmupVisual(
+        items,
+        "particle",
+        acquireParticleVisual("box", origin.x + Math.cos(angle) * ring, 0.62 + (i % 7) * 0.035, origin.z + Math.sin(angle) * ring, 0.05, mats.flash)
+      );
+    }
+    return amount;
+  }
+
+  function warmupLauncherShrapnelProjectiles(origin, items, count, stage) {
+    var amount = Math.max(0, Math.floor(Number(count) || 0));
+    var size = { width: 0.08, length: 0.54 };
+    for (var i = 0; i < amount; i++) {
+      var angle = (Math.PI * 2 * i) / Math.max(1, amount) + (stage || 0) * 0.11;
+      rememberWarmupVisual(
+        items,
+        "projectile",
+        acquireProjectileVisual(
+          "standard",
+          { x: origin.x + Math.sin(angle) * 0.42, y: WEAPONS.revolver.muzzleY, z: origin.z + Math.cos(angle) * 0.42 },
+          angle,
+          size,
+          mats.bullet
+        )
+      );
+    }
+    return amount;
+  }
+
+  function updateLauncherCascadeWarmup(dt) {
+    if (!launcherCascadeWarmup.pending) return;
+    if (state.paused || state.mode !== "playing") return;
+    if (state.playerClass !== "demolitionist" || state.launcherUpgrade !== "bombardier") return;
+    var started = typeof performance !== "undefined" && performance.now ? performance.now() : 0;
+    if (!runLauncherCascadeWarmupStage(launcherCascadeWarmup.stage)) return;
+    var elapsed = started ? performance.now() - started : 0;
+    launcherCascadeWarmup.lastMs = elapsed;
+    if (elapsed > launcherCascadeWarmup.maxMs) launcherCascadeWarmup.maxMs = elapsed;
+    launcherCascadeWarmup.stage += 1;
+    launcherCascadeWarmup.steps += 1;
+    if (launcherCascadeWarmup.stage >= LAUNCHER_CASCADE_WARMUP_STAGE_COUNT) {
+      launcherCascadeWarmup.pending = false;
+      launcherCascadeWarmup.completed = true;
+    }
+  }
+
+  function runLauncherCascadeWarmupStage(stage) {
+    if (stage >= 5) return runLauncherCascadeActiveWarmupStage(stage);
+    withLauncherCascadeWarmupIsolation(stage, function () {
+      var originX = ARENA_W + 120 + stage * 16;
+      var originZ = ARENA_D + 120;
+      if (stage === 0) {
+        spawnLauncherWarmupZombies(3, originX, originZ, 0.5);
+        explodeGrenade(originX, originZ, getLauncherBlastRadius(), getLauncherBlastDamage(), {
+          bullet: { x: originX - 4, z: originZ, powderEcho: true },
+          kind: "main",
+          noAudio: true,
+        });
+      } else if (stage === 1) {
+        spawnLauncherWarmupZombies(2, originX, originZ, 0.52);
+        explodeGrenade(originX, originZ, getLauncherBlastRadius() * 0.48, getLauncherBlastDamage() * 0.58, {
+          bullet: { x: originX - 4, z: originZ },
+          kind: "cluster",
+          chainContext: { remaining: 0, triggered: 0 },
+          noCluster: true,
+          noAudio: true,
+        });
+      } else if (stage === 2) {
+        spawnLauncherWarmupZombies(2, originX, originZ, 0.52);
+        explodeGrenade(originX, originZ, getLauncherBlastRadius() * 0.56, getLauncherBlastDamage() * 0.62, {
+          bullet: { x: originX - 4, z: originZ },
+          kind: "chain",
+          chainContext: { remaining: 0, triggered: 0 },
+          noCluster: true,
+          noAudio: true,
+        });
+      } else if (stage === 3) {
+        spawnLauncherWarmupZombies(1, originX, originZ, 0.5);
+        explodeGrenade(originX, originZ, getLauncherBlastRadius() * 0.38, getLauncherBlastDamage() * 0.45, {
+          bullet: { x: originX - 4, z: originZ },
+          kind: "echo",
+          chainContext: { remaining: 0, triggered: 0 },
+          noCluster: true,
+          noShrapnel: true,
+          echoed: true,
+          noAudio: true,
+        });
+      } else {
+        var bulletStart = state.bullets.length;
+        spawnLauncherWarmupZombies(8, originX, originZ, 2.2);
+        spawnLauncherShrapnel(originX, originZ, 8 + getUpgradeCount("moreBomblets"));
+        rebuildZombieSpatialGrid();
+        for (var step = 0; step < 7; step++) {
+          updateLauncherWarmupShrapnelBullets(bulletStart, FIXED_DT);
+        }
+      }
+    });
+    return true;
+  }
+
+  function canRunActiveLauncherCascadeWarmup() {
+    if (state.paused || state.mode !== "playing") return false;
+    if (state.bullets.length) return false;
+    if (state.delayedExplosions.length) return false;
+    if (state.particles.length) return false;
+    if (state.smokePuffs.length) return false;
+    if (state.shockwaves.length) return false;
+    if (state.lightFlashes.length) return false;
+    if (state.lightningBolts.length) return false;
+    if (state.decals.length) return false;
+    if (state.debris.length) return false;
+    if (state.xpOrbs.length) return false;
+    if (state.firePatches.length) return false;
+    if (state.acidProjectiles.length) return false;
+    if (state.acidPuddles.length) return false;
+    return true;
+  }
+
+  function runLauncherCascadeActiveWarmupStage(stage) {
+    if (!canRunActiveLauncherCascadeWarmup()) return false;
+    withLauncherCascadeActiveWarmupIsolation(stage, function () {
+      var originX = ARENA_W + 140 + stage * 18;
+      var originZ = ARENA_D + 140;
+      if (stage === 5) {
+        spawnLauncherActiveWarmupParticles(originX, originZ, MAX_PARTICLES);
+        updateParticles(FIXED_DT);
+      } else if (stage === 6) {
+        for (var orb = 0; orb < MAX_XP_ORBS; orb++) {
+          var orbAngle = (Math.PI * 2 * orb) / MAX_XP_ORBS;
+          spawnXpOrb(originX + Math.cos(orbAngle) * 1.8, originZ + Math.sin(orbAngle) * 1.8, orb % 5 === 0 ? 12 : 1);
+        }
+        updateXpOrbs(FIXED_DT);
+      } else if (stage === 7) {
+        spawnLauncherWarmupZombies(10, originX, originZ, 0.54);
+        explodeGrenade(originX, originZ, getLauncherBlastRadius(), getLauncherBlastDamage(), {
+          bullet: { x: originX - 4, z: originZ, powderEcho: true },
+          kind: "main",
+          noCluster: true,
+          noShrapnel: true,
+          noAudio: true,
+        });
+        updateParticles(FIXED_DT);
+        updateVisualEffects(FIXED_DT);
+        updateXpOrbs(FIXED_DT);
+      } else if (stage === 8) {
+        for (var blast = 0; blast < 4; blast++) {
+          var bx = originX + (blast - 1.5) * 2.2;
+          var bz = originZ + (blast % 2 ? 1.15 : -1.15);
+          spawnLauncherWarmupZombies(2, bx, bz, 0.42);
+          explodeGrenade(bx, bz, getLauncherBlastRadius() * (blast % 2 ? 0.56 : 0.48), getLauncherBlastDamage() * 0.6, {
+            bullet: { x: bx - 3.5, z: bz },
+            kind: blast % 2 ? "chain" : "cluster",
+            chainContext: { remaining: 0, triggered: 0 },
+            noCluster: true,
+            noShrapnel: true,
+            noAudio: true,
+          });
+        }
+        updateParticles(FIXED_DT);
+        updateVisualEffects(FIXED_DT);
+        updateXpOrbs(FIXED_DT);
+      } else {
+        var bulletStart = state.bullets.length;
+        spawnLauncherWarmupZombies(12, originX, originZ, 0.72);
+        spawnLauncherShrapnel(originX, originZ, 8 + getUpgradeCount("moreBomblets"));
+        rebuildZombieSpatialGrid();
+        for (var step = 0; step < 10; step++) {
+          updateLauncherWarmupShrapnelBullets(bulletStart, FIXED_DT);
+        }
+        updateParticles(FIXED_DT);
+        updateVisualEffects(FIXED_DT);
+        updateXpOrbs(FIXED_DT);
+      }
+    });
+    return true;
+  }
+
+  function withLauncherCascadeActiveWarmupIsolation(stage, fn) {
+    var previousWarmupMode = gameplayWarmupMode;
+    var previousRng = rng;
+    var previousEnemies = state.enemies.slice();
+    var previousBulletsLength = state.bullets.length;
+    var previousDelayedLength = state.delayedExplosions.length;
+    var previousSamplesLength = state.launcherExplosionSpreadSamples.length;
+    var previousParticlesLength = state.particles.length;
+    var previousSmokeLength = state.smokePuffs.length;
+    var previousShockwaveLength = state.shockwaves.length;
+    var previousLightFlashLength = state.lightFlashes.length;
+    var previousLightningLength = state.lightningBolts.length;
+    var previousDecalLength = state.decals.length;
+    var previousDebrisLength = state.debris.length;
+    var previousXpOrbLength = state.xpOrbs.length;
+    var previousFirePatchLength = state.firePatches.length;
+    var previousAcidProjectileLength = state.acidProjectiles.length;
+    var previousAcidPuddleLength = state.acidPuddles.length;
+    var previousUpgradeCounts = Object.assign({}, state.upgradeCounts);
+    var previousPlayerClass = state.playerClass;
+    var previousLauncherUpgrade = state.launcherUpgrade;
+    var previousScore = state.score;
+    var previousKills = state.kills;
+    var previousXp = state.xp;
+    var previousTotalXp = state.totalXp;
+    var previousLevel = state.level;
+    var previousXpToNext = state.xpToNext;
+    var previousLevelUps = state.levelUps;
+    var previousAmmo = Object.assign({}, state.ammo);
+    var previousAmmoReserve = Object.assign({}, state.ammoReserve);
+    var previousReloadTimers = Object.assign({}, state.reloadTimers);
+    var previousShake = state.shake;
+    var previousLauncherCounters = {
+      chainDetonations: state.launcherChainDetonations,
+      bomblets: state.launcherBomblets,
+      shrapnelShots: state.launcherShrapnelShots,
+      powderEchoes: state.launcherPowderEchoes,
+      ammoRefills: state.launcherAmmoRefills,
+      madmanStacks: state.launcherMadmanStacks,
+      madmanTriggers: state.launcherMadmanTriggers,
+      fireKills: state.launcherFireKills,
+      fireBonusXp: state.launcherFireBonusXp,
+      backdrafts: state.launcherBackdrafts,
+      thermitePatches: state.launcherThermitePatches,
+      freeShots: state.launcherFreeShots,
+      crossfireShards: state.launcherCrossfireShards,
+      fireBuffActive: state.launcherFireBuffActive,
+      fireAmmoAccumulator: state.launcherFireAmmoAccumulator,
+    };
+    var warmupEnemies = [];
+    launcherWarmupEnemyScratch = warmupEnemies;
+    gameplayWarmupMode = false;
+    rng = mulberry32(0xac71ce + Math.max(0, stage || 0) * 9973);
+    state.playerClass = "demolitionist";
+    state.launcherUpgrade = "bombardier";
+    applyLauncherCascadeWarmupUpgrades();
+    try {
+      fn();
+    } finally {
+      for (var b = state.bullets.length - 1; b >= previousBulletsLength; b--) removeBullet(b);
+      for (var p = state.particles.length - 1; p >= previousParticlesLength; p--) removeParticle(p);
+      for (var smoke = state.smokePuffs.length - 1; smoke >= previousSmokeLength; smoke--) removeSmokePuff(smoke);
+      for (var shock = state.shockwaves.length - 1; shock >= previousShockwaveLength; shock--) removeShockwave(shock);
+      for (var flash = state.lightFlashes.length - 1; flash >= previousLightFlashLength; flash--) removeLightFlash(flash);
+      for (var bolt = state.lightningBolts.length - 1; bolt >= previousLightningLength; bolt--) removeLightningBolt(bolt);
+      for (var decal = state.decals.length - 1; decal >= previousDecalLength; decal--) removeDecal(decal);
+      for (var debris = state.debris.length - 1; debris >= previousDebrisLength; debris--) removeDebris(debris);
+      for (var orb = state.xpOrbs.length - 1; orb >= previousXpOrbLength; orb--) removeXpOrb(orb);
+      for (var fire = state.firePatches.length - 1; fire >= previousFirePatchLength; fire--) removeFirePatch(fire);
+      for (var acidShot = state.acidProjectiles.length - 1; acidShot >= previousAcidProjectileLength; acidShot--) removeAcidProjectile(acidShot);
+      for (var acidPool = state.acidPuddles.length - 1; acidPool >= previousAcidPuddleLength; acidPool--) removeAcidPuddle(acidPool);
+      for (var e = 0; e < warmupEnemies.length; e++) {
+        if (warmupEnemies[e] && warmupEnemies[e].active !== false) releaseZombieToPool(warmupEnemies[e]);
+      }
+      state.enemies = previousEnemies;
+      state.delayedExplosions.length = previousDelayedLength;
+      state.launcherExplosionSpreadSamples.length = previousSamplesLength;
+      state.upgradeCounts = previousUpgradeCounts;
+      state.playerClass = previousPlayerClass;
+      state.launcherUpgrade = previousLauncherUpgrade;
+      state.score = previousScore;
+      state.kills = previousKills;
+      state.xp = previousXp;
+      state.totalXp = previousTotalXp;
+      state.level = previousLevel;
+      state.xpToNext = previousXpToNext;
+      state.levelUps = previousLevelUps;
+      state.ammo = previousAmmo;
+      state.ammoReserve = previousAmmoReserve;
+      state.reloadTimers = previousReloadTimers;
+      state.shake = previousShake;
+      state.launcherChainDetonations = previousLauncherCounters.chainDetonations;
+      state.launcherBomblets = previousLauncherCounters.bomblets;
+      state.launcherShrapnelShots = previousLauncherCounters.shrapnelShots;
+      state.launcherPowderEchoes = previousLauncherCounters.powderEchoes;
+      state.launcherAmmoRefills = previousLauncherCounters.ammoRefills;
+      state.launcherMadmanStacks = previousLauncherCounters.madmanStacks;
+      state.launcherMadmanTriggers = previousLauncherCounters.madmanTriggers;
+      state.launcherFireKills = previousLauncherCounters.fireKills;
+      state.launcherFireBonusXp = previousLauncherCounters.fireBonusXp;
+      state.launcherBackdrafts = previousLauncherCounters.backdrafts;
+      state.launcherThermitePatches = previousLauncherCounters.thermitePatches;
+      state.launcherFreeShots = previousLauncherCounters.freeShots;
+      state.launcherCrossfireShards = previousLauncherCounters.crossfireShards;
+      state.launcherFireBuffActive = previousLauncherCounters.fireBuffActive;
+      state.launcherFireAmmoAccumulator = previousLauncherCounters.fireAmmoAccumulator;
+      rng = previousRng;
+      gameplayWarmupMode = previousWarmupMode;
+      launcherWarmupEnemyScratch = null;
+      zombieSpatialDirty = true;
+    }
+  }
+
+  function withLauncherCascadeWarmupIsolation(stage, fn) {
+    var previousWarmupMode = gameplayWarmupMode;
+    var previousRng = rng;
+    var previousEnemies = state.enemies.slice();
+    var previousBulletsLength = state.bullets.length;
+    var previousDelayedLength = state.delayedExplosions.length;
+    var previousSamplesLength = state.launcherExplosionSpreadSamples.length;
+    var previousUpgradeCounts = Object.assign({}, state.upgradeCounts);
+    var previousPlayerClass = state.playerClass;
+    var previousLauncherUpgrade = state.launcherUpgrade;
+    var previousScore = state.score;
+    var previousKills = state.kills;
+    var previousXp = state.xp;
+    var previousTotalXp = state.totalXp;
+    var previousLevel = state.level;
+    var previousXpToNext = state.xpToNext;
+    var previousLevelUps = state.levelUps;
+    var previousAmmo = Object.assign({}, state.ammo);
+    var previousAmmoReserve = Object.assign({}, state.ammoReserve);
+    var previousReloadTimers = Object.assign({}, state.reloadTimers);
+    var previousShake = state.shake;
+    var previousLauncherCounters = {
+      chainDetonations: state.launcherChainDetonations,
+      bomblets: state.launcherBomblets,
+      shrapnelShots: state.launcherShrapnelShots,
+      powderEchoes: state.launcherPowderEchoes,
+      ammoRefills: state.launcherAmmoRefills,
+      madmanStacks: state.launcherMadmanStacks,
+      madmanTriggers: state.launcherMadmanTriggers,
+    };
+    var warmupEnemies = [];
+    launcherWarmupEnemyScratch = warmupEnemies;
+    gameplayWarmupMode = true;
+    rng = mulberry32(0xc45cade + Math.max(0, stage || 0) * 9973);
+    state.playerClass = "demolitionist";
+    state.launcherUpgrade = "bombardier";
+    applyLauncherCascadeWarmupUpgrades();
+    try {
+      fn();
+    } finally {
+      for (var b = state.bullets.length - 1; b >= previousBulletsLength; b--) {
+        removeBullet(b);
+      }
+      for (var e = 0; e < warmupEnemies.length; e++) {
+        if (warmupEnemies[e] && warmupEnemies[e].active !== false) releaseZombieToPool(warmupEnemies[e]);
+      }
+      state.enemies = previousEnemies;
+      state.delayedExplosions.length = previousDelayedLength;
+      state.launcherExplosionSpreadSamples.length = previousSamplesLength;
+      state.upgradeCounts = previousUpgradeCounts;
+      state.playerClass = previousPlayerClass;
+      state.launcherUpgrade = previousLauncherUpgrade;
+      state.score = previousScore;
+      state.kills = previousKills;
+      state.xp = previousXp;
+      state.totalXp = previousTotalXp;
+      state.level = previousLevel;
+      state.xpToNext = previousXpToNext;
+      state.levelUps = previousLevelUps;
+      state.ammo = previousAmmo;
+      state.ammoReserve = previousAmmoReserve;
+      state.reloadTimers = previousReloadTimers;
+      state.shake = previousShake;
+      state.launcherChainDetonations = previousLauncherCounters.chainDetonations;
+      state.launcherBomblets = previousLauncherCounters.bomblets;
+      state.launcherShrapnelShots = previousLauncherCounters.shrapnelShots;
+      state.launcherPowderEchoes = previousLauncherCounters.powderEchoes;
+      state.launcherAmmoRefills = previousLauncherCounters.ammoRefills;
+      state.launcherMadmanStacks = previousLauncherCounters.madmanStacks;
+      state.launcherMadmanTriggers = previousLauncherCounters.madmanTriggers;
+      rng = previousRng;
+      gameplayWarmupMode = previousWarmupMode;
+      launcherWarmupEnemyScratch = null;
+      zombieSpatialDirty = true;
+    }
+  }
+
+  var launcherWarmupEnemyScratch = null;
+
+  function applyLauncherCascadeWarmupUpgrades() {
+    state.upgradeCounts.heavyPayload = Math.max(1, state.upgradeCounts.heavyPayload || 0);
+    state.upgradeCounts.fullSalvo = Math.max(1, state.upgradeCounts.fullSalvo || 0);
+    state.upgradeCounts.clusterCharge = Math.max(1, state.upgradeCounts.clusterCharge || 0);
+    state.upgradeCounts.chainDetonation = Math.max(1, state.upgradeCounts.chainDetonation || 0);
+    state.upgradeCounts.moreChainDetonations = Math.max(8, state.upgradeCounts.moreChainDetonations || 0);
+    state.upgradeCounts.moreBomblets = Math.max(5, state.upgradeCounts.moreBomblets || 0);
+    state.upgradeCounts.shrapnelRain = Math.max(1, state.upgradeCounts.shrapnelRain || 0);
+    state.upgradeCounts.powderEcho = Math.max(1, state.upgradeCounts.powderEcho || 0);
+    state.upgradeCounts.madmansJourney = Math.max(1, state.upgradeCounts.madmansJourney || 0);
+  }
+
+  function spawnLauncherWarmupZombies(count, centerX, centerZ, spacing) {
+    var amount = Math.max(0, Math.floor(Number(count) || 0));
+    var side = Math.max(1, Math.ceil(Math.sqrt(amount)));
+    var half = (side - 1) / 2;
+    for (var i = 0; i < amount; i++) {
+      var zombie = acquireZombie("walker");
+      zombie.x = centerX + ((i % side) - half) * spacing;
+      zombie.z = centerZ + (Math.floor(i / side) - half) * spacing;
+      zombie.group.position.set(zombie.x, 0, zombie.z);
+      state.enemies.push(zombie);
+      dynamicRoot.add(zombie.group);
+      if (launcherWarmupEnemyScratch) launcherWarmupEnemyScratch.push(zombie);
+    }
+    zombieSpatialDirty = true;
+    rebuildZombieSpatialGrid();
+  }
+
+  function spawnLauncherActiveWarmupParticles(originX, originZ, count) {
+    var amount = Math.min(MAX_PARTICLES, Math.max(0, Math.floor(Number(count) || 0)));
+    reserveParticleSlots(amount);
+    for (var i = 0; i < amount; i++) {
+      var angle = (Math.PI * 2 * i) / Math.max(1, amount);
+      var wave = i % 4;
+      var mat = wave === 0 ? mats.flash : wave === 1 ? mats.explosion : wave === 2 ? mats.zombieBlood : mats.gold;
+      var speed = 1.2 + (i % 11) * 0.42;
+      spawnParticle(
+        originX + Math.cos(angle) * (0.25 + (i % 7) * 0.04),
+        0.35 + (i % 9) * 0.12,
+        originZ + Math.sin(angle) * (0.25 + (i % 7) * 0.04),
+        Math.cos(angle) * speed,
+        0.8 + (i % 13) * 0.25,
+        Math.sin(angle) * speed,
+        0.2 + (i % 5) * 0.055,
+        0.05 + (i % 6) * 0.025,
+        mat,
+        true
+      );
+    }
+  }
+
+  function updateLauncherWarmupShrapnelBullets(startIndex, dt) {
+    var trailParticles = countLauncherShrapnelTrailParticles(dt, startIndex);
+    var trailBudget = prepareLauncherShrapnelTrailBudget(trailParticles);
+    for (var i = state.bullets.length - 1; i >= startIndex; i--) {
+      var bullet = state.bullets[i];
+      if (!bullet || bullet.type !== "launcherShrapnel") continue;
+      updateLauncherShrapnelBullet(bullet, i, dt, trailBudget, null);
+    }
   }
 
   function updateMenuScene(dt) {
@@ -6334,10 +9335,178 @@
     actor.group.scale.setScalar(actor.baseScale || 1.18);
   }
 
+  function hasAllRightAllLeft() {
+    return state.revolverUpgrade === "dualRevolvers" && hasUpgrade("allRightAllLeft");
+  }
+
+  function getOppositeDualRevolverHand(hand) {
+    return hand === "left" ? "right" : "left";
+  }
+
+  function normalizeDualRevolverHand(hand) {
+    return hand === "left" ? "left" : "right";
+  }
+
+  function getDualRevolverHandSide(hand) {
+    return DUAL_REVOLVER_HAND_SIDES[normalizeDualRevolverHand(hand)] || -1;
+  }
+
+  function resetDualRevolverHandState() {
+    state.dualActiveHand = "right";
+    state.dualLastShotHand = "";
+    state.dualHandAmmo = { right: 0, left: 0 };
+    state.dualHandReloadTimers = { right: 0, left: 0 };
+    state.dualHandFreeReloads = { right: 0, left: 0 };
+    state.dualFreeReloadsEarned = 0;
+  }
+
+  function ensureDualRevolverHandState() {
+    if (!state.dualHandAmmo) state.dualHandAmmo = { right: 0, left: 0 };
+    if (!state.dualHandReloadTimers) state.dualHandReloadTimers = { right: 0, left: 0 };
+    if (!state.dualHandFreeReloads) state.dualHandFreeReloads = { right: 0, left: 0 };
+    state.dualActiveHand = normalizeDualRevolverHand(state.dualActiveHand);
+    DUAL_REVOLVER_HANDS.forEach(function (hand) {
+      state.dualHandAmmo[hand] = Math.round(clamp(state.dualHandAmmo[hand] || 0, 0, DUAL_REVOLVER_HAND_MAGAZINE));
+      state.dualHandReloadTimers[hand] = Math.max(0, state.dualHandReloadTimers[hand] || 0);
+      state.dualHandFreeReloads[hand] = Math.round(clamp(state.dualHandFreeReloads[hand] || 0, 0, DUAL_REVOLVER_FREE_RELOAD_MAX));
+    });
+    syncDualRevolverAggregateAmmo();
+  }
+
+  function setDualRevolverHandAmmoFromAggregate(current) {
+    var magazine = getWeaponMagazine(WEAPONS.revolver);
+    var amount = Math.round(clamp(current || 0, 0, magazine));
+    var right = Math.min(DUAL_REVOLVER_HAND_MAGAZINE, amount);
+    var left = Math.min(DUAL_REVOLVER_HAND_MAGAZINE, Math.max(0, amount - right));
+    state.dualHandAmmo = { right: right, left: left };
+    state.dualHandReloadTimers = { right: 0, left: 0 };
+    state.dualHandFreeReloads = { right: 0, left: 0 };
+    state.dualActiveHand = right > 0 || left <= 0 ? "right" : "left";
+    state.dualShotSide = getDualRevolverHandSide(state.dualActiveHand);
+    state.dualLastShotHand = "";
+    syncDualRevolverAggregateAmmo();
+  }
+
+  function activateAllRightAllLeft() {
+    setDualRevolverHandAmmoFromAggregate(state.ammo && state.ammo.revolver != null ? state.ammo.revolver : getWeaponMagazine(WEAPONS.revolver));
+    state.reloadTimers.revolver = 0;
+  }
+
+  function syncDualRevolverAggregateAmmo() {
+    var current = 0;
+    if (state.dualHandAmmo) {
+      current = (state.dualHandAmmo.right || 0) + (state.dualHandAmmo.left || 0);
+    }
+    if (!state.ammo) state.ammo = {};
+    state.ammo.revolver = Math.round(clamp(current, 0, getWeaponMagazine(WEAPONS.revolver)));
+    if (state.reloadTimers) {
+      var timers = state.dualHandReloadTimers || {};
+      state.reloadTimers.revolver = Math.max(timers.right || 0, timers.left || 0);
+    }
+  }
+
+  function getDualRevolverReloadRemaining() {
+    if (!hasAllRightAllLeft()) return state.reloadTimers.revolver || 0;
+    ensureDualRevolverHandState();
+    return Math.max(state.dualHandReloadTimers.right || 0, state.dualHandReloadTimers.left || 0);
+  }
+
+  function getDualRevolverReloadProgress() {
+    var remaining = getDualRevolverReloadRemaining();
+    if (remaining <= 0) return 0;
+    return clamp(1 - remaining / getWeaponReloadTime(WEAPONS.revolver), 0, 1);
+  }
+
+  function startDualRevolverHandReload(hand) {
+    if (!hasAllRightAllLeft()) return false;
+    ensureDualRevolverHandState();
+    hand = normalizeDualRevolverHand(hand);
+    if (state.dualHandReloadTimers[hand] > 0) return false;
+    if ((state.dualHandAmmo[hand] || 0) >= DUAL_REVOLVER_HAND_MAGAZINE) return false;
+    if ((state.ammoReserve.revolver || 0) <= 0 && (state.dualHandFreeReloads[hand] || 0) <= 0) return false;
+    state.dualHandReloadTimers[hand] = getWeaponReloadTime(WEAPONS.revolver);
+    syncDualRevolverAggregateAmmo();
+    if (state.player) state.player.cooldown = Math.max(state.player.cooldown, 0.08);
+    return true;
+  }
+
+  function updateDualRevolverReloads(dt) {
+    if (!hasAllRightAllLeft()) return false;
+    ensureDualRevolverHandState();
+    DUAL_REVOLVER_HANDS.forEach(function (hand) {
+      if (!state.dualHandReloadTimers[hand]) return;
+      state.dualHandReloadTimers[hand] = Math.max(0, state.dualHandReloadTimers[hand] - dt);
+      if (state.dualHandReloadTimers[hand] > 0) return;
+      state.dualHandReloadTimers[hand] = 0;
+      var current = clamp(state.dualHandAmmo[hand] || 0, 0, DUAL_REVOLVER_HAND_MAGAZINE);
+      var needed = Math.max(0, DUAL_REVOLVER_HAND_MAGAZINE - current);
+      var free = Math.min(needed, Math.max(0, state.dualHandFreeReloads[hand] || 0));
+      current += free;
+      needed -= free;
+      state.dualHandFreeReloads[hand] = 0;
+      if (needed > 0) {
+        var reserve = Math.max(0, state.ammoReserve.revolver || 0);
+        var loaded = Math.min(needed, reserve);
+        current += loaded;
+        state.ammoReserve.revolver = reserve - loaded;
+      }
+      state.dualHandAmmo[hand] = Math.round(clamp(current, 0, DUAL_REVOLVER_HAND_MAGAZINE));
+    });
+    syncDualRevolverAggregateAmmo();
+    return true;
+  }
+
+  function prepareDualRevolverHandShot() {
+    if (!hasAllRightAllLeft()) return "";
+    ensureDualRevolverHandState();
+    var hand = normalizeDualRevolverHand(state.dualActiveHand);
+    if ((state.dualHandAmmo[hand] || 0) <= 0) {
+      startDualRevolverHandReload(hand);
+      var other = getOppositeDualRevolverHand(hand);
+      if ((state.dualHandAmmo[other] || 0) > 0) {
+        hand = other;
+        state.dualActiveHand = other;
+      }
+    }
+    if ((state.dualHandAmmo[hand] || 0) <= 0) {
+      startDualRevolverHandReload(hand);
+      startDualRevolverHandReload(getOppositeDualRevolverHand(hand));
+      syncDualRevolverAggregateAmmo();
+      return "";
+    }
+    return hand;
+  }
+
+  function spendDualRevolverHandShot(hand) {
+    if (!hasAllRightAllLeft()) return;
+    ensureDualRevolverHandState();
+    hand = normalizeDualRevolverHand(hand);
+    state.dualHandAmmo[hand] = Math.max(0, (state.dualHandAmmo[hand] || 0) - 1);
+    state.dualLastShotHand = hand;
+    if (state.dualHandAmmo[hand] <= 0) {
+      startDualRevolverHandReload(hand);
+      var other = getOppositeDualRevolverHand(hand);
+      if ((state.dualHandAmmo[other] || 0) > 0) state.dualActiveHand = other;
+    }
+    syncDualRevolverAggregateAmmo();
+  }
+
+  function handleAllRightAllLeftKill(source) {
+    if (!hasAllRightAllLeft() || !source || source.type !== "revolver" || !source.dualHand) return;
+    ensureDualRevolverHandState();
+    var shotHand = normalizeDualRevolverHand(source.dualHand);
+    var reloadHand = getOppositeDualRevolverHand(shotHand);
+    if ((state.dualHandReloadTimers[reloadHand] || 0) <= 0) return;
+    if ((state.dualHandFreeReloads[reloadHand] || 0) >= DUAL_REVOLVER_FREE_RELOAD_MAX) return;
+    state.dualHandFreeReloads[reloadHand] += 1;
+    state.dualFreeReloadsEarned += 1;
+  }
+
   function initAmmoState() {
     state.ammo = {};
     state.ammoReserve = {};
     state.reloadTimers = {};
+    resetDualRevolverHandState();
     Object.keys(WEAPONS).forEach(function (id) {
       var weapon = WEAPONS[id];
       var magazine = getWeaponMagazine(weapon);
@@ -6353,6 +9522,7 @@
     ammoVisualState.magazine = 0;
     ammoVisualState.variant = "";
     ammoVisualState.current = null;
+    ammoVisualState.slotSignature = "";
     if (ammoCartridgeRack) ammoCartridgeRack.innerHTML = "";
   }
 
@@ -6364,7 +9534,7 @@
     ammoCartridgeRack.dataset.weapon = weapon.id;
     ammoCartridgeRack.dataset.magazine = String(magazine);
     ammoCartridgeRack.dataset.largeMagazine = weapon.id === "launcher" && magazine > WEAPONS.launcher.magazine ? "true" : "false";
-    ammoCartridgeRack.dataset.layout = isDualRevolverAmmoRack(weapon, magazine) ? "dual" : "single";
+    ammoCartridgeRack.dataset.layout = getAmmoRackLayout(weapon, magazine);
     for (var i = 0; i < magazine; i++) {
       var round = document.createElement("span");
       round.className = "ammo-round";
@@ -6377,12 +9547,14 @@
       round.appendChild(live);
       if (isAmmoSlotSpent(weapon, magazine, current, i)) round.classList.add("is-spent");
       round.classList.toggle("is-silver-bullet", isSilverBulletAmmoSlot(weapon, magazine, i));
+      round.classList.toggle("is-chain-lightning-round", isChainLightningAmmoSlot(weapon, magazine, current, i));
       ammoCartridgeRack.appendChild(round);
     }
     ammoVisualState.weapon = weapon.id;
     ammoVisualState.magazine = magazine;
     ammoVisualState.variant = variant;
     ammoVisualState.current = current;
+    ammoVisualState.slotSignature = getAmmoSlotSignature(weapon, magazine, current);
   }
 
   function syncAmmoRack(weapon, ammo) {
@@ -6401,34 +9573,48 @@
     }
 
     var previous = ammoVisualState.current == null ? current : ammoVisualState.current;
-    if (current === previous) return;
+    var previousSignature = ammoVisualState.slotSignature || "";
+    var slotSignature = getAmmoSlotSignature(weapon, magazine, current);
+    if (current === previous && slotSignature === previousSignature) return;
     var slots = Array.prototype.slice.call(ammoCartridgeRack.children);
+    var previousSpent = slots.map(function (slot) {
+      return slot.classList.contains("is-spent");
+    });
     slots.forEach(function (slot, index) {
       slot.classList.toggle("is-spent", isAmmoSlotSpent(weapon, magazine, current, index));
       slot.classList.toggle("is-silver-bullet", isSilverBulletAmmoSlot(weapon, magazine, index));
+      slot.classList.toggle("is-chain-lightning-round", isChainLightningAmmoSlot(weapon, magazine, current, index));
     });
 
-    if (current < previous) {
-      getAmmoSlotChanges(weapon, magazine, previous, current).forEach(function (index) {
-        triggerAmmoDrop(slots[index], index);
-      });
-    } else if (current > previous) {
-      getAmmoSlotChanges(weapon, magazine, previous, current).forEach(function (index) {
-        triggerAmmoRefill(slots[index], index);
-      });
-    }
+    slots.forEach(function (slot, index) {
+      var spent = slot.classList.contains("is-spent");
+      if (spent && !previousSpent[index]) triggerAmmoDrop(slot, index);
+      if (!spent && previousSpent[index]) triggerAmmoRefill(slot, index);
+    });
     ammoVisualState.current = current;
+    ammoVisualState.slotSignature = slotSignature;
   }
 
   function isDualRevolverAmmoRack(weapon, magazine) {
     return weapon && weapon.id === "revolver" && state.revolverUpgrade === "dualRevolvers" && magazine > WEAPONS.revolver.magazine;
   }
 
+  function isDualRevolverHandAmmoRack(weapon, magazine) {
+    return isDualRevolverAmmoRack(weapon, magazine) && hasAllRightAllLeft();
+  }
+
+  function getAmmoRackLayout(weapon, magazine) {
+    if (isDualRevolverHandAmmoRack(weapon, magazine)) return "dual-hands";
+    if (isDualRevolverAmmoRack(weapon, magazine)) return "dual";
+    return "single";
+  }
+
   function getAmmoRackVariantKey(weapon, magazine) {
     return [
       weapon ? weapon.id : "",
-      isDualRevolverAmmoRack(weapon, magazine) ? "dual" : "single",
+      getAmmoRackLayout(weapon, magazine),
       isSilverBulletAmmoSlot(weapon, magazine, 0) ? "silver" : "normal",
+      hasRifleChainLightningAmmoPreview(weapon) ? "chain-lightning" : "normal-rifle",
     ].join("|");
   }
 
@@ -6450,13 +9636,43 @@
   }
 
   function isAmmoSlotSpent(weapon, magazine, current, index) {
+    if (isDualRevolverHandAmmoRack(weapon, magazine)) {
+      ensureDualRevolverHandState();
+      var columns = Math.ceil(magazine / 2);
+      var hand = index < columns ? "right" : "left";
+      var localIndex = index % columns;
+      var handAmmo = clamp(state.dualHandAmmo[hand] || 0, 0, DUAL_REVOLVER_HAND_MAGAZINE);
+      return localIndex >= handAmmo;
+    }
     var spent = Math.max(0, magazine - Math.round(clamp(current, 0, magazine)));
     var order = getAmmoSpendOrder(weapon, magazine);
     return order.indexOf(index) >= 0 && order.indexOf(index) < spent;
   }
 
+  function getAmmoSlotSignature(weapon, magazine, current) {
+    var signature = [];
+    for (var i = 0; i < magazine; i++) signature.push(isAmmoSlotSpent(weapon, magazine, current, i) ? "1" : "0");
+    return signature.join("");
+  }
+
   function isSilverBulletAmmoSlot(weapon, magazine, index) {
     return weapon && weapon.id === "revolver" && state.revolverUpgrade === "bigIron" && hasUpgrade("silverBullet") && index === 0 && magazine > 0;
+  }
+
+  function hasRifleChainLightningAmmoPreview(weapon) {
+    return weapon && weapon.id === "rifle" && hasUpgrade("chainLightning");
+  }
+
+  function isChainLightningAmmoSlot(weapon, magazine, current, index) {
+    if (!hasRifleChainLightningAmmoPreview(weapon)) return false;
+    var order = getAmmoSpendOrder(weapon, magazine);
+    var spendIndex = order.indexOf(index);
+    if (spendIndex < 0) return false;
+    var spent = Math.max(0, magazine - Math.round(clamp(current, 0, magazine)));
+    var futureShotOffset = spendIndex - spent + 1;
+    if (futureShotOffset <= 0) return false;
+    var shotNumber = (state.rifleShotsFired || 0) + futureShotOffset;
+    return shotNumber > 0 && shotNumber % RIFLE_LIGHTNING_SHOT_INTERVAL === 0;
   }
 
   function getAmmoSlotChanges(weapon, magazine, previous, current) {
@@ -6498,6 +9714,7 @@
 
   function updateReloads(dt) {
     Object.keys(WEAPONS).forEach(function (id) {
+      if (id === "revolver" && updateDualRevolverReloads(dt)) return;
       if (!state.reloadTimers[id]) return;
       state.reloadTimers[id] = Math.max(0, state.reloadTimers[id] - dt);
       if (state.reloadTimers[id] <= 0) {
@@ -6507,6 +9724,13 @@
         var current = clamp(state.ammo[id] || 0, 0, magazine);
         var needed = Math.max(0, magazine - current);
         var reserve = Math.max(0, state.ammoReserve[id] || 0);
+        if (id === "coachGun") {
+          var shellLoaded = Math.min(needed, reserve, 1);
+          state.ammo[id] = current + shellLoaded;
+          state.ammoReserve[id] = reserve - shellLoaded;
+          if (state.ammo[id] < magazine && state.ammoReserve[id] > 0) state.reloadTimers[id] = getWeaponReloadTime(weapon);
+          return;
+        }
         var loaded = Math.min(needed, reserve);
         state.ammo[id] = current + loaded;
         state.ammoReserve[id] = reserve - loaded;
@@ -6516,7 +9740,14 @@
 
   function startReload(id) {
     var weapon = WEAPONS[id];
-    if (!weapon || state.reloadTimers[id] > 0) return;
+    if (!weapon) return;
+    if (id === "revolver" && hasAllRightAllLeft()) {
+      ensureDualRevolverHandState();
+      startDualRevolverHandReload(state.dualActiveHand);
+      startDualRevolverHandReload(getOppositeDualRevolverHand(state.dualActiveHand));
+      return;
+    }
+    if (state.reloadTimers[id] > 0) return;
     var magazine = getWeaponMagazine(weapon);
     var current = clamp(state.ammo[id] || 0, 0, magazine);
     if (current >= magazine) return;
@@ -6528,6 +9759,40 @@
   function getAmmoState(id) {
     var weapon = WEAPONS[id] || WEAPONS.revolver;
     var magazine = getWeaponMagazine(weapon);
+    if (weapon.id === "revolver" && hasAllRightAllLeft()) {
+      ensureDualRevolverHandState();
+      var dualRemaining = getDualRevolverReloadRemaining();
+      var dualCurrent = clamp((state.dualHandAmmo.right || 0) + (state.dualHandAmmo.left || 0), 0, magazine);
+      var dualReserve = Math.max(0, state.ammoReserve.revolver || 0);
+      return {
+        current: dualCurrent,
+        magazine: magazine,
+        reserve: dualReserve,
+        total: dualCurrent + dualReserve,
+        reloading: dualRemaining > 0,
+        reloadRemaining: dualRemaining,
+        reloadProgress: getDualRevolverReloadProgress(),
+        dualHands: {
+          active: state.dualActiveHand,
+          lastShot: state.dualLastShotHand || "",
+          maxFreeReloads: DUAL_REVOLVER_FREE_RELOAD_MAX,
+          right: {
+            current: state.dualHandAmmo.right || 0,
+            magazine: DUAL_REVOLVER_HAND_MAGAZINE,
+            reloading: (state.dualHandReloadTimers.right || 0) > 0,
+            reloadRemaining: state.dualHandReloadTimers.right || 0,
+            freeReloads: state.dualHandFreeReloads.right || 0,
+          },
+          left: {
+            current: state.dualHandAmmo.left || 0,
+            magazine: DUAL_REVOLVER_HAND_MAGAZINE,
+            reloading: (state.dualHandReloadTimers.left || 0) > 0,
+            reloadRemaining: state.dualHandReloadTimers.left || 0,
+            freeReloads: state.dualHandFreeReloads.left || 0,
+          },
+        },
+      };
+    }
     var remaining = state.reloadTimers[weapon.id] || 0;
     var current = state.ammo[weapon.id] == null ? magazine : clamp(state.ammo[weapon.id], 0, magazine);
     var reserve = Math.max(0, state.ammoReserve[weapon.id] || 0);
@@ -6552,7 +9817,12 @@
 
   function getWeaponReloadTime(weapon) {
     if (!weapon) return 0;
-    return weapon.reloadTime / (1 + Math.max(0, state.reloadSpeedBonus || 0));
+    var speed = 1 + Math.max(0, state.reloadSpeedBonus || 0);
+    if (weapon.id === "coachGun") {
+      if ((state.marshalPurifyReloadTimer || 0) > 0) speed *= 1.25;
+      if (isPlayerInHallowedGround()) speed *= 1.25;
+    }
+    return weapon.reloadTime / speed;
   }
 
   function getWeaponCooldown(weapon) {
@@ -6581,6 +9851,7 @@
     var mz = 0;
     var oldX = p.x;
     var oldZ = p.z;
+    var activeMoveSpeed = p.speed * ((state.marshalRecoilSpeedTimer || 0) > 0 ? 1.3 : 1);
     if (keys.KeyW || keys.ArrowUp) mz -= 1;
     if (keys.KeyS || keys.ArrowDown) mz += 1;
     if (keys.KeyA || keys.ArrowLeft) mx -= 1;
@@ -6597,15 +9868,15 @@
         lastMobileAim.x = touchVector.x / touchLen;
         lastMobileAim.z = touchVector.z / touchLen;
       }
-      p.x += mx * p.speed * dt;
-      p.z += mz * p.speed * dt;
+      p.x += mx * activeMoveSpeed * dt;
+      p.z += mz * activeMoveSpeed * dt;
       p.x = clamp(p.x, -ARENA_W / 2 + p.radius, ARENA_W / 2 - p.radius);
       p.z = clamp(p.z, -ARENA_D / 2 + p.radius, ARENA_D / 2 - p.radius);
     }
     resolveMoverPosition(p, p.radius, 0);
     var moved = Math.hypot(p.x - oldX, p.z - oldZ);
-    p.moveAmount += (clamp(moved / Math.max(0.001, p.speed * dt), 0, 1) - p.moveAmount) * Math.min(1, dt * 12);
-    p.walkPhase += dt * (7.5 + p.speed * 0.5) * p.moveAmount;
+    p.moveAmount += (clamp(moved / Math.max(0.001, activeMoveSpeed * dt), 0, 1) - p.moveAmount) * Math.min(1, dt * 12);
+    p.walkPhase += dt * (7.5 + activeMoveSpeed * 0.5) * p.moveAmount;
     p.cooldown = Math.max(0, p.cooldown - dt);
     p.invuln = Math.max(0, p.invuln - dt);
     if (state.hpRegen > 0 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + state.hpRegen * dt);
@@ -6626,6 +9897,572 @@
     } else {
       state.duelistFocus = Math.max(0, state.duelistFocus - dt * DUELIST_FOCUS_DECAY_RATE);
     }
+  }
+
+  function updateMarshalSystems(dt) {
+    state.marshalRecoilSpeedTimer = Math.max(0, (state.marshalRecoilSpeedTimer || 0) - dt);
+    state.marshalPurifyReloadTimer = Math.max(0, (state.marshalPurifyReloadTimer || 0) - dt);
+    updateMarshalHallowedGrounds(dt);
+    updateMarshalBounty(dt);
+  }
+
+  function updateMarshalBounty(dt) {
+    if (state.playerClass !== "marshal" || state.marshalUpgrade !== "graveWarden" || !hasUpgrade("heavensBounty")) {
+      state.marshalBountyEnemy = null;
+      state.marshalBountyTimer = 12;
+      return;
+    }
+    state.marshalBountyTimer = Math.max(0, (state.marshalBountyTimer == null ? 12 : state.marshalBountyTimer) - dt);
+    var current = state.marshalBountyEnemy;
+    if (current && current.active !== false && current.marshalBounty && (current.marshalBountyTimer || 0) > 0) return;
+    state.marshalBountyEnemy = null;
+    if (state.marshalBountyTimer > 0 || !state.player) return;
+    var best = null;
+    var bestScore = -Infinity;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (!enemy || enemy.active === false) continue;
+      var distance = Math.hypot(enemy.x - state.player.x, enemy.z - state.player.z);
+      if (distance > 28) continue;
+      var danger = enemy.maxHp * 12 + enemy.damage + enemy.xp * 1.5 - distance * 0.12;
+      if (enemy.type === "spitter") danger += 26;
+      if (enemy.type === "brute") danger += 20;
+      if (danger > bestScore) {
+        bestScore = danger;
+        best = enemy;
+      }
+    }
+    if (!best) {
+      state.marshalBountyTimer = 1;
+      return;
+    }
+    best.marshalBounty = true;
+    best.marshalBountyTimer = 8;
+    best.marshalMarkTimer = Math.max(best.marshalMarkTimer || 0, 8);
+    state.marshalBountyEnemy = best;
+    state.marshalBountyTimer = 12;
+    state.marshalBountiesMarked += 1;
+    addShockwave(best.x, best.z, 1.75, 0.32, 0xffe6a2);
+  }
+
+  function createMarshalHallowedVisual() {
+    var group = new THREE.Group();
+    group.name = "hallowed ground";
+    var material = mats.hallowedGround.clone();
+    var ring = new THREE.Mesh(
+      getSharedGeometry("marshal-hallowed-ring", function () {
+        return new THREE.RingGeometry(0.72, 1, 40);
+      }),
+      material
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.07;
+    ring.renderOrder = 2;
+    group.add(ring);
+    var inner = new THREE.Mesh(
+      getSharedGeometry("marshal-hallowed-inner-ring", function () {
+        return new THREE.RingGeometry(0.25, 0.32, 24);
+      }),
+      material
+    );
+    inner.rotation.x = -Math.PI / 2;
+    inner.position.y = 0.075;
+    inner.renderOrder = 2;
+    group.add(inner);
+    var visual = { group: group, ring: ring, inner: inner, material: material };
+    group.userData.marshalHallowedVisual = visual;
+    marshalHallowedVisualCreated += 1;
+    return visual;
+  }
+
+  function acquireMarshalHallowedVisual(x, z, radius) {
+    var visual = marshalHallowedVisualPool.length ? marshalHallowedVisualPool.pop() : createMarshalHallowedVisual();
+    visual.group.visible = true;
+    visual.group.position.set(x, 0, z);
+    visual.group.scale.setScalar(radius);
+    visual.group.rotation.y = 0;
+    visual.material.opacity = 0.3;
+    effectRoot.add(visual.group);
+    marshalHallowedVisualInUse += 1;
+    return visual;
+  }
+
+  function releaseMarshalHallowedVisual(visual) {
+    if (!visual) return;
+    if (visual.group.parent) visual.group.parent.remove(visual.group);
+    visual.group.visible = false;
+    visual.group.position.set(0, -1000, 0);
+    visual.group.scale.setScalar(1);
+    marshalHallowedVisualInUse = Math.max(0, marshalHallowedVisualInUse - 1);
+    marshalHallowedVisualPool.push(visual);
+  }
+
+  function spawnMarshalHallowedGround(x, z) {
+    while (state.marshalHallowedGrounds.length >= COACH_GUN_MAX_HALLOWED_GROUNDS) removeMarshalHallowedGround(0);
+    var radius = 3.8;
+    var visual = acquireMarshalHallowedVisual(x, z, radius);
+    state.marshalHallowedGrounds.push({ x: x, z: z, radius: radius, life: 5, startLife: 5, visual: visual });
+    state.marshalHallowedGroundsCreated += 1;
+    addShockwave(x, z, radius, 0.5, 0xffe2a0);
+  }
+
+  function updateMarshalHallowedGrounds(dt) {
+    for (var i = state.marshalHallowedGrounds.length - 1; i >= 0; i--) {
+      var ground = state.marshalHallowedGrounds[i];
+      ground.life -= dt;
+      var t = clamp(ground.life / ground.startLife, 0, 1);
+      if (ground.visual) {
+        ground.visual.group.rotation.y += dt * 0.24;
+        ground.visual.material.opacity = 0.12 + Math.sin(state.time * 4.2 + i) * 0.04 + t * 0.16;
+        ground.visual.inner.rotation.z -= dt * 0.6;
+      }
+      if (ground.life <= 0) removeMarshalHallowedGround(i);
+    }
+  }
+
+  function removeMarshalHallowedGround(index) {
+    var ground = state.marshalHallowedGrounds[index];
+    if (!ground) return;
+    releaseMarshalHallowedVisual(ground.visual);
+    state.marshalHallowedGrounds.splice(index, 1);
+  }
+
+  function releaseAllMarshalHallowedGrounds() {
+    if (!state.marshalHallowedGrounds) return;
+    for (var i = state.marshalHallowedGrounds.length - 1; i >= 0; i--) removeMarshalHallowedGround(i);
+  }
+
+  function tryRaisePaleDeputy(x, z) {
+    if (!state.paleDeputies || state.paleDeputies.length >= PALE_DEPUTY_MAX_COUNT) {
+      state.marshalPaleDeputySpawnBlocked = (state.marshalPaleDeputySpawnBlocked || 0) + 1;
+      return null;
+    }
+    var deputy = acquirePaleDeputyEntity(x, z);
+    resolveMoverPosition(deputy, deputy.radius, 0);
+    deputy.group.position.set(deputy.x, 0, deputy.z);
+    state.paleDeputies.push(deputy);
+    state.marshalPaleDeputiesRaised = (state.marshalPaleDeputiesRaised || 0) + 1;
+    spawnPaleDeputyRiseEffect(deputy.x, deputy.z, 1);
+    return deputy;
+  }
+
+  function spawnPaleDeputyRiseEffect(x, z, strength) {
+    var amount = clamp(Number(strength) || 1, 0.35, 1.3);
+    addShockwave(x, z, 2.1 * amount, 0.42, 0x9adfff);
+    for (var i = 0; i < 10; i++) {
+      var angle = (Math.PI * 2 * i) / 10;
+      var speed = 1.2 + (i % 3) * 0.45;
+      spawnParticle(
+        x + Math.cos(angle) * 0.28,
+        0.24 + (i % 4) * 0.12,
+        z + Math.sin(angle) * 0.28,
+        Math.cos(angle) * speed,
+        1.7 + (i % 3) * 0.42,
+        Math.sin(angle) * speed,
+        0.34 + (i % 3) * 0.06,
+        0.08 + (i % 2) * 0.035,
+        i % 3 === 0 ? mats.paleDeputyBadge : mats.paleDeputyTracer
+      );
+    }
+  }
+
+  function getPaleDeputyFormationPoint(index, out) {
+    var result = out || { x: 0, z: 0 };
+    if (!state.player) {
+      result.x = 0;
+      result.z = 0;
+      return result;
+    }
+    var angle = state.player.aimAngle || 0;
+    var forwardX = Math.sin(angle);
+    var forwardZ = Math.cos(angle);
+    var rightX = Math.cos(angle);
+    var rightZ = -Math.sin(angle);
+    var side = index === 0 ? -2.05 : index === 1 ? 2.05 : 0;
+    var back = index === 2 ? 2.75 : 1.55;
+    result.x = state.player.x + rightX * side - forwardX * back;
+    result.z = state.player.z + rightZ * side - forwardZ * back;
+    return result;
+  }
+
+  function isPaleDeputyInsideSafeView(deputy, visibleGround) {
+    return !pointOutsideVisibleGround(deputy.x, deputy.z, -1.25, visibleGround);
+  }
+
+  function repositionPaleDeputy(deputy, index) {
+    if (!deputy || !state.player) return;
+    var oldX = deputy.x;
+    var oldZ = deputy.z;
+    getPaleDeputyFormationPoint(index, paleDeputyFormationScratch);
+    var clear = findNearestClearGroundPoint(paleDeputyFormationScratch.x, paleDeputyFormationScratch.z, deputy.radius + 0.08);
+    paleDeputyClearPointScratch.x = clear.x;
+    paleDeputyClearPointScratch.z = clear.z;
+    deputy.x = paleDeputyClearPointScratch.x;
+    deputy.z = paleDeputyClearPointScratch.z;
+    resolveMoverPosition(deputy, deputy.radius, 0);
+    deputy.group.position.set(deputy.x, 0, deputy.z);
+    deputy.target = null;
+    state.marshalPaleDeputyRepositions = (state.marshalPaleDeputyRepositions || 0) + 1;
+    spawnPaleDeputyRiseEffect(oldX, oldZ, 0.42);
+    spawnPaleDeputyRiseEffect(deputy.x, deputy.z, 0.62);
+  }
+
+  function isValidPaleDeputyTarget(deputy, enemy, visibleGround) {
+    if (!deputy || !enemy || enemy.active === false || !state.player) return false;
+    var playerDx = enemy.x - state.player.x;
+    var playerDz = enemy.z - state.player.z;
+    var targetRadius = PALE_DEPUTY_TARGET_RADIUS + enemy.radius * 0.35;
+    if (playerDx * playerDx + playerDz * playerDz > targetRadius * targetRadius) return false;
+    var dx = enemy.x - deputy.x;
+    var dz = enemy.z - deputy.z;
+    var attackRange = PALE_DEPUTY_ATTACK_RANGE + enemy.radius * 0.25;
+    if (dx * dx + dz * dz > attackRange * attackRange) return false;
+    if (pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + 0.35, visibleGround)) return false;
+    return !findBlockingObstacle(deputy.x, deputy.z, enemy.x, enemy.z, 0.12, null);
+  }
+
+  function findPaleDeputyTarget(deputy, visibleGround) {
+    var best = null;
+    var bestScore = Infinity;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (!isValidPaleDeputyTarget(deputy, enemy, visibleGround)) continue;
+      var dx = enemy.x - deputy.x;
+      var dz = enemy.z - deputy.z;
+      var score = dx * dx + dz * dz;
+      // Preserve the Marshal's executions when an ordinary target is available.
+      if (isMarshalEnemyMarked(enemy)) score += 120;
+      if (enemy.marshalBounty) score += 180;
+      if (score < bestScore) {
+        bestScore = score;
+        best = enemy;
+      }
+    }
+    return best;
+  }
+
+  function updatePaleDeputies(dt) {
+    if (!state.paleDeputies || !state.paleDeputies.length || !state.player) return;
+    var visibleGround = getCurrentVisibleGroundRect(paleDeputyVisibleGroundScratch);
+    for (var i = state.paleDeputies.length - 1; i >= 0; i--) {
+      var deputy = state.paleDeputies[i];
+      if (!deputy || !deputy.active) {
+        state.paleDeputies.splice(i, 1);
+        continue;
+      }
+      if (!deputy.previewDisplay) deputy.life -= dt;
+      if (deputy.life <= 0) {
+        removePaleDeputy(i, true);
+        continue;
+      }
+
+      if (deputy.previewDisplay) {
+        deputy.speed = getPaleDeputyPlayerSpeed();
+        deputy.actualMoveSpeed = deputy.speed;
+        deputy.target = null;
+        deputy.group.rotation.y = -0.34;
+        deputy.group.position.set(deputy.x, 0, deputy.z);
+        animatePaleDeputy(deputy, dt);
+        continue;
+      }
+
+      deputy.attackTimer = Math.max(0, deputy.attackTimer - dt);
+      deputy.shotPulse = Math.max(0, deputy.shotPulse - dt * 6.5);
+      deputy.speed = getPaleDeputyPlayerSpeed();
+      var playerDistance = Math.hypot(deputy.x - state.player.x, deputy.z - state.player.z);
+      if (playerDistance > PALE_DEPUTY_HARD_LEASH || !isPaleDeputyInsideSafeView(deputy, visibleGround)) {
+        repositionPaleDeputy(deputy, i);
+        playerDistance = Math.hypot(deputy.x - state.player.x, deputy.z - state.player.z);
+      }
+
+      getPaleDeputyFormationPoint(i, paleDeputyFormationScratch);
+      var moveX = paleDeputyFormationScratch.x - deputy.x;
+      var moveZ = paleDeputyFormationScratch.z - deputy.z;
+      var moveDistance = Math.hypot(moveX, moveZ);
+      deputy.actualMoveSpeed = deputy.speed;
+      var oldX = deputy.x;
+      var oldZ = deputy.z;
+      if (moveDistance > 0.08) {
+        var moveStep = Math.min(moveDistance, deputy.actualMoveSpeed * dt);
+        deputy.x += (moveX / moveDistance) * moveStep;
+        deputy.z += (moveZ / moveDistance) * moveStep;
+        resolveMoverPosition(deputy, deputy.radius, 0);
+      }
+      var moved = Math.hypot(deputy.x - oldX, deputy.z - oldZ);
+      deputy.moveAmount += (clamp(moved / Math.max(0.001, deputy.actualMoveSpeed * dt), 0, 1) - deputy.moveAmount) * Math.min(1, dt * 11);
+      deputy.walkPhase += dt * (7.2 + deputy.speed * 0.48) * deputy.moveAmount;
+
+      if (!isValidPaleDeputyTarget(deputy, deputy.target, visibleGround)) deputy.target = null;
+      if (deputy.attackTimer <= 0) deputy.target = findPaleDeputyTarget(deputy, visibleGround);
+      var aimX = Math.sin(state.player.aimAngle || 0);
+      var aimZ = Math.cos(state.player.aimAngle || 0);
+      if (deputy.target && deputy.target.active !== false) {
+        var targetDx = deputy.target.x - deputy.x;
+        var targetDz = deputy.target.z - deputy.z;
+        var targetDistance = Math.max(0.001, Math.hypot(targetDx, targetDz));
+        aimX = targetDx / targetDistance;
+        aimZ = targetDz / targetDistance;
+      }
+      deputy.group.rotation.y = Math.atan2(aimX, aimZ);
+      deputy.group.position.set(deputy.x, 0, deputy.z);
+      animatePaleDeputy(deputy, dt);
+
+      if (deputy.attackTimer <= 0 && deputy.target && deputy.target.active !== false) {
+        paleDeputyAttack(deputy, deputy.target);
+        deputy.attackTimer = PALE_DEPUTY_ATTACK_COOLDOWN;
+      }
+    }
+  }
+
+  function animatePaleDeputy(deputy, dt) {
+    var parts = deputy.parts;
+    var stride = Math.sin(deputy.walkPhase);
+    var bob = Math.abs(Math.sin(deputy.walkPhase * 2)) * 0.045 * deputy.moveAmount;
+    var spectral = Math.sin(state.time * 4.8 + deputy.phase);
+    var fadeScale = deputy.life < 0.35 ? clamp(deputy.life / 0.35, 0.2, 1) : 1;
+    animateMeshValues(deputy.body, 0, 0, spectral * 0.008, 0, bob + spectral * 0.018, 0);
+    scaleFromBase(deputy.body, fadeScale, fadeScale, fadeScale);
+    animateMeshValues(parts.leftLeg, stride * 0.48 * deputy.moveAmount, 0, 0, 0, 0, 0);
+    animateMeshValues(parts.rightLeg, -stride * 0.48 * deputy.moveAmount, 0, 0, 0, 0, 0);
+    animateMeshValues(parts.leftTail, 0.18 + stride * 0.14 * deputy.moveAmount + spectral * 0.04, 0, -0.04, 0, 0, 0);
+    animateMeshValues(parts.rightTail, 0.16 - stride * 0.12 * deputy.moveAmount - spectral * 0.04, 0, 0.04, 0, 0, 0);
+    animateMeshValues(parts.leftArm, -0.18 - stride * 0.16 * deputy.moveAmount, 0, -0.08, 0, 0, 0);
+    animateMeshValues(parts.weaponRig, -0.17 - deputy.shotPulse * 0.28, 0, 0.06, 0, deputy.shotPulse * 0.035, -deputy.shotPulse * 0.19);
+    animateMeshValues(parts.jaw, spectral * 0.025, 0, 0, 0, Math.max(0, spectral) * 0.018, 0);
+    animateMeshValues(parts.outerSeal, 0, 0, state.time * 0.42 + deputy.phase, 0, 0, 0);
+    animateMeshValues(parts.innerSeal, 0, 0, -state.time * 0.68 - deputy.phase, 0, 0, 0);
+    var sealPulse = 1 + spectral * 0.055;
+    scaleFromBase(parts.outerSeal, sealPulse, sealPulse, 1);
+    scaleFromBase(parts.innerSeal, 1.04 - spectral * 0.065, 1.04 - spectral * 0.065, 1);
+    var eyePulse = 0.9 + (spectral + 1) * 0.15 + deputy.shotPulse * 0.4;
+    scaleFromBase(parts.leftEyeGlow, eyePulse, eyePulse, eyePulse);
+    scaleFromBase(parts.rightEyeGlow, eyePulse, eyePulse, eyePulse);
+    scaleFromBase(parts.badge, 1 + spectral * 0.09, 1 + spectral * 0.09, 1);
+    scaleFromBase(parts.weaponMuzzle, 0.72 + deputy.shotPulse * 1.65, 0.72 + deputy.shotPulse * 1.65, 0.72 + deputy.shotPulse * 1.65);
+    for (var i = 0; i < parts.sealMarkers.length; i++) {
+      var markerPulse = 0.86 + Math.max(0, Math.sin(state.time * 5.2 + deputy.phase + i * 1.57)) * 0.42;
+      scaleFromBase(parts.sealMarkers[i], markerPulse, 1, markerPulse);
+    }
+  }
+
+  function paleDeputyAttack(deputy, target) {
+    if (!deputy || !target || target.active === false) return false;
+    var dx = target.x - deputy.x;
+    var dz = target.z - deputy.z;
+    var distance = Math.max(0.001, Math.hypot(dx, dz));
+    var dirX = dx / distance;
+    var dirZ = dz / distance;
+    var context = {
+      type: "paleDeputyCoachGun",
+      startX: deputy.x + dirX * 0.48,
+      startZ: deputy.z + dirZ * 0.48,
+      dirX: dirX,
+      dirZ: dirZ,
+      spread: PALE_DEPUTY_SPREAD,
+      range: PALE_DEPUTY_ATTACK_RANGE,
+      pelletCount: PALE_DEPUTY_PELLET_COUNT,
+      entries: [],
+      visualRays: [],
+    };
+    ensureZombieSpatialGridCurrent();
+    var visualPelletCount = Math.min(COACH_GUN_STANDARD_TRACER_COUNT, context.pelletCount);
+    var nextVisualSlot = 0;
+    for (var i = 0; i < context.pelletCount; i++) {
+      var offset = context.pelletCount <= 1 ? 0 : (i / (context.pelletCount - 1) - 0.5) * context.spread;
+      var nextVisualIndex =
+        visualPelletCount <= 1 ? Math.floor((context.pelletCount - 1) * 0.5) : Math.round((nextVisualSlot * (context.pelletCount - 1)) / (visualPelletCount - 1));
+      var captureVisual = nextVisualSlot < visualPelletCount && i === nextVisualIndex;
+      if (captureVisual) nextVisualSlot += 1;
+      var hit = traceCoachGunRay(context, offset, false, captureVisual);
+      if (hit) addCoachGunVolleyHit(context, hit, false);
+    }
+
+    for (var ray = 0; ray < context.visualRays.length; ray += 4) {
+      spawnPaleDeputyTracer(
+        context.startX,
+        1.25,
+        context.startZ,
+        context.visualRays[ray],
+        context.visualRays[ray + 1],
+        context.visualRays[ray + 2]
+      );
+    }
+    deputy.shotPulse = 1;
+    state.marshalPaleDeputyShots = (state.marshalPaleDeputyShots || 0) + 1;
+
+    context.entries.sort(function (a, b) {
+      return a.distance - b.distance;
+    });
+    for (var entryIndex = 0; entryIndex < context.entries.length; entryIndex++) {
+      var entry = context.entries[entryIndex];
+      var enemy = entry.enemy;
+      if (!enemy || enemy.active === false) continue;
+      var falloff = clamp(1 - (entry.distance / Math.max(1, context.range)) * 0.55, 0.45, 1);
+      var damage = PALE_DEPUTY_PELLET_DAMAGE * entry.pellets * falloff;
+      var wasActive = enemy.active !== false;
+      damageEnemy(enemy, damage, entry.x, entry.z, deputy.source);
+      if (wasActive && enemy.active === false) {
+        state.marshalPaleDeputyKills = (state.marshalPaleDeputyKills || 0) + 1;
+        if (enemy === deputy.target) deputy.target = null;
+      }
+    }
+    zombieSpatialDirty = true;
+    return true;
+  }
+
+  function spawnPaleDeputyTracer(startX, startY, startZ, dirX, dirZ, distance) {
+    while (state.paleDeputyTracers.length >= MAX_PALE_DEPUTY_TRACERS) removePaleDeputyTracer(0);
+    var position = { x: startX, y: startY, z: startZ };
+    var size = { width: 0.1, length: 0.78 };
+    var visual = acquireProjectileVisual("standard", position, Math.atan2(dirX, dirZ), size, mats.coachTracer);
+    state.paleDeputyTracers.push({
+      x: startX,
+      y: startY,
+      z: startZ,
+      dirX: dirX,
+      dirZ: dirZ,
+      speed: 50,
+      remaining: Math.max(0.08, distance - 0.34),
+      visual: visual,
+      mesh: visual.object,
+    });
+    state.marshalPaleDeputyTracers = (state.marshalPaleDeputyTracers || 0) + 1;
+  }
+
+  function updatePaleDeputyTracers(dt) {
+    for (var i = state.paleDeputyTracers.length - 1; i >= 0; i--) {
+      var tracer = state.paleDeputyTracers[i];
+      var step = Math.min(tracer.remaining, tracer.speed * dt);
+      tracer.x += tracer.dirX * step;
+      tracer.z += tracer.dirZ * step;
+      tracer.remaining -= step;
+      tracer.mesh.position.set(tracer.x, tracer.y, tracer.z);
+      syncStandardProjectileVisual(tracer.visual);
+      if (tracer.remaining <= 0.0001) removePaleDeputyTracer(i);
+    }
+  }
+
+  function removePaleDeputyTracer(index) {
+    var tracer = state.paleDeputyTracers[index];
+    if (!tracer) return;
+    releaseProjectileVisual(tracer.visual);
+    state.paleDeputyTracers.splice(index, 1);
+  }
+
+  function releaseAllPaleDeputyTracersToPool() {
+    if (!state.paleDeputyTracers) return;
+    for (var i = state.paleDeputyTracers.length - 1; i >= 0; i--) {
+      var tracer = state.paleDeputyTracers[i];
+      if (tracer && tracer.visual) releaseProjectileVisual(tracer.visual);
+    }
+    state.paleDeputyTracers = [];
+  }
+
+  function removePaleDeputy(index, showEffect) {
+    var deputy = state.paleDeputies[index];
+    if (!deputy) return;
+    if (showEffect) spawnPaleDeputyRiseEffect(deputy.x, deputy.z, 0.55);
+    releasePaleDeputyEntity(deputy);
+    state.paleDeputies.splice(index, 1);
+  }
+
+  function releaseAllPaleDeputies() {
+    if (!state.paleDeputies) return;
+    for (var i = state.paleDeputies.length - 1; i >= 0; i--) removePaleDeputy(i, false);
+    state.paleDeputies = [];
+  }
+
+  function getPaleDeputyDiagnostics() {
+    var visibleGround = getCurrentVisibleGroundRect(paleDeputyVisibleGroundScratch);
+    var units = (state.paleDeputies || []).map(function (deputy) {
+      var meshCount = 0;
+      var materialIds = Object.create(null);
+      deputy.group.traverse(function (child) {
+        if (!child.isMesh) return;
+        meshCount += 1;
+        var materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (var i = 0; i < materials.length; i++) {
+          if (materials[i] && materials[i].uuid) materialIds[materials[i].uuid] = true;
+        }
+      });
+      var parts = deputy.parts || {};
+      return {
+        groupId: deputy.group.uuid,
+        x: Number(deputy.x.toFixed(2)),
+        z: Number(deputy.z.toFixed(2)),
+        life: Number(deputy.life.toFixed(3)),
+        speed: Number(deputy.speed.toFixed(3)),
+        actualMoveSpeed: Number(deputy.actualMoveSpeed.toFixed(3)),
+        distanceToPlayer: state.player ? Number(Math.hypot(deputy.x - state.player.x, deputy.z - state.player.z).toFixed(3)) : 0,
+        targetType: deputy.target && deputy.target.active !== false ? deputy.target.type : null,
+        targetMarked: !!(deputy.target && deputy.target.active !== false && isMarshalEnemyMarked(deputy.target)),
+        visible: !!(deputy.active && deputy.group.visible),
+        insideView: !pointOutsideVisibleGround(deputy.x, deputy.z, 0, visibleGround),
+        modelVersion: deputy.group.userData.paleDeputyModelVersion || 0,
+        modelScale: PALE_DEPUTY_MODEL_SCALE,
+        visualHeight: Number((3.405 * PALE_DEPUTY_MODEL_SCALE).toFixed(3)),
+        playerVisualHeight: 2.91,
+        smallerThanPlayer: 3.405 * PALE_DEPUTY_MODEL_SCALE < 2.91,
+        modelParts: meshCount,
+        materialCount: Object.keys(materialIds).length,
+        hasHat: !!(parts.hatBrim && parts.hatCrown && parts.hatBand),
+        hasBadge: !!parts.badge,
+        hasWeapon: !!(parts.weaponRig && parts.weaponMuzzle),
+        weaponType: "coachGun",
+        hasDefaultCoachGun: !!(parts.weaponLeftBarrel && parts.weaponRightBarrel && parts.weaponReceiver && parts.weaponStock && parts.weaponForeEnd),
+        hasAura: !!(parts.outerSeal && parts.innerSeal),
+        hasCoatTails: !!(parts.leftTail && parts.rightTail),
+        hasEyeGlow: !!(parts.leftEyeGlow && parts.rightEyeGlow),
+      };
+    });
+    return {
+      active: units.length,
+      max: PALE_DEPUTY_MAX_COUNT,
+      lifetime: PALE_DEPUTY_LIFETIME,
+      damage: Number(PALE_DEPUTY_DAMAGE.toFixed(2)),
+      pelletDamage: PALE_DEPUTY_PELLET_DAMAGE,
+      pelletCount: PALE_DEPUTY_PELLET_COUNT,
+      spread: PALE_DEPUTY_SPREAD,
+      attackCooldown: PALE_DEPUTY_ATTACK_COOLDOWN,
+      attackRange: PALE_DEPUTY_ATTACK_RANGE,
+      targetRadius: PALE_DEPUTY_TARGET_RADIUS,
+      hardLeash: PALE_DEPUTY_HARD_LEASH,
+      summoned: state.marshalPaleDeputiesRaised || 0,
+      spawnBlocked: state.marshalPaleDeputySpawnBlocked || 0,
+      shots: state.marshalPaleDeputyShots || 0,
+      kills: state.marshalPaleDeputyKills || 0,
+      tracers: state.paleDeputyTracers ? state.paleDeputyTracers.length : 0,
+      tracersSpawned: state.marshalPaleDeputyTracers || 0,
+      repositions: state.marshalPaleDeputyRepositions || 0,
+      pool: {
+        available: paleDeputyPool.length,
+        created: paleDeputyCreated,
+        inUse: paleDeputyInUse,
+      },
+      units: units,
+    };
+  }
+
+  function isEnemyInHallowedGround(enemy) {
+    if (!enemy || !state.marshalHallowedGrounds.length) return false;
+    for (var i = 0; i < state.marshalHallowedGrounds.length; i++) {
+      var ground = state.marshalHallowedGrounds[i];
+      var dx = enemy.x - ground.x;
+      var dz = enemy.z - ground.z;
+      if (dx * dx + dz * dz <= ground.radius * ground.radius) return true;
+    }
+    return false;
+  }
+
+  function isPlayerInHallowedGround() {
+    if (!state.player || !state.marshalHallowedGrounds.length) return false;
+    for (var i = 0; i < state.marshalHallowedGrounds.length; i++) {
+      var ground = state.marshalHallowedGrounds[i];
+      var dx = state.player.x - ground.x;
+      var dz = state.player.z - ground.z;
+      if (dx * dx + dz * dz <= ground.radius * ground.radius) return true;
+    }
+    return false;
   }
 
   function updateAmmoCrates(dt) {
@@ -7197,7 +11034,10 @@
     var bestDist = maxDistance || Infinity;
     for (var i = 0; i < state.enemies.length; i++) {
       var enemy = state.enemies[i];
-      var dist = Math.hypot(enemy.x - x, enemy.z - z);
+      var dx = enemy.x - x;
+      var dz = enemy.z - z;
+      if (dx * dx + dz * dz >= bestDist * bestDist) continue;
+      var dist = Math.hypot(dx, dz);
       if (dist < bestDist) {
         best = enemy;
         bestDist = dist;
@@ -7246,18 +11086,30 @@
     var p = state.player;
     var weapon = WEAPONS[state.weapon] || WEAPONS.revolver;
     var ammo = getAmmoState(weapon.id);
+    if (weapon.id === "coachGun") return shootCoachGun(p, weapon, ammo);
+    var dualHandShot = "";
+    var allRightAllLeftShot = weapon.id === "revolver" && hasAllRightAllLeft();
     var freeLauncherShot = weapon.id === "launcher" && isLauncherFireBuffActive();
     if (freeLauncherShot) {
       state.reloadTimers.launcher = 0;
     }
-    if (ammo.reloading && !freeLauncherShot) {
-      p.cooldown = Math.max(p.cooldown, 0.08);
-      return false;
-    }
-    if (ammo.current <= 0 && !freeLauncherShot) {
-      startReload(weapon.id);
-      if ((state.ammoReserve[weapon.id] || 0) <= 0) p.cooldown = Math.max(p.cooldown, 0.16);
-      return false;
+    if (allRightAllLeftShot) {
+      dualHandShot = prepareDualRevolverHandShot();
+      ammo = getAmmoState(weapon.id);
+      if (!dualHandShot) {
+        p.cooldown = Math.max(p.cooldown, ammo.reloading ? 0.08 : 0.16);
+        return false;
+      }
+    } else {
+      if (ammo.reloading && !freeLauncherShot) {
+        p.cooldown = Math.max(p.cooldown, 0.08);
+        return false;
+      }
+      if (ammo.current <= 0 && !freeLauncherShot) {
+        startReload(weapon.id);
+        if ((state.ammoReserve[weapon.id] || 0) <= 0) p.cooldown = Math.max(p.cooldown, 0.16);
+        return false;
+      }
     }
     var shot = getWeaponShotPlan(weapon, p);
     var dir = shot.dir;
@@ -7271,7 +11123,7 @@
     var projectileVisualSize = getWeaponProjectileVisualSize(weapon, silverBullet);
     var projectileLife = getWeaponProjectileLife(weapon, silverBullet);
     var projectileHitRadius = getWeaponProjectileHitRadius(weapon, silverBullet);
-    var muzzleSide = getDualMuzzleSide(weapon);
+    var muzzleSide = dualHandShot ? getDualRevolverHandSide(dualHandShot) : getDualMuzzleSide(weapon);
     var start = getWeaponMuzzleStart(weapon, p, dir, muzzleSide);
     shot.start = start;
     if (shot.target) {
@@ -7303,7 +11155,7 @@
     state.shotsFired += 1;
     var damage = getWeaponDamage(weapon);
     if (silverBullet) damage *= 3;
-    state.bullets.push({
+    var bullet = {
       type: weapon.id,
       x: start.x,
       y: start.y,
@@ -7323,6 +11175,7 @@
       piercedEnemies: [],
       hitEnemies: [],
       muzzleSide: muzzleSide,
+      dualHand: dualHandShot,
       rifleShotNumber: rifleShotNumber,
       chainLightning: rifleChainLightning,
       lightningTargets: rifleChainLightning ? getRifleLightningTargetCount() : 0,
@@ -7348,9 +11201,13 @@
       trailTimer: 0,
       visual: bulletVisual,
       mesh: bulletMesh,
-    });
+    };
+    if (weapon.id === "launcher") bullet.launcherWhistle = startLauncherGrenadeWhistle(bullet);
+    state.bullets.push(bullet);
     if (freeLauncherShot) {
       state.launcherFreeShots += 1;
+    } else if (dualHandShot) {
+      spendDualRevolverHandShot(dualHandShot);
     } else {
       state.ammo[weapon.id] = Math.max(0, ammo.current - 1);
       if (state.ammo[weapon.id] <= 0) startReload(weapon.id);
@@ -7360,7 +11217,7 @@
     }
     if (muzzleSide) {
       state.lastDualShotSide = muzzleSide;
-      state.dualShotSide = -muzzleSide;
+      state.dualShotSide = dualHandShot ? getDualRevolverHandSide(state.dualActiveHand) : -muzzleSide;
     }
     p.cooldown = getWeaponCooldown(weapon);
     p.shootKick = weapon.id === "launcher" ? 1 : weapon.id === "rifle" ? 0.72 : 0.55;
@@ -7369,6 +11226,7 @@
     addSmokePuff(start.x - dir.x * 0.18, start.y, start.z - dir.z * 0.18, weapon.id === "launcher" ? 0.55 : 0.28, weapon.id === "launcher" ? 0.48 : 0.28);
     if (weapon.id === "revolver") playRevolverShotSound(start, dir, muzzleSide, bigIronShot);
     if (weapon.id === "rifle") playRifleShotSound(start, dir, rifleChainLightning);
+    if (weapon.id === "launcher") playLauncherLaunchSound(start, dir);
 
     var particleCount = weapon.id === "launcher" ? 10 : weapon.id === "rifle" ? 4 : 6;
     for (var i = 0; i < particleCount; i++) {
@@ -7387,8 +11245,486 @@
     return true;
   }
 
+  function shootCoachGun(player, weapon, ammo) {
+    ammo = ammo || getAmmoState(weapon.id);
+    if (ammo.reloading && ammo.current > 0) {
+      state.reloadTimers.coachGun = 0;
+      ammo = getAmmoState("coachGun");
+    }
+    if (ammo.reloading || ammo.current <= 0) {
+      startReload("coachGun");
+      player.cooldown = Math.max(player.cooldown, ammo.reloading ? 0.08 : 0.16);
+      return false;
+    }
+
+    var shot = getWeaponShotPlan(weapon, player);
+    var dir = shot.dir;
+    var start = getWeaponMuzzleStart(weapon, player, dir, 0);
+    var lastShell = ammo.current === 1;
+    var sinceLastShot = state.time - (state.marshalLastShotTime == null ? -99 : state.marshalLastShotTime);
+    var doubleTap =
+      state.marshalUpgrade === "breachMarshal" &&
+      hasUpgrade("doubleTap") &&
+      lastShell &&
+      (state.marshalDoubleTapReadyUntil || 0) > state.time;
+    var braced = state.marshalUpgrade === "graveWarden" && hasUpgrade("stillness") && sinceLastShot >= 1.2;
+    var context = {
+      id: ++state.marshalShotSequence,
+      type: "coachGun",
+      startX: start.x,
+      startZ: start.z,
+      dirX: dir.x,
+      dirZ: dir.z,
+      spread: getCoachGunSpread(braced),
+      range: getCoachGunRange(),
+      pelletCount: getCoachGunPelletCount(),
+      lastShell: lastShell,
+      doubleTap: doubleTap,
+      braced: braced,
+      entries: [],
+      visualRays: [],
+      visualPelletCount: 0,
+      acidCleansed: 0,
+      uniqueHits: 0,
+    };
+
+    state.shotsFired += 1;
+    state.ammo.coachGun = Math.max(0, ammo.current - 1);
+    state.reloadTimers.coachGun = 0;
+
+    if (doubleTap) {
+      state.marshalDoubleTapReadyUntil = 0;
+    } else if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("doubleTap") && ammo.current >= 2) {
+      state.marshalDoubleTapReadyUntil = state.time + 0.75;
+    } else {
+      state.marshalDoubleTapReadyUntil = 0;
+    }
+
+    if (state.marshalUpgrade === "graveWarden" && hasUpgrade("purifyingSalt")) purifyAcidWithCoachGun(context);
+    resolveCoachGunVolley(context);
+    spawnCoachGunVolleyVisuals(context, weapon);
+
+    if (state.ammo.coachGun < getWeaponMagazine(weapon) && (state.ammoReserve.coachGun || 0) > 0) startReload("coachGun");
+
+    var cooldown = getWeaponCooldown(weapon);
+    if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("doubleTap") && ammo.current >= 2) cooldown *= 0.35;
+    player.cooldown = cooldown;
+    player.shootKick = 0.92;
+    state.shake = Math.min(1.2, state.shake + weapon.shake);
+    state.marshalLastShotTime = state.time;
+
+    addLightFlash(start.x, start.y, start.z, state.marshalUpgrade === "graveWarden" ? 0xffefbd : 0xffb057, 2.5, 6.4, 0.12);
+    addSmokePuff(start.x - dir.x * 0.16, start.y, start.z - dir.z * 0.16, 0.48, 0.42);
+    playCoachGunShotSound(start, dir, lastShell);
+    for (var p = 0; p < 9; p++) {
+      spawnParticle(
+        start.x + rand(-0.1, 0.1),
+        start.y + rand(-0.08, 0.08),
+        start.z + rand(-0.1, 0.1),
+        dir.x * rand(3.8, 7.4) + rand(-2.3, 2.3),
+        rand(0.7, 2.7),
+        dir.z * rand(3.8, 7.4) + rand(-2.3, 2.3),
+        rand(0.1, 0.2),
+        rand(0.06, 0.14),
+        p % 3 ? mats.coachTracer : mats.flash
+      );
+    }
+
+    state.marshalLastVolley = {
+      id: context.id,
+      pelletCount: context.pelletCount,
+      spread: Number(context.spread.toFixed(3)),
+      range: Number(context.range.toFixed(2)),
+      lastShell: context.lastShell,
+      doubleTap: context.doubleTap,
+      braced: context.braced,
+      uniqueHits: context.uniqueHits,
+      acidCleansed: context.acidCleansed,
+      visualPelletCount: context.visualPelletCount,
+      visualTracerCount: context.visualRays.length / 4,
+      hitCounts: context.entries.map(function (entry) {
+        return { type: entry.enemy.type, pellets: entry.pellets, ball: !!entry.ball, distance: Number(entry.distance.toFixed(2)) };
+      }),
+    };
+    return true;
+  }
+
+  function getCoachGunPelletCount() {
+    return COACH_GUN_BASE_PELLETS + (state.marshalUpgrade === "breachMarshal" ? 2 : 0) + Math.min(4, getUpgradeCount("packedBuckshot"));
+  }
+
+  function getCoachGunSpread(braced) {
+    var spread = COACH_GUN_BASE_SPREAD;
+    if (state.marshalUpgrade === "breachMarshal") spread *= 1.32;
+    if (state.marshalUpgrade === "graveWarden") spread *= 0.65;
+    if (state.marshalUpgrade === "graveWarden") spread *= Math.max(0.58, 1 - Math.min(5, getUpgradeCount("fineChoke")) * 0.07);
+    if (braced) spread *= 0.62;
+    return spread;
+  }
+
+  function getCoachGunRange() {
+    var range = COACH_GUN_BASE_RANGE * getWeaponRangeMultiplier(WEAPONS.coachGun);
+    if (state.marshalUpgrade === "breachMarshal") range *= 0.8;
+    if (state.marshalUpgrade === "graveWarden") range *= 1.2 * (1 + Math.min(5, getUpgradeCount("fineChoke")) * 0.07);
+    return range;
+  }
+
+  function getCoachGunVisualPelletCount(pelletCount) {
+    var limit = COACH_GUN_STANDARD_TRACER_COUNT;
+    if (state.marshalUpgrade === "breachMarshal") limit = COACH_GUN_BREACH_TRACER_COUNT;
+    if (state.marshalUpgrade === "graveWarden") limit = COACH_GUN_GRAVE_TRACER_COUNT;
+    return Math.min(Math.max(1, pelletCount || 1), limit);
+  }
+
+  function resolveCoachGunVolley(context) {
+    ensureZombieSpatialGridCurrent();
+    var visualPelletCount = getCoachGunVisualPelletCount(context.pelletCount);
+    var nextVisualSlot = 0;
+    context.visualPelletCount = visualPelletCount;
+    for (var i = 0; i < context.pelletCount; i++) {
+      var offset = context.pelletCount <= 1 ? 0 : (i / (context.pelletCount - 1) - 0.5) * context.spread;
+      var nextVisualIndex =
+        visualPelletCount <= 1 ? Math.floor((context.pelletCount - 1) * 0.5) : Math.round((nextVisualSlot * (context.pelletCount - 1)) / (visualPelletCount - 1));
+      var captureVisual = nextVisualSlot < visualPelletCount && i === nextVisualIndex;
+      if (captureVisual) nextVisualSlot += 1;
+      var hit = traceCoachGunRay(context, offset, false, captureVisual);
+      if (hit) addCoachGunVolleyHit(context, hit, false);
+    }
+    if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("buckAndBall")) {
+      var ballHit = traceCoachGunRay(context, 0, true, true);
+      if (ballHit) addCoachGunVolleyHit(context, ballHit, true);
+    }
+
+    context.uniqueHits = context.entries.length;
+    if (context.uniqueHits >= 3 && state.marshalUpgrade === "breachMarshal" && hasUpgrade("rideTheRecoil")) {
+      state.marshalRecoilSpeedTimer = Math.max(state.marshalRecoilSpeedTimer, 1.25);
+    }
+
+    context.entries.sort(function (a, b) {
+      return a.distance - b.distance;
+    });
+    for (var e = 0; e < context.entries.length; e++) applyCoachGunVolleyDamage(context, context.entries[e]);
+    zombieSpatialDirty = true;
+  }
+
+  function traceCoachGunRay(context, offset, ball, captureVisual) {
+    var baseAngle = Math.atan2(context.dirX, context.dirZ) + offset;
+    var dirX = Math.sin(baseAngle);
+    var dirZ = Math.cos(baseAngle);
+    var range = ball ? COACH_GUN_BASE_RANGE * getWeaponRangeMultiplier(WEAPONS.coachGun) : context.range;
+    var endX = context.startX + dirX * range;
+    var endZ = context.startZ + dirZ * range;
+    var blocker = findBlockingObstacle(context.startX, context.startZ, endX, endZ, ball ? 0.12 : 0.06, null);
+    var maxDistance = blocker ? Math.max(0.2, range * blocker.t) : range;
+    var best = null;
+    var bestDistance = maxDistance + 1;
+    forEachEnemyNearCircle(context.startX, context.startZ, range + 1.4, function (enemy) {
+      if (!enemy || enemy.active === false) return;
+      var dx = enemy.x - context.startX;
+      var dz = enemy.z - context.startZ;
+      var along = dx * dirX + dz * dirZ;
+      if (along <= 0.15 || along > maxDistance || along >= bestDistance) return;
+      var lateralX = dx - dirX * along;
+      var lateralZ = dz - dirZ * along;
+      var hitRadius = enemy.radius + (ball ? 0.18 : 0.1);
+      if (lateralX * lateralX + lateralZ * lateralZ > hitRadius * hitRadius) return;
+      bestDistance = along;
+      best = enemy;
+    }, true);
+    if (captureVisual) {
+      context.visualRays.push(dirX, dirZ, best ? bestDistance : maxDistance, ball ? 1 : 0);
+    }
+    if (!best) return null;
+    return {
+      enemy: best,
+      distance: bestDistance,
+      x: context.startX + dirX * bestDistance,
+      z: context.startZ + dirZ * bestDistance,
+    };
+  }
+
+  function addCoachGunVolleyHit(context, hit, ball) {
+    var entry = null;
+    for (var i = 0; i < context.entries.length; i++) {
+      if (context.entries[i].enemy === hit.enemy) {
+        entry = context.entries[i];
+        break;
+      }
+    }
+    if (!entry) {
+      entry = { enemy: hit.enemy, pellets: 0, ball: false, distance: hit.distance, x: hit.x, z: hit.z };
+      context.entries.push(entry);
+    }
+    if (ball) entry.ball = true;
+    else entry.pellets += 1;
+    entry.distance = Math.min(entry.distance, hit.distance);
+    entry.x = hit.x;
+    entry.z = hit.z;
+  }
+
+  function applyCoachGunVolleyDamage(context, entry) {
+    var enemy = entry.enemy;
+    if (!enemy || enemy.active === false) return;
+    var wasMarked = isMarshalEnemyMarked(enemy);
+    var wasBounty = !!enemy.marshalBounty;
+    if (state.marshalUpgrade === "graveWarden" && entry.pellets >= COACH_GUN_MARK_HITS) applyMarshalMark(enemy, COACH_GUN_MARK_LIFE);
+    if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("doorKicker") && entry.pellets >= 4) {
+      enemy.marshalStunTimer = Math.max(enemy.marshalStunTimer || 0, 0.45);
+    }
+
+    var falloff = clamp(1 - (entry.distance / Math.max(1, context.range)) * 0.55, 0.45, 1);
+    var damage = getWeaponDamage(WEAPONS.coachGun) * entry.pellets * falloff;
+    if (entry.ball) damage += getWeaponDamage(WEAPONS.coachGun) * 3 * clamp(1 - entry.distance / (COACH_GUN_BASE_RANGE * 2.25), 0.62, 1);
+    var pointBlank = entry.distance <= COACH_GUN_POINT_BLANK_RANGE;
+    if (pointBlank) damage *= 1 + Math.min(5, getUpgradeCount("hardCast")) * 0.1;
+    if (context.doubleTap) damage *= 1.2;
+    if (context.lastShell && state.marshalUpgrade === "breachMarshal" && hasUpgrade("lastWord")) damage *= 1.45;
+    if (context.braced) damage *= 1.45;
+    if (wasMarked && state.marshalUpgrade === "graveWarden") damage *= 1 + Math.min(5, getUpgradeCount("sanctifiedLead")) * 0.12;
+
+    var source = {
+      type: "coachGun",
+      volleyId: context.id,
+      pointBlank: pointBlank,
+      targetWasMarked: isMarshalEnemyMarked(enemy),
+      targetWasBounty: wasBounty,
+      hitDistance: entry.distance,
+      pellets: entry.pellets,
+      ball: entry.ball,
+      aggregateHitSound: true,
+    };
+    damageEnemy(enemy, damage, entry.x, entry.z, source);
+    if (enemy.active === false) return;
+
+    var knockback = state.marshalUpgrade === "breachMarshal" ? 1.2 + entry.pellets * 0.16 : 0.42 + entry.pellets * 0.06;
+    if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("doorKicker") && entry.pellets >= 4) knockback *= 1.35;
+    if (pointBlank) knockback *= 1 + Math.min(5, getUpgradeCount("hardCast")) * 0.1;
+    if (context.lastShell && state.marshalUpgrade === "breachMarshal" && hasUpgrade("lastWord")) knockback *= 1.4;
+    applyCoachGunKnockback(enemy, context.startX, context.startZ, knockback, source);
+  }
+
+  function applyCoachGunKnockback(enemy, sourceX, sourceZ, distance, source) {
+    if (!enemy || enemy.active === false || distance <= 0) return;
+    var dx = enemy.x - sourceX;
+    var dz = enemy.z - sourceZ;
+    var len = Math.max(0.001, Math.hypot(dx, dz));
+    var dirX = dx / len;
+    var dirZ = dz / len;
+    var oldX = enemy.x;
+    var oldZ = enemy.z;
+    var targetX = oldX + dirX * distance;
+    var targetZ = oldZ + dirZ * distance;
+    var obstacle = findBlockingObstacle(oldX, oldZ, targetX, targetZ, enemy.radius + 0.08, null);
+    var obstacleCollision = !!obstacle;
+    if (obstacle) {
+      var safeT = Math.max(0, obstacle.t - 0.04);
+      targetX = oldX + (targetX - oldX) * safeT;
+      targetZ = oldZ + (targetZ - oldZ) * safeT;
+    }
+
+    var travelX = targetX - oldX;
+    var travelZ = targetZ - oldZ;
+    var travelLengthSq = travelX * travelX + travelZ * travelZ;
+    var travelLength = Math.sqrt(travelLengthSq);
+    var collisionTarget = null;
+    var collisionT = 1;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var other = state.enemies[i];
+      if (!other || other === enemy || other.active === false) continue;
+      var minDistance = enemy.radius + other.radius + 0.08;
+      var projection = travelLengthSq > 0.0001 ? clamp(((other.x - oldX) * travelX + (other.z - oldZ) * travelZ) / travelLengthSq, 0, 1) : 0;
+      var closestX = oldX + travelX * projection;
+      var closestZ = oldZ + travelZ * projection;
+      var separationX = closestX - other.x;
+      var separationZ = closestZ - other.z;
+      var separationSq = separationX * separationX + separationZ * separationZ;
+      if (separationSq >= minDistance * minDistance) continue;
+      var entryOffset = travelLength > 0.001 ? Math.sqrt(Math.max(0, minDistance * minDistance - separationSq)) / travelLength : 0;
+      var impactT = clamp(projection - entryOffset - 0.01, 0, 1);
+      if (impactT >= collisionT) continue;
+      collisionTarget = other;
+      collisionT = impactT;
+    }
+    if (collisionTarget) {
+      targetX = oldX + travelX * collisionT;
+      targetZ = oldZ + travelZ * collisionT;
+      if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("bonebreaker")) {
+        collisionTarget.marshalStunTimer = Math.max(collisionTarget.marshalStunTimer || 0, 0.45);
+      }
+    }
+    enemy.x = targetX;
+    enemy.z = targetZ;
+    resolveMoverPosition(enemy, enemy.radius + 0.16, ENEMY_BOUNDS_EXTRA);
+    enemy.navGoal = null;
+    enemy.stuckTimer = 0;
+    enemy.group.position.set(enemy.x, 0, enemy.z);
+    if (collisionTarget && state.marshalUpgrade === "breachMarshal" && hasUpgrade("bonebreaker") && collisionTarget.active !== false) {
+      var collisionPointBlank = state.player
+        ? Math.hypot(collisionTarget.x - state.player.x, collisionTarget.z - state.player.z) <= COACH_GUN_POINT_BLANK_RANGE
+        : false;
+      damageEnemy(collisionTarget, 2 * (1 + Math.max(0, state.globalDamageBonus || 0)), collisionTarget.x, collisionTarget.z, {
+        type: "coachGun",
+        pointBlank: collisionPointBlank,
+        targetWasMarked: isMarshalEnemyMarked(collisionTarget),
+        targetWasBounty: !!collisionTarget.marshalBounty,
+        collision: true,
+      });
+    } else if (obstacleCollision && state.marshalUpgrade === "breachMarshal" && hasUpgrade("bonebreaker") && enemy.active !== false) {
+      enemy.marshalStunTimer = Math.max(enemy.marshalStunTimer || 0, 0.45);
+      damageEnemy(enemy, 2 * (1 + Math.max(0, state.globalDamageBonus || 0)), enemy.x, enemy.z, {
+        type: "coachGun",
+        pointBlank: !!source.pointBlank,
+        targetWasMarked: isMarshalEnemyMarked(enemy),
+        targetWasBounty: !!enemy.marshalBounty,
+        collision: true,
+      });
+    }
+  }
+
+  function applyMarshalMark(enemy, duration) {
+    if (!enemy || enemy.active === false) return;
+    if (!isMarshalEnemyMarked(enemy)) state.marshalMarksApplied += 1;
+    enemy.marshalMarkTimer = Math.max(enemy.marshalMarkTimer || 0, duration || COACH_GUN_MARK_LIFE);
+  }
+
+  function isMarshalEnemyMarked(enemy) {
+    return !!(enemy && ((enemy.marshalMarkTimer || 0) > 0 || (enemy.marshalBountyTimer || 0) > 0));
+  }
+
+  function spawnCoachGunVolleyVisuals(context, weapon) {
+    var rays = context.visualRays || [];
+    var tracerCount = Math.floor(rays.length / 4);
+    if (!tracerCount) return;
+
+    var grave = state.marshalUpgrade === "graveWarden";
+    var breach = state.marshalUpgrade === "breachMarshal";
+    var speed = grave ? 56 : breach ? 46 : 50;
+    var width = grave ? 0.09 : breach ? 0.115 : 0.1;
+    var length = grave ? 1.05 : breach ? 0.72 : 0.78;
+    var material = grave ? mats.rifleTracer : mats.coachTracer;
+    reserveCoachGunTracerSlots(tracerCount);
+
+    for (var i = 0; i < rays.length; i += 4) {
+      var ball = rays[i + 3] === 1;
+      spawnCoachGunTracer(
+        context.startX,
+        weapon.muzzleY,
+        context.startZ,
+        rays[i],
+        rays[i + 1],
+        rays[i + 2],
+        ball ? speed * 1.08 : speed,
+        ball ? width * 1.5 : width,
+        ball ? length * 1.35 : length,
+        material,
+        ball
+      );
+    }
+  }
+
+  function reserveCoachGunTracerSlots(count) {
+    var overflow = state.coachGunTracers.length + Math.max(0, count || 0) - MAX_COACH_GUN_TRACERS;
+    while (overflow > 0 && state.coachGunTracers.length) {
+      removeCoachGunTracer(0);
+      overflow -= 1;
+    }
+  }
+
+  function spawnCoachGunTracer(startX, startY, startZ, dirX, dirZ, distance, speed, width, length, material, ball) {
+    var muzzleOffset = 0.12;
+    coachGunTracerStartScratch.x = startX + dirX * muzzleOffset;
+    coachGunTracerStartScratch.y = startY + (ball ? 0.025 : 0);
+    coachGunTracerStartScratch.z = startZ + dirZ * muzzleOffset;
+    coachGunTracerSizeScratch.width = width;
+    coachGunTracerSizeScratch.length = length;
+    var visual = acquireProjectileVisual(
+      "standard",
+      coachGunTracerStartScratch,
+      Math.atan2(dirX, dirZ),
+      coachGunTracerSizeScratch,
+      material
+    );
+    state.coachGunTracers.push({
+      x: coachGunTracerStartScratch.x,
+      y: coachGunTracerStartScratch.y,
+      z: coachGunTracerStartScratch.z,
+      dirX: dirX,
+      dirZ: dirZ,
+      speed: speed,
+      remaining: Math.max(0.08, distance - muzzleOffset - length * 0.34),
+      ball: !!ball,
+      visual: visual,
+      mesh: visual.object,
+    });
+  }
+
+  function updateCoachGunTracers(dt) {
+    for (var i = state.coachGunTracers.length - 1; i >= 0; i--) {
+      var tracer = state.coachGunTracers[i];
+      var step = Math.min(tracer.remaining, tracer.speed * dt);
+      tracer.x += tracer.dirX * step;
+      tracer.z += tracer.dirZ * step;
+      tracer.remaining -= step;
+      tracer.mesh.position.set(tracer.x, tracer.y, tracer.z);
+      syncStandardProjectileVisual(tracer.visual);
+      if (tracer.remaining <= 0.0001) removeCoachGunTracer(i);
+    }
+  }
+
+  function removeCoachGunTracer(index) {
+    var tracer = state.coachGunTracers[index];
+    if (!tracer) return;
+    releaseProjectileVisual(tracer.visual);
+    state.coachGunTracers.splice(index, 1);
+  }
+
+  function releaseAllCoachGunTracersToPool() {
+    for (var i = state.coachGunTracers.length - 1; i >= 0; i--) {
+      var tracer = state.coachGunTracers[i];
+      if (tracer && tracer.visual) releaseProjectileVisual(tracer.visual);
+    }
+    state.coachGunTracers = [];
+  }
+
+  function purifyAcidWithCoachGun(context) {
+    var cleansed = 0;
+    for (var i = state.acidProjectiles.length - 1; i >= 0; i--) {
+      var projectile = state.acidProjectiles[i];
+      if (!pointInsideCoachGunCone(projectile.x, projectile.z, context, 0.55)) continue;
+      addShockwave(projectile.x, projectile.z, 0.75, 0.22, 0xfff1b8);
+      removeAcidProjectile(i);
+      cleansed += 1;
+    }
+    for (var j = state.acidPuddles.length - 1; j >= 0; j--) {
+      var puddle = state.acidPuddles[j];
+      if (!pointInsideCoachGunCone(puddle.x, puddle.z, context, puddle.radius * 0.35)) continue;
+      puddle.life -= 2;
+      cleansed += 1;
+      if (puddle.life <= 0) removeAcidPuddle(j);
+    }
+    if (!cleansed) return;
+    context.acidCleansed = cleansed;
+    state.marshalAcidCleansed += cleansed;
+    state.marshalPurifyReloadTimer = Math.max(state.marshalPurifyReloadTimer, 2);
+  }
+
+  function pointInsideCoachGunCone(x, z, context, radius) {
+    var dx = x - context.startX;
+    var dz = z - context.startZ;
+    var along = dx * context.dirX + dz * context.dirZ;
+    if (along < 0 || along > context.range) return false;
+    var lateralX = dx - context.dirX * along;
+    var lateralZ = dz - context.dirZ * along;
+    var halfWidth = Math.tan(context.spread * 0.5 + 0.08) * along + (radius || 0);
+    return lateralX * lateralX + lateralZ * lateralZ <= halfWidth * halfWidth;
+  }
+
   function getDualMuzzleSide(weapon) {
     if (!weapon || weapon.id !== "revolver" || state.revolverUpgrade !== "dualRevolvers") return 0;
+    if (hasAllRightAllLeft()) {
+      ensureDualRevolverHandState();
+      return getDualRevolverHandSide(state.dualActiveHand);
+    }
     return state.dualShotSide < 0 ? -1 : 1;
   }
 
@@ -7584,6 +11920,50 @@
     return acquireProjectileVisual("fireShard", { x: x, y: 0.56, z: z }, angle, null, null).object;
   }
 
+  function willDamageKillEnemy(enemy, damage, source) {
+    var hpAfter = enemy.hp - damage;
+    if (hpAfter <= 0) return true;
+    return !!(source && source.executioner && hpAfter <= enemy.maxHp * 0.28);
+  }
+
+  function prepareLauncherExplosionDamageBatch(source, targetCount) {
+    if (targetCount <= 0) return;
+    var particleCount = targetCount * 14;
+    var debrisCount = 0;
+    var xpOrbCount = 0;
+    var scorchCount = 0;
+    for (var i = 0; i < targetCount; i++) {
+      if (!launcherExplosionKillScratch[i]) continue;
+      var enemy = launcherExplosionEnemiesScratch[i];
+      if (!enemy || enemy.active === false) continue;
+      particleCount += 18 + getGoldBurstParticleCount(enemy.score);
+      debrisCount += getDeathDebrisPieces(enemy).length;
+      xpOrbCount += 1;
+      scorchCount += 1;
+    }
+    reserveParticleSlots(particleCount);
+    if (debrisCount > 0) reserveDebrisSlots(debrisCount);
+    if (xpOrbCount > 0) reserveXpOrbSlots(xpOrbCount);
+    if (scorchCount > 0) reserveDecalSlots(scorchCount);
+    source.preReservedHitParticles = true;
+    source.preReservedKillParticles = true;
+    source.preReservedDeathDebris = true;
+    source.preReservedXpOrbs = true;
+    source.preReservedScorchDecals = true;
+    source.aggregateHitSound = targetCount > 1;
+  }
+
+  function clearLauncherExplosionDamageScratch(targetCount) {
+    for (var i = 0; i < targetCount; i++) {
+      launcherExplosionEnemiesScratch[i] = null;
+      launcherExplosionDamageScratch[i] = 0;
+      launcherExplosionKillScratch[i] = false;
+    }
+    launcherExplosionEnemiesScratch.length = 0;
+    launcherExplosionDamageScratch.length = 0;
+    launcherExplosionKillScratch.length = 0;
+  }
+
   function explodeGrenade(x, z, radius, damage, options) {
     options = options || {};
     var blastRadius = radius || getLauncherBlastRadius();
@@ -7594,24 +11974,44 @@
       bullet: options.bullet || null,
       chainContext: options.chainContext || null,
       killedEnemies: [],
+      deferEnemyRemoval: true,
     };
     addShockwave(x, z, blastRadius, options.kind === "chain" ? 0.38 : 0.5, options.kind === "chain" ? 0xffb347 : 0xffe0a0);
     addScorchMark(x, z, blastRadius * 0.62);
     addLightFlash(x, 1.2, z, options.kind === "chain" ? 0xffb347 : 0xff7a22, options.kind === "chain" ? 4.6 : 5.8, 12, 0.28);
-    for (var s = 0; s < (options.kind === "cluster" ? 7 : 12); s++) {
-      addSmokePuff(x + rand(-0.8, 0.8), rand(0.45, 1.25), z + rand(-0.8, 0.8), rand(0.48, 0.95), rand(0.55, 1.05));
+    if (!options.noAudio && !gameplayWarmupMode) playLauncherExplosionSound(x, z, blastRadius, options.kind || "main");
+    var smokeCount = options.kind === "cluster" ? 7 : 12;
+    reserveSmokePuffSlots(smokeCount);
+    for (var s = 0; s < smokeCount; s++) {
+      addSmokePuff(x + rand(-0.8, 0.8), rand(0.45, 1.25), z + rand(-0.8, 0.8), rand(0.48, 0.95), rand(0.55, 1.05), true);
     }
+    var targetCount = 0;
     forEachEnemyNearCircle(x, z, blastRadius + 1.2, function (enemy) {
       if (!enemy || enemy.active === false) return;
-      var dist = Math.hypot(enemy.x - x, enemy.z - z);
-      if (dist > blastRadius + enemy.radius * 0.28) return;
+      var dx = enemy.x - x;
+      var dz = enemy.z - z;
+      var hitRadius = blastRadius + enemy.radius * 0.28;
+      if (dx * dx + dz * dz > hitRadius * hitRadius) return;
+      var dist = Math.hypot(dx, dz);
+      if (dist > hitRadius) return;
       var ratio = 1 - clamp(dist / blastRadius, 0, 1);
       var falloff = hasUpgrade("airburstFuse") ? 0.78 + ratio * 0.42 : ratio;
       var dealt = Math.max(1, Math.ceil(blastDamage * falloff + 0.5));
-      damageEnemy(enemy, dealt, x, z, source);
+      launcherExplosionEnemiesScratch[targetCount] = enemy;
+      launcherExplosionDamageScratch[targetCount] = dealt;
+      launcherExplosionKillScratch[targetCount] = willDamageKillEnemy(enemy, dealt, source);
+      targetCount += 1;
     });
+    prepareLauncherExplosionDamageBatch(source, targetCount);
+    for (var targetIndex = 0; targetIndex < targetCount; targetIndex++) {
+      damageEnemy(launcherExplosionEnemiesScratch[targetIndex], launcherExplosionDamageScratch[targetIndex], x, z, source);
+    }
+    clearLauncherExplosionDamageScratch(targetCount);
+    compactEnemiesAfterDeferredRemoval();
 
-    for (var p = 0; p < (options.kind === "cluster" ? 22 : 34); p++) {
+    var particleCount = options.kind === "cluster" ? 22 : 34;
+    reserveParticleSlots(particleCount);
+    for (var p = 0; p < particleCount; p++) {
       var angle = rand(0, Math.PI * 2);
       var speed = rand(1.4, options.kind === "cluster" ? 5.4 : 7.2);
       spawnParticle(
@@ -7623,7 +12023,8 @@
         Math.sin(angle) * speed,
         rand(0.28, 0.58),
         rand(0.12, 0.38),
-        p % 4 === 0 ? mats.flash : mats.explosion
+        p % 4 === 0 ? mats.flash : mats.explosion,
+        true
       );
     }
     state.shake = Math.min(1.4, state.shake + (options.kind === "cluster" ? 0.46 : 0.75));
@@ -7879,7 +12280,7 @@
     source.chainContext = context;
     options.chainContext = context;
     if (context.remaining <= 0) return;
-    var killed = source.killedEnemies.slice();
+    var killed = source.killedEnemies;
     for (var i = 0; i < killed.length && context.remaining > 0; i++) {
       var kill = killed[i];
       context.remaining -= 1;
@@ -7916,13 +12317,23 @@
   }
 
   function updateDelayedExplosions(dt) {
-    for (var i = state.delayedExplosions.length - 1; i >= 0; i--) {
+    var write = 0;
+    for (var i = 0; i < state.delayedExplosions.length; i++) {
       var explosion = state.delayedExplosions[i];
       explosion.delay -= dt;
-      if (explosion.delay > 0) continue;
-      explodeGrenade(explosion.x, explosion.z, explosion.radius, explosion.damage, explosion.options);
-      state.delayedExplosions.splice(i, 1);
+      if (explosion.delay > 0) {
+        state.delayedExplosions[write] = explosion;
+        write += 1;
+      } else {
+        delayedExplosionDueScratch.push(explosion);
+      }
     }
+    state.delayedExplosions.length = write;
+    for (var dueIndex = delayedExplosionDueScratch.length - 1; dueIndex >= 0; dueIndex--) {
+      var dueExplosion = delayedExplosionDueScratch[dueIndex];
+      explodeGrenade(dueExplosion.x, dueExplosion.z, dueExplosion.radius, dueExplosion.damage, dueExplosion.options);
+    }
+    delayedExplosionDueScratch.length = 0;
   }
 
   function spawnLauncherShrapnel(x, z, count) {
@@ -7933,7 +12344,8 @@
     };
     for (var i = 0; i < amount; i++) {
       var angle = (Math.PI * 2 * i) / amount + rand(-0.12, 0.12);
-      var start = new THREE.Vector3(x + Math.sin(angle) * 0.38, WEAPONS.revolver.muzzleY, z + Math.cos(angle) * 0.38);
+      var start = launcherShrapnelStartScratch;
+      start.set(x + Math.sin(angle) * 0.38, WEAPONS.revolver.muzzleY, z + Math.cos(angle) * 0.38);
       var mesh = createProjectileMesh(WEAPONS.revolver, start, angle, {
         width: 0.08,
         length: 0.54,
@@ -7991,13 +12403,13 @@
   function rebuildZombieSpatialGrid() {
     for (var i = 0; i < zombieSpatialGridKeys.length; i++) {
       var key = zombieSpatialGridKeys[i];
-      var bucket = zombieSpatialGrid[key];
+      var bucket = zombieSpatialGrid.get(key);
       if (bucket) {
         bucket.length = 0;
         zombieSpatialBucketPool.push(bucket);
-        delete zombieSpatialGrid[key];
       }
     }
+    zombieSpatialGrid.clear();
     zombieSpatialGridKeys.length = 0;
     zombieSpatialStats.cellCount = 0;
     zombieSpatialStats.maxBucketSize = 0;
@@ -8010,11 +12422,11 @@
       enemy.gridCellX = cellX;
       enemy.gridCellZ = cellZ;
       enemy.spatialOrder = e;
-      var key = cellX + ":" + cellZ;
-      var bucket = zombieSpatialGrid[key];
+      var key = getZombieCellKey(cellX, cellZ);
+      var bucket = zombieSpatialGrid.get(key);
       if (!bucket) {
         bucket = zombieSpatialBucketPool.length ? zombieSpatialBucketPool.pop() : [];
-        zombieSpatialGrid[key] = bucket;
+        zombieSpatialGrid.set(key, bucket);
         zombieSpatialGridKeys.push(key);
       }
       bucket.push(enemy);
@@ -8022,6 +12434,10 @@
     }
     zombieSpatialStats.cellCount = zombieSpatialGridKeys.length;
     zombieSpatialDirty = false;
+  }
+
+  function getZombieCellKey(cellX, cellZ) {
+    return cellX * SPATIAL_CELL_KEY_STRIDE + cellZ;
   }
 
   function ensureZombieSpatialGridCurrent() {
@@ -8040,15 +12456,16 @@
     var cellZ = enemy.gridCellZ == null ? Math.floor(enemy.z / ZOMBIE_SPATIAL_CELL_SIZE) : enemy.gridCellZ;
     for (var dz = -1; dz <= 1; dz++) {
       for (var dx = -1; dx <= 1; dx++) {
-        var bucket = zombieSpatialGrid[(cellX + dx) + ":" + (cellZ + dz)];
+        var bucket = zombieSpatialGrid.get(getZombieCellKey(cellX + dx, cellZ + dz));
         if (!bucket) continue;
         for (var i = 0; i < bucket.length; i++) {
           var other = bucket[i];
           if (other === enemy || other.active === false) continue;
           var odx = enemy.x - other.x;
           var odz = enemy.z - other.z;
-          var od = Math.hypot(odx, odz);
           var minSep = enemy.radius + other.radius + 0.36;
+          if (Math.abs(odx) >= minSep || Math.abs(odz) >= minSep) continue;
+          var od = Math.hypot(odx, odz);
           if (od < minSep) {
             if (od <= 0.001) {
               var angle = (cellX * 73856093 + cellZ * 19349663 + i * 83492791) % 6283 / 1000;
@@ -8069,7 +12486,8 @@
 
   function updateEnemies(dt) {
     var p = state.player;
-    var visibleGround = getCurrentVisibleGroundRect();
+    var visibleGround = getCurrentVisibleGroundRect(enemyVisibleGroundScratch);
+    var teleportSideCounts = prepareZombieTeleportSideCounts();
     ensureZombieSpatialGridCurrent();
     for (var i = state.enemies.length - 1; i >= 0; i--) {
       var e = state.enemies[i];
@@ -8077,15 +12495,31 @@
       e.attackCooldown = Math.max(0, e.attackCooldown - dt);
       if (e.type === "spitter") e.acidCooldown = Math.max(0, (e.acidCooldown || 0) - dt);
       e.fireSlowTimer = Math.max(0, (e.fireSlowTimer || 0) - dt);
+      e.marshalStunTimer = Math.max(0, (e.marshalStunTimer || 0) - dt);
+      e.marshalFearTimer = Math.max(0, (e.marshalFearTimer || 0) - dt);
+      e.marshalMarkTimer = Math.max(0, (e.marshalMarkTimer || 0) - dt);
+      e.marshalBountyTimer = Math.max(0, (e.marshalBountyTimer || 0) - dt);
+      if (e.marshalBounty && e.marshalBountyTimer <= 0) e.marshalBounty = false;
       e.hitPulse = Math.max(0, e.hitPulse - dt * 5);
       e.spitPulse = Math.max(0, (e.spitPulse || 0) - dt * 2.7);
       var baseEnemySpeed = refreshZombieSpeed(e);
       var enemySpeed = baseEnemySpeed * (e.fireSlowTimer > 0 && e.type !== "fastZombie" ? 0.62 : 1);
+      var marshalMarked = (e.marshalMarkTimer || 0) > 0 || (e.marshalBountyTimer || 0) > 0;
+      if (marshalMarked && state.marshalUpgrade === "graveWarden" && hasUpgrade("rockSalt")) enemySpeed *= 0.75;
+      if (isEnemyInHallowedGround(e)) enemySpeed *= 0.7;
+      var marshalMarkVisual = e.group.userData.marshalMark;
+      if (marshalMarkVisual) {
+        marshalMarkVisual.visible = marshalMarked;
+        if (marshalMarked) {
+          var markPulse = (e.marshalBounty ? 1.18 : 1) * (1 + Math.sin(state.time * 7 + e.radius) * 0.08);
+          marshalMarkVisual.scale.setScalar(markPulse / Math.max(0.72, e.radius));
+        }
+      }
 
       var dx = p.x - e.x;
       var dz = p.z - e.z;
       var dist = Math.max(0.001, Math.hypot(dx, dz));
-      if (maybeTeleportDistantZombie(e, p, dist, visibleGround)) {
+      if (maybeTeleportDistantZombie(e, p, dist, visibleGround, teleportSideCounts)) {
         continue;
       }
       var nx = dx / dist;
@@ -8100,8 +12534,22 @@
       var moveZ = 0;
       var faceX = nx;
       var faceZ = nz;
-      var spitterBusy = updateAcidSpitterAttack(e, p, dist, nx, nz, dt);
-      if (dist > e.radius + p.radius + 0.18) {
+      var marshalStunned = (e.marshalStunTimer || 0) > 0;
+      var marshalFeared = (e.marshalFearTimer || 0) > 0;
+      var spitterBusy = !marshalStunned && !marshalFeared && updateAcidSpitterAttack(e, p, dist, nx, nz, dt);
+      if (marshalStunned) {
+        moveX = 0;
+        moveZ = 0;
+      } else if (marshalFeared) {
+        var fearDx = e.x - (e.marshalFearX || p.x);
+        var fearDz = e.z - (e.marshalFearZ || p.z);
+        var fearDist = Math.max(0.001, Math.hypot(fearDx, fearDz));
+        var fearSteer = chooseClearZombieDirection(e, fearDx / fearDist, fearDz / fearDist, dt);
+        moveX = fearSteer.x * enemySpeed * 0.82;
+        moveZ = fearSteer.z * enemySpeed * 0.82;
+        faceX = -fearSteer.x;
+        faceZ = -fearSteer.z;
+      } else if (dist > e.radius + p.radius + 0.18) {
         var steer = null;
         if (e.type === "spitter" && dist < ACID_SPIT_MIN_RANGE) {
           steer = chooseClearZombieDirection(e, -nx, -nz, dt);
@@ -8140,10 +12588,28 @@
       e.group.position.set(e.x, 0, e.z);
       e.group.rotation.y = Math.atan2(faceX, faceZ);
       e.group.scale.setScalar(1 + e.hitPulse * 0.08);
-      updateZombieVisual(e);
-      updateEnemyHealthBar(e);
+      var visualVisible = !pointOutsideVisibleGround(e.x, e.z, e.radius + ENEMY_VISUAL_CULL_PAD, visibleGround);
+      e.group.visible = visualVisible;
+      if (visualVisible) {
+        updateZombieVisual(e);
+        updateEnemyHealthBar(e);
+      }
     }
     rebuildZombieSpatialGrid();
+  }
+
+  function prepareZombieTeleportSideCounts() {
+    var counts = zombieTeleportSideCountScratch;
+    counts[0] = 0;
+    counts[1] = 0;
+    counts[2] = 0;
+    counts[3] = 0;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var side = state.enemies[i].spawnSide;
+      if (side !== 0 && side !== 1 && side !== 2 && side !== 3) return null;
+      counts[side] += 1;
+    }
+    return counts;
   }
 
   function updateAcidSpitterAttack(enemy, player, dist, nx, nz, dt) {
@@ -8151,8 +12617,8 @@
     if (enemy.spitWindup > 0) {
       enemy.spitWindup -= dt;
       if (enemy.spitWindup <= 0) {
-        var target = enemy.spitTarget || { x: player.x, z: player.z };
-        launchAcidSpit(enemy, target.x, target.z);
+        var target = enemy.spitTarget;
+        launchAcidSpit(enemy, target ? target.x : player.x, target ? target.z : player.z);
         enemy.spitTarget = null;
         enemy.acidCooldown = ACID_SPIT_COOLDOWN + rand(-0.38, 0.52);
         enemy.spitPulse = 1;
@@ -8163,7 +12629,9 @@
     if ((enemy.acidCooldown || 0) > 0) return false;
     if (dist < ACID_SPIT_MIN_RANGE || dist > ACID_SPIT_RANGE) return false;
     enemy.spitWindup = ACID_SPIT_WINDUP;
-    enemy.spitTarget = { x: player.x, z: player.z };
+    enemy.spitTargetStorage.x = player.x;
+    enemy.spitTargetStorage.z = player.z;
+    enemy.spitTarget = enemy.spitTargetStorage;
     enemy.navGoal = null;
     enemy.stuckTimer = 0;
     enemy.steerX = nx;
@@ -8205,9 +12673,9 @@
       mesh: mesh,
     });
     enemy.acidShots = (enemy.acidShots || 0) + 1;
-    addLightFlash(startX, startY, startZ, 0x93ff38, 2.4, 6, 0.16);
+    addLightFlash(startX, startY, startZ, 0xeaff22, 3.2, 6.8, 0.18);
     for (var i = 0; i < 8; i++) {
-      spawnParticle(startX, startY, startZ, dirX * rand(1.4, 3.2) + rand(-0.8, 0.8), rand(0.5, 1.9), dirZ * rand(1.4, 3.2) + rand(-0.8, 0.8), rand(0.18, 0.34), rand(0.06, 0.14), i % 2 ? mats.acid : mats.acidDark);
+      spawnParticle(startX, startY, startZ, dirX * rand(1.4, 3.2) + rand(-0.8, 0.8), rand(0.5, 1.9), dirZ * rand(1.4, 3.2) + rand(-0.8, 0.8), rand(0.18, 0.34), rand(0.06, 0.14), i % 2 ? mats.acidSpitHot : mats.acidSpitShadow);
     }
     trimEffects(state.acidProjectiles, MAX_ACID_PROJECTILES, removeAcidProjectile);
   }
@@ -8218,11 +12686,13 @@
     group.rotation.y = angle;
     effectRoot.add(group);
     var parts = [];
-    parts.push(addSlimeLobe(group, 0.34, 0.28, 0.42, mats.slimeCore, 0, 0, 0, 0.2));
-    parts.push(addSlimeLobe(group, 0.22, 0.2, 0.28, mats.slimeDark, -0.2, -0.02, -0.11, 1.4));
-    parts.push(addSlimeLobe(group, 0.18, 0.17, 0.2, mats.slimeCore, 0.22, 0.07, 0.11, 2.1));
-    parts.push(addSlimeLobe(group, 0.13, 0.12, 0.16, mats.slimeHighlight, 0.04, 0.13, 0.25, 3.2));
-    parts.push(addSlimeLobe(group, 0.12, 0.1, 0.18, mats.slimeDark, -0.04, -0.13, 0.24, 4.4));
+    parts.push(addSlimeLobe(group, 0.36, 0.24, 0.48, mats.acidSpitCore, -0.02, -0.01, 0, 0.2));
+    parts.push(addSlimeLobe(group, 0.24, 0.18, 0.3, mats.acidSpitShadow, -0.22, -0.03, -0.12, 1.4));
+    parts.push(addSlimeLobe(group, 0.2, 0.15, 0.23, mats.acidSpitCore, 0.21, 0.07, 0.13, 2.1));
+    parts.push(addSlimeLobe(group, 0.13, 0.1, 0.2, mats.acidSpitHot, 0.05, 0.13, 0.28, 3.2));
+    parts.push(addSlimeLobe(group, 0.12, 0.09, 0.17, mats.acidSpitShadow, -0.06, -0.13, 0.25, 4.4));
+    parts.push(addSlimeLobe(group, 0.16, 0.09, 0.19, mats.acidSpitHot, 0.18, -0.06, -0.08, 5.1));
+    parts.push(addSlimeLobe(group, 0.09, 0.07, 0.15, mats.acidSpitHot, -0.2, 0.09, 0.09, 5.9));
     group.userData.slimeParts = parts;
     return group;
   }
@@ -8275,7 +12745,7 @@
           -spit.dirZ * rand(0.4, 1.4) + rand(-0.35, 0.35),
           rand(0.2, 0.38),
           rand(0.045, 0.095),
-          rng() < 0.35 ? mats.slimeHighlight : mats.acid
+          rng() < 0.42 ? mats.acidSpitHot : mats.acidSpitCore
         );
       }
     }
@@ -8567,6 +13037,13 @@
   }
 
   function getParticleVisualPoolStats() {
+    var batchCount = 0;
+    var drawnInstances = 0;
+    for (var key in particleInstancedBatches) {
+      if (!Object.prototype.hasOwnProperty.call(particleInstancedBatches, key)) continue;
+      batchCount += 1;
+      drawnInstances += particleInstancedBatches[key].count || 0;
+    }
     return {
       box: {
         available: particleVisualPools.box.length,
@@ -8578,9 +13055,32 @@
         available: particleVisualPools.sphere.length,
         created: particleVisualCreated.sphere,
         inUse: particleVisualInUse.sphere,
-        prewarm: 0,
+        prewarm: PARTICLE_VISUAL_PREWARM,
       },
       maxParticles: MAX_PARTICLES,
+      instanced: true,
+      batches: batchCount,
+      drawnInstances: drawnInstances,
+    };
+  }
+
+  function getXpOrbVisualPoolStats() {
+    return {
+      available: xpOrbVisualPool.length,
+      created: xpOrbVisualCreated,
+      inUse: xpOrbVisualInUse,
+      prewarm: XP_ORB_VISUAL_PREWARM,
+      maxActive: MAX_XP_ORBS,
+    };
+  }
+
+  function getDeathDebrisVisualPoolStats() {
+    return {
+      available: deathDebrisVisualPool.length,
+      created: deathDebrisVisualCreated,
+      inUse: deathDebrisVisualInUse,
+      prewarm: DEATH_DEBRIS_VISUAL_PREWARM,
+      maxActive: MAX_DEBRIS,
     };
   }
 
@@ -8590,12 +13090,26 @@
   }
 
   function getProjectileVisualPoolStats() {
+    var standardBatches = 0;
+    var standardDrawnInstances = 0;
+    for (var materialKey in projectileStandardInstancedBatches) {
+      if (!Object.prototype.hasOwnProperty.call(projectileStandardInstancedBatches, materialKey)) continue;
+      var batches = projectileStandardInstancedBatches[materialKey];
+      for (var i = 0; i < batches.length; i++) {
+        standardBatches += 1;
+        standardDrawnInstances += batches[i].count || 0;
+      }
+    }
     return {
       standard: {
         available: projectileVisualPools.standard.length,
         created: projectileVisualCreated.standard,
         inUse: projectileVisualInUse.standard,
         prewarm: PROJECTILE_VISUAL_PREWARM.standard,
+        instanced: true,
+        batches: standardBatches,
+        drawnInstances: standardDrawnInstances,
+        instanceCapacity: PROJECTILE_STANDARD_INSTANCE_CAPACITY,
       },
       launcher: {
         available: projectileVisualPools.launcher.length,
@@ -8616,6 +13130,10 @@
         prewarm: PROJECTILE_VISUAL_PREWARM.fireShard,
       },
       activeProjectiles: state.bullets.length,
+      activeCoachGunTracers: state.coachGunTracers.length,
+      maxCoachGunTracers: MAX_COACH_GUN_TRACERS,
+      activePaleDeputyTracers: state.paleDeputyTracers.length,
+      maxPaleDeputyTracers: MAX_PALE_DEPUTY_TRACERS,
     };
   }
 
@@ -8638,62 +13156,138 @@
         prewarm: LIGHT_FLASH_PREWARM,
         maxActive: MAX_LIGHT_FLASHES,
       },
+      scorchDecals: {
+        available: scorchDecalVisualPool.length,
+        created: scorchDecalVisualCreated,
+        inUse: scorchDecalVisualInUse,
+        prewarm: SCORCH_DECAL_VISUAL_PREWARM,
+        maxActive: MAX_DECALS,
+      },
     };
   }
 
   function createParticleVisual(kind) {
     var key = getParticleVisualPoolKey(kind);
+    var visual = {
+      poolKey: key,
+      batch: null,
+      index: -1,
+      particle: null,
+      inUse: false,
+    };
+    particleVisualCreated[key] += 1;
+    return visual;
+  }
+
+  function getParticleMaterialKey(material) {
+    var mat = material || mats.flash;
+    if (!mat.userData) mat.userData = {};
+    if (!mat.userData.particleInstanceKey) {
+      mat.userData.particleInstanceKey = "particleMat" + particleMaterialIdCounter++;
+    }
+    return mat.userData.particleInstanceKey;
+  }
+
+  function getParticleInstancedBatch(kind, material) {
+    var key = getParticleVisualPoolKey(kind);
+    var mat = material || mats.flash;
+    var batchKey = key + ":" + getParticleMaterialKey(mat);
+    var batch = particleInstancedBatches[batchKey];
+    if (batch) {
+      if (batch.mesh.parent !== effectRoot) effectRoot.add(batch.mesh);
+      return batch;
+    }
     var geometry =
       key === "sphere"
         ? getSharedGeometry("particle-sphere", function () {
             return new THREE.SphereGeometry(1, 9, 6);
           })
         : getSharedBoxGeometry(1, 1, 1);
-    var mesh = new THREE.Mesh(geometry, mats.flash);
-    mesh.userData.disposeGeometry = false;
-    mesh.userData.particleVisual = null;
+    var mesh = new THREE.InstancedMesh(geometry, mat, MAX_PARTICLES);
+    mesh.count = 0;
     mesh.castShadow = false;
     mesh.receiveShadow = false;
-    mesh.visible = false;
-    var visual = {
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.particleBatch = null;
+    batch = {
+      key: batchKey,
+      kind: key,
+      material: mat,
       mesh: mesh,
-      poolKey: key,
-      inUse: false,
+      count: 0,
+      visuals: [],
     };
-    mesh.userData.particleVisual = visual;
-    particleVisualCreated[key] += 1;
-    return visual;
+    mesh.userData.particleBatch = batch;
+    particleInstancedBatches[batchKey] = batch;
+    particleInstancedBatchList.push(batch);
+    effectRoot.add(mesh);
+    return batch;
   }
 
   function acquireParticleVisual(kind, x, y, z, size, mat) {
     var key = getParticleVisualPoolKey(kind);
     var pool = particleVisualPools[key];
     var visual = pool.length ? pool.pop() : createParticleVisual(key);
+    var batch = getParticleInstancedBatch(key, mat);
     visual.inUse = true;
+    visual.batch = batch;
+    visual.index = batch.count;
+    visual.particle = null;
+    batch.visuals[visual.index] = visual;
+    batch.count += 1;
+    batch.mesh.count = batch.count;
     particleVisualInUse[key] += 1;
-    var mesh = visual.mesh;
-    mesh.visible = true;
-    mesh.material = mat || mats.flash;
-    mesh.position.set(x, y, z);
-    mesh.rotation.set(0, 0, 0);
-    mesh.scale.setScalar(size);
-    if (mesh.parent !== effectRoot) effectRoot.add(mesh);
+    writeParticleVisualMatrix(visual, x, y, z, size);
     return visual;
+  }
+
+  function writeParticleVisualMatrix(visual, x, y, z, scale) {
+    if (!visual || !visual.batch || visual.index < 0) return;
+    particleInstancePositionScratch.set(x, y, z);
+    particleInstanceScaleScratch.set(scale, scale, scale);
+    particleInstanceMatrixScratch.compose(particleInstancePositionScratch, particleInstanceQuaternion, particleInstanceScaleScratch);
+    visual.batch.mesh.setMatrixAt(visual.index, particleInstanceMatrixScratch);
+    visual.batch.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  function detachParticleInstancedBatch(batch) {
+    if (!batch) return;
+    batch.count = 0;
+    batch.visuals.length = 0;
+    batch.mesh.count = 0;
+    if (batch.mesh.parent) batch.mesh.parent.remove(batch.mesh);
   }
 
   function releaseParticleVisual(visual) {
     if (!visual) return;
-    var mesh = visual.mesh;
-    if (mesh && mesh.parent) mesh.parent.remove(mesh);
-    if (mesh) {
-      mesh.visible = false;
-      mesh.material = mats.flash;
-      mesh.position.set(0, -1000, 0);
-      mesh.rotation.set(0, 0, 0);
-      mesh.scale.setScalar(1);
-    }
     if (!visual.inUse) return;
+    var batch = visual.batch;
+    if (batch) {
+      var index = visual.index;
+      var lastIndex = batch.count - 1;
+      if (index >= 0 && lastIndex >= 0) {
+        if (index !== lastIndex) {
+          var moved = batch.visuals[lastIndex];
+          batch.mesh.getMatrixAt(lastIndex, particleInstanceMatrixScratch);
+          batch.mesh.setMatrixAt(index, particleInstanceMatrixScratch);
+          if (moved) {
+            moved.index = index;
+            batch.visuals[index] = moved;
+          }
+        }
+        batch.visuals[lastIndex] = null;
+        batch.count = lastIndex;
+        batch.mesh.count = batch.count;
+        batch.mesh.instanceMatrix.needsUpdate = true;
+        if (batch.count <= 0 && batch.mesh.parent) batch.mesh.parent.remove(batch.mesh);
+      }
+    }
     visual.inUse = false;
+    visual.batch = null;
+    visual.index = -1;
+    visual.particle = null;
     particleVisualInUse[visual.poolKey] = Math.max(0, (particleVisualInUse[visual.poolKey] || 0) - 1);
     particleVisualPools[visual.poolKey].push(visual);
   }
@@ -8708,6 +13302,254 @@
       }
     }
     state.particles = [];
+  }
+
+  function createXpOrbVisual() {
+    var group = new THREE.Group();
+    group.visible = false;
+    group.userData.xpOrbVisual = null;
+    var core = new THREE.Mesh(getSharedGeometry("xp-orb-core", function () {
+      return new THREE.OctahedronGeometry(1, 0);
+    }), mats.xp);
+    core.userData.disposeGeometry = false;
+    core.castShadow = false;
+    core.receiveShadow = false;
+    rememberBase(core);
+    group.add(core);
+    var glint = new THREE.Mesh(getSharedGeometry("xp-orb-glint", function () {
+      return new THREE.OctahedronGeometry(1, 0);
+    }), mats.xpLight);
+    glint.userData.disposeGeometry = false;
+    glint.position.set(0.08, 0.11, 0.07);
+    glint.castShadow = false;
+    glint.receiveShadow = false;
+    rememberBase(glint);
+    group.add(glint);
+    var visual = {
+      group: group,
+      core: core,
+      glint: glint,
+      inUse: false,
+    };
+    group.userData.xpOrbVisual = visual;
+    xpOrbVisualCreated += 1;
+    return visual;
+  }
+
+  function acquireXpOrbVisual(x, z, coreScale, glintScale) {
+    var visual = xpOrbVisualPool.length ? xpOrbVisualPool.pop() : createXpOrbVisual();
+    visual.inUse = true;
+    xpOrbVisualInUse += 1;
+    var group = visual.group;
+    group.visible = true;
+    group.position.set(x + rand(-0.2, 0.2), 0.5, z + rand(-0.2, 0.2));
+    group.rotation.set(0, 0, 0);
+    group.scale.setScalar(1);
+    visual.core.scale.setScalar(coreScale);
+    visual.core.userData.baseScale = visual.core.scale.clone();
+    visual.glint.scale.setScalar(glintScale);
+    visual.glint.userData.baseScale = visual.glint.scale.clone();
+    if (group.parent !== effectRoot) effectRoot.add(group);
+    return visual;
+  }
+
+  function warmupXpOrbVisual(x, z, coreScale, glintScale) {
+    var visual = acquireXpOrbVisual(x, z, coreScale, glintScale);
+    releaseXpOrbVisual(visual);
+  }
+
+  function releaseXpOrbVisual(visual) {
+    if (!visual) return;
+    var group = visual.group;
+    if (group && group.parent) group.parent.remove(group);
+    if (group) {
+      group.visible = false;
+      group.position.set(0, -1000, 0);
+      group.rotation.set(0, 0, 0);
+      group.scale.setScalar(1);
+    }
+    if (!visual.inUse) return;
+    visual.inUse = false;
+    xpOrbVisualInUse = Math.max(0, xpOrbVisualInUse - 1);
+    xpOrbVisualPool.push(visual);
+  }
+
+  function releaseAllXpOrbsToPool() {
+    for (var i = state.xpOrbs.length - 1; i >= 0; i--) {
+      var orb = state.xpOrbs[i];
+      if (orb && orb.visual) {
+        releaseXpOrbVisual(orb.visual);
+      } else if (orb && orb.mesh) {
+        removeObject3D(orb.mesh);
+      }
+    }
+    state.xpOrbs = [];
+  }
+
+  function createDeathDebrisVisual() {
+    var mat = mats.zombieBlood.clone();
+    mat.transparent = true;
+    mat.opacity = 1;
+    var mesh = new THREE.Mesh(getSharedBoxGeometry(1, 1, 1), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = false;
+    mesh.userData.deathDebrisVisual = null;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.visible = false;
+    var visual = {
+      mesh: mesh,
+      inUse: false,
+    };
+    mesh.userData.deathDebrisVisual = visual;
+    deathDebrisVisualCreated += 1;
+    return visual;
+  }
+
+  function acquireDeathDebrisVisual(source, worldPos, worldQuat) {
+    var visual = deathDebrisVisualPool.length ? deathDebrisVisualPool.pop() : createDeathDebrisVisual();
+    visual.inUse = true;
+    deathDebrisVisualInUse += 1;
+    var mesh = visual.mesh;
+    var sourceMat = Array.isArray(source.material) ? source.material[0] : source.material;
+    mesh.visible = true;
+    mesh.geometry = source.geometry || getSharedBoxGeometry(1, 1, 1);
+    mesh.userData.disposeGeometry = false;
+    if (sourceMat && typeof mesh.material.copy === "function") mesh.material.copy(sourceMat);
+    mesh.material.transparent = true;
+    mesh.material.opacity = 1;
+    mesh.position.copy(worldPos);
+    mesh.quaternion.copy(worldQuat);
+    mesh.scale.copy(source.scale);
+    if (mesh.parent !== effectRoot) effectRoot.add(mesh);
+    return visual;
+  }
+
+  function warmupDeathDebrisVisual(source, worldPos, worldQuat) {
+    var visual = acquireDeathDebrisVisual(source, worldPos, worldQuat);
+    releaseDeathDebrisVisual(visual);
+  }
+
+  function releaseDeathDebrisVisual(visual) {
+    if (!visual) return;
+    var mesh = visual.mesh;
+    if (mesh && mesh.parent) mesh.parent.remove(mesh);
+    if (mesh) {
+      mesh.visible = false;
+      mesh.geometry = getSharedBoxGeometry(1, 1, 1);
+      mesh.material.opacity = 1;
+      mesh.position.set(0, -1000, 0);
+      mesh.rotation.set(0, 0, 0);
+      mesh.scale.setScalar(1);
+    }
+    if (!visual.inUse) return;
+    visual.inUse = false;
+    deathDebrisVisualInUse = Math.max(0, deathDebrisVisualInUse - 1);
+    deathDebrisVisualPool.push(visual);
+  }
+
+  function releaseAllDeathDebrisToPool() {
+    for (var i = state.debris.length - 1; i >= 0; i--) {
+      var piece = state.debris[i];
+      if (piece && piece.visual) {
+        releaseDeathDebrisVisual(piece.visual);
+      } else if (piece && piece.mesh) {
+        removeObject3D(piece.mesh);
+      }
+    }
+    state.debris = [];
+  }
+
+  function getProjectileStandardMaterialKey(material) {
+    var mat = material || mats.bullet;
+    if (!mat.userData) mat.userData = {};
+    if (!mat.userData.projectileStandardInstanceKey) {
+      mat.userData.projectileStandardInstanceKey = "projectileStandardMat" + projectileStandardMaterialIdCounter++;
+    }
+    return mat.userData.projectileStandardInstanceKey;
+  }
+
+  function getProjectileStandardInstancedBatch(material) {
+    var mat = material || mats.bullet;
+    var key = getProjectileStandardMaterialKey(mat);
+    var batches = projectileStandardInstancedBatches[key];
+    if (!batches) {
+      batches = [];
+      projectileStandardInstancedBatches[key] = batches;
+    }
+    for (var i = 0; i < batches.length; i++) {
+      if (batches[i].count < PROJECTILE_STANDARD_INSTANCE_CAPACITY) {
+        if (batches[i].mesh.parent !== effectRoot) effectRoot.add(batches[i].mesh);
+        return batches[i];
+      }
+    }
+    var mesh = new THREE.InstancedMesh(getSharedBoxGeometry(1, 1, 1), mat, PROJECTILE_STANDARD_INSTANCE_CAPACITY);
+    mesh.count = 0;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.disposeGeometry = false;
+    var batch = {
+      key: key,
+      material: mat,
+      mesh: mesh,
+      count: 0,
+      visuals: [],
+    };
+    mesh.userData.projectileStandardBatch = batch;
+    batches.push(batch);
+    projectileStandardInstancedBatchList.push(batch);
+    effectRoot.add(mesh);
+    return batch;
+  }
+
+  function writeStandardProjectileVisualMatrix(visual) {
+    if (!visual || !visual.batch || visual.index < 0 || !visual.object) return;
+    projectileInstancePositionScratch.copy(visual.object.position);
+    projectileInstanceScaleScratch.copy(visual.object.scale);
+    projectileInstanceQuaternionScratch.setFromEuler(visual.object.rotation);
+    projectileInstanceMatrixScratch.compose(projectileInstancePositionScratch, projectileInstanceQuaternionScratch, projectileInstanceScaleScratch);
+    visual.batch.mesh.setMatrixAt(visual.index, projectileInstanceMatrixScratch);
+    visual.batch.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  function syncStandardProjectileVisual(visual) {
+    if (visual && visual.kind === "standard") writeStandardProjectileVisualMatrix(visual);
+  }
+
+  function detachStandardProjectileBatch(batch) {
+    if (!batch) return;
+    batch.count = 0;
+    batch.visuals.length = 0;
+    batch.mesh.count = 0;
+    if (batch.mesh.parent) batch.mesh.parent.remove(batch.mesh);
+  }
+
+  function releaseStandardProjectileVisual(visual) {
+    if (!visual || !visual.batch) return;
+    var batch = visual.batch;
+    var index = visual.index;
+    var lastIndex = batch.count - 1;
+    if (index >= 0 && lastIndex >= 0) {
+      if (index !== lastIndex) {
+        var moved = batch.visuals[lastIndex];
+        batch.mesh.getMatrixAt(lastIndex, projectileInstanceMatrixScratch);
+        batch.mesh.setMatrixAt(index, projectileInstanceMatrixScratch);
+        if (moved) {
+          moved.index = index;
+          batch.visuals[index] = moved;
+        }
+      }
+      batch.visuals[lastIndex] = null;
+      batch.count = lastIndex;
+      batch.mesh.count = batch.count;
+      batch.mesh.instanceMatrix.needsUpdate = true;
+      if (batch.count <= 0 && batch.mesh.parent) batch.mesh.parent.remove(batch.mesh);
+    }
+    visual.batch = null;
+    visual.index = -1;
+    visual.material = null;
   }
 
   function createProjectileVisual(kind) {
@@ -8727,18 +13569,17 @@
   }
 
   function createStandardProjectileVisual() {
-    var mesh = new THREE.Mesh(getSharedBoxGeometry(1, 1, 1), mats.bullet);
-    mesh.userData.disposeGeometry = false;
-    mesh.userData.projectileVisual = null;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.visible = false;
+    var object = new THREE.Object3D();
+    object.visible = false;
     var visual = {
       kind: "standard",
-      object: mesh,
+      object: object,
+      batch: null,
+      index: -1,
+      material: null,
       inUse: false,
     };
-    mesh.userData.projectileVisual = visual;
+    object.userData.projectileVisual = visual;
     return visual;
   }
 
@@ -8857,18 +13698,26 @@
     } else {
       configureGroupProjectileVisual(visual, start, angle);
     }
-    if (visual.object.parent !== effectRoot) effectRoot.add(visual.object);
+    if (key !== "standard" && visual.object.parent !== effectRoot) effectRoot.add(visual.object);
     return visual;
   }
 
   function configureStandardProjectileVisual(visual, start, angle, size, material) {
-    var mesh = visual.object;
+    var object = visual.object;
     var projectileSize = size || getWeaponProjectileVisualSize(WEAPONS.revolver);
-    mesh.visible = true;
-    mesh.material = material || mats.bullet;
-    mesh.position.set(start.x, start.y, start.z);
-    mesh.rotation.set(0, angle || 0, 0);
-    mesh.scale.set(projectileSize.width, projectileSize.width, projectileSize.length);
+    var mat = material || mats.bullet;
+    var batch = getProjectileStandardInstancedBatch(mat);
+    visual.batch = batch;
+    visual.index = batch.count;
+    visual.material = mat;
+    batch.visuals[visual.index] = visual;
+    batch.count += 1;
+    batch.mesh.count = batch.count;
+    object.visible = true;
+    object.position.set(start.x, start.y, start.z);
+    object.rotation.set(0, angle || 0, 0);
+    object.scale.set(projectileSize.width, projectileSize.width, projectileSize.length);
+    writeStandardProjectileVisualMatrix(visual);
   }
 
   function configureGroupProjectileVisual(visual, start, angle) {
@@ -8911,6 +13760,7 @@
 
   function releaseProjectileVisual(visual) {
     if (!visual) return;
+    if (visual.kind === "standard") releaseStandardProjectileVisual(visual);
     var object = visual.object;
     if (object && object.parent) object.parent.remove(object);
     if (object) {
@@ -8932,6 +13782,7 @@
   function releaseAllProjectilesToPool() {
     for (var i = state.bullets.length - 1; i >= 0; i--) {
       var bullet = state.bullets[i];
+      if (bullet && bullet.launcherWhistle) stopLauncherGrenadeWhistle(bullet.launcherWhistle, 0.035);
       if (bullet && bullet.visual) {
         releaseProjectileVisual(bullet.visual);
       } else if (bullet && bullet.mesh) {
@@ -8977,6 +13828,11 @@
     return visual;
   }
 
+  function warmupShockwaveVisual(x, z, color) {
+    var visual = acquireShockwaveVisual(x, z, color);
+    releaseShockwaveVisual(visual);
+  }
+
   function releaseShockwaveVisual(visual) {
     if (!visual) return;
     var mesh = visual.mesh;
@@ -9019,6 +13875,11 @@
     return visual;
   }
 
+  function warmupSmokePuffVisual(x, y, z, scale) {
+    var visual = acquireSmokePuffVisual(x, y, z, scale);
+    releaseSmokePuffVisual(visual);
+  }
+
   function releaseSmokePuffVisual(visual) {
     if (!visual) return;
     var mesh = visual.mesh;
@@ -9026,6 +13887,57 @@
     mesh.visible = false;
     smokePuffVisualInUse = Math.max(0, smokePuffVisualInUse - 1);
     smokePuffVisualPool.push(visual);
+  }
+
+  function createScorchDecalVisual() {
+    var mat = mats.scorch.clone();
+    var mesh = new THREE.Mesh(getSharedGeometry("scorch-circle", function () {
+      return new THREE.CircleGeometry(1, 14);
+    }), mat);
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = true;
+    mesh.userData.scorchDecalVisual = null;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = -3;
+    mesh.visible = false;
+    var visual = { mesh: mesh };
+    mesh.userData.scorchDecalVisual = visual;
+    scorchDecalVisualCreated += 1;
+    return visual;
+  }
+
+  function acquireScorchDecalVisual(x, z, radius) {
+    var visual = scorchDecalVisualPool.length ? scorchDecalVisualPool.pop() : createScorchDecalVisual();
+    scorchDecalVisualInUse += 1;
+    var mesh = visual.mesh;
+    mesh.visible = true;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.rotation.z = rand(0, Math.PI * 2);
+    mesh.position.set(x, 0.065, z);
+    mesh.scale.set(radius * rand(0.75, 1.2), radius * rand(0.55, 0.95), 1);
+    if (mesh.material) mesh.material.opacity = rand(0.16, 0.28);
+    if (mesh.parent !== effectRoot) effectRoot.add(mesh);
+    return visual;
+  }
+
+  function warmupScorchDecalVisual(x, z, radius) {
+    var visual = acquireScorchDecalVisual(x, z, radius);
+    releaseScorchDecalVisual(visual);
+  }
+
+  function releaseScorchDecalVisual(visual) {
+    if (!visual) return;
+    var mesh = visual.mesh;
+    if (mesh.parent) mesh.parent.remove(mesh);
+    mesh.visible = false;
+    mesh.position.set(0, -1000, 0);
+    mesh.rotation.set(-Math.PI / 2, 0, 0);
+    mesh.scale.setScalar(1);
+    if (mesh.material) mesh.material.opacity = 1;
+    scorchDecalVisualInUse = Math.max(0, scorchDecalVisualInUse - 1);
+    scorchDecalVisualPool.push(visual);
   }
 
   function createLightFlashVisual() {
@@ -9048,6 +13960,11 @@
     light.position.set(x, y, z);
     if (light.parent !== effectRoot) effectRoot.add(light);
     return visual;
+  }
+
+  function warmupLightFlashVisual(x, y, z, color, intensity, distance) {
+    var visual = acquireLightFlashVisual(x, y, z, color, intensity, distance);
+    releaseLightFlashVisual(visual);
   }
 
   function releaseLightFlashVisual(visual) {
@@ -9322,12 +14239,20 @@
 
   function updateFirePatches(dt) {
     var playerInFire = false;
+    var visibleGround = getCurrentVisibleGroundRect(fireVisibleGroundScratch);
     for (var i = state.firePatches.length - 1; i >= 0; i--) {
       var patch = state.firePatches[i];
       patch.life -= dt;
       patch.damageTimer = Math.max(0, patch.damageTimer - dt);
       patch.emberTimer -= dt;
-      updateFirePatchVisual(patch, i, dt);
+      var visualVisible = !pointOutsideVisibleGround(patch.x, patch.z, patch.radius + FIRE_VISUAL_CULL_PAD, visibleGround);
+      if (patch.mesh) patch.mesh.visible = visualVisible;
+      if (visualVisible) {
+        updateFirePatchVisual(patch, i, dt + (patch.visualSkippedDt || 0));
+        patch.visualSkippedDt = 0;
+      } else {
+        patch.visualSkippedDt = (patch.visualSkippedDt || 0) + dt;
+      }
       if (patch.damageTimer <= 0) {
         patch.damageTimer = FIRE_PATCH_DAMAGE_INTERVAL;
         damageEnemiesInFirePatch(patch);
@@ -9337,7 +14262,7 @@
       }
       if (patch.emberTimer <= 0) {
         patch.emberTimer = patch.trail ? 0.16 : 0.09;
-        spawnFirePatchEmber(patch);
+        spawnFirePatchEmber(patch, visualVisible);
       }
       if (patch.life <= 0) removeFirePatch(i);
     }
@@ -9392,12 +14317,13 @@
       flame.rotation.y += dt * (0.55 + (i % 4) * 0.18);
       flame.position.y = Math.max(0, Math.sin(state.time * 12 + phase)) * 0.12;
       scaleFromBase(flame, flicker * 0.92, 0.9 + flicker * 0.18, flicker * 0.92);
-      flame.children.forEach(function (block, blockIndex) {
+      for (var blockIndex = 0; blockIndex < flame.children.length; blockIndex++) {
+        var block = flame.children[blockIndex];
         var blockFlicker = clamp(flicker + Math.sin(state.time * (22 + blockIndex * 5) + phase) * 0.16, 0.52, 1.48);
         block.material.opacity = (block.userData.baseOpacity || 0.65) * Math.min(1, fade * 2.15) * blockFlicker;
         block.rotation.y += dt * (0.9 + blockIndex * 0.28);
         scaleFromBase(block, blockFlicker * 0.92, 0.82 + blockFlicker * 0.28, blockFlicker * 0.92);
-      });
+      }
     }
     var cinders = patch.cinders || [];
     for (var c = 0; c < cinders.length; c++) {
@@ -9427,7 +14353,7 @@
     var maxCellZ = Math.floor((z + cellRadius) / ZOMBIE_SPATIAL_CELL_SIZE);
     for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
       for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
-        var bucket = zombieSpatialGrid[cellX + ":" + cellZ];
+        var bucket = zombieSpatialGrid.get(getZombieCellKey(cellX, cellZ));
         if (!bucket) continue;
         for (var i = 0; i < bucket.length; i++) callback(bucket[i]);
       }
@@ -9437,8 +14363,12 @@
   function damageEnemiesInFirePatch(patch) {
     forEachEnemyNearCircle(patch.x, patch.z, patch.radius, function (enemy) {
       if (!enemy || enemy.active === false) return;
-      var dist = Math.hypot(enemy.x - patch.x, enemy.z - patch.z);
-      if (dist > patch.radius + enemy.radius * 0.3) return;
+      var dx = enemy.x - patch.x;
+      var dz = enemy.z - patch.z;
+      var hitRadius = patch.radius + enemy.radius * 0.3;
+      if (dx * dx + dz * dz > hitRadius * hitRadius) return;
+      var dist = Math.hypot(dx, dz);
+      if (dist > hitRadius) return;
       if (hasUpgrade("scorchedEarth")) enemy.fireSlowTimer = Math.max(enemy.fireSlowTimer || 0, 0.55);
       var ratio = 1 - clamp(dist / patch.radius, 0, 1);
       var damage = patch.damage;
@@ -9450,20 +14380,19 @@
     });
   }
 
-  function spawnFirePatchEmber(patch) {
+  function spawnFirePatchEmber(patch, emitVisual) {
     var angle = rand(0, Math.PI * 2);
     var distance = rand(0, patch.radius * 0.72);
-    spawnParticle(
-      patch.x + Math.cos(angle) * distance,
-      rand(0.18, 0.75),
-      patch.z + Math.sin(angle) * distance,
-      Math.cos(angle) * rand(0.15, 0.8),
-      rand(0.8, 2.8),
-      Math.sin(angle) * rand(0.15, 0.8),
-      rand(0.18, 0.34),
-      rand(0.035, 0.09),
-      rng() < 0.18 ? mats.fireHot : rng() < 0.5 ? mats.fireCore : mats.fireOrange
-    );
+    var y = rand(0.18, 0.75);
+    var vx = Math.cos(angle) * rand(0.15, 0.8);
+    var vy = rand(0.8, 2.8);
+    var vz = Math.sin(angle) * rand(0.15, 0.8);
+    var life = rand(0.18, 0.34);
+    var size = rand(0.035, 0.09);
+    var materialRoll = rng();
+    var emberMaterial = materialRoll < 0.18 ? mats.fireHot : rng() < 0.5 ? mats.fireCore : mats.fireOrange;
+    if (!emitVisual) return;
+    spawnParticle(patch.x + Math.cos(angle) * distance, y, patch.z + Math.sin(angle) * distance, vx, vy, vz, life, size, emberMaterial);
   }
 
   function updateLauncherFireBuff(dt, playerInFire) {
@@ -9490,7 +14419,11 @@
     if (!state.player) return false;
     for (var i = 0; i < state.firePatches.length; i++) {
       var patch = state.firePatches[i];
-      if (Math.hypot(state.player.x - patch.x, state.player.z - patch.z) <= patch.radius + state.player.radius * 0.35) return true;
+      var dx = state.player.x - patch.x;
+      var dz = state.player.z - patch.z;
+      var hitRadius = patch.radius + state.player.radius * 0.35;
+      if (dx * dx + dz * dz > hitRadius * hitRadius) continue;
+      if (Math.hypot(dx, dz) <= hitRadius) return true;
     }
     return false;
   }
@@ -9521,14 +14454,16 @@
     state.firePatches.splice(index, 1);
   }
 
-  function maybeTeleportDistantZombie(enemy, player, dist, visibleGround) {
+  function maybeTeleportDistantZombie(enemy, player, dist, visibleGround, teleportSideCounts) {
     if (dist < ZOMBIE_CATCHUP_DISTANCE) return false;
     if (state.time < (enemy.catchupReadyAt || 0)) return false;
     if (!pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + ZOMBIE_CATCHUP_VISIBLE_PAD, visibleGround)) return false;
 
+    var oldSide = enemy.spawnSide;
     var spawn = findZombieSpawnPoint(enemy.radius, {
       strict: true,
-      preferredSides: chooseZombieSurroundSides("teleport", enemy),
+      preferredSides: chooseZombieSurroundSides("teleport", enemy, visibleGround, teleportSideCounts),
+      visibleGround: visibleGround,
     });
     if (!spawn) {
       enemy.catchupReadyAt = state.time + ZOMBIE_CATCHUP_COOLDOWN;
@@ -9543,6 +14478,10 @@
     enemy.x = spawn.x;
     enemy.z = spawn.z;
     enemy.spawnSide = spawn.side;
+    if (teleportSideCounts) {
+      teleportSideCounts[oldSide] -= 1;
+      teleportSideCounts[spawn.side] += 1;
+    }
     rememberZombieSurroundSide("teleport", spawn.side);
     enemy.navGoal = null;
     enemy.stuckTimer = 0;
@@ -9559,6 +14498,7 @@
     enemy.group.position.set(enemy.x, 0, enemy.z);
     enemy.group.rotation.y = Math.atan2(enemy.steerX, enemy.steerZ);
     enemy.group.scale.setScalar(1 + enemy.hitPulse * 0.08);
+    enemy.group.visible = !pointOutsideVisibleGround(enemy.x, enemy.z, enemy.radius + ENEMY_VISUAL_CULL_PAD, visibleGround);
 
     state.zombieTeleports += 1;
     addSpawnDust(enemy.x, enemy.z);
@@ -9566,6 +14506,9 @@
   }
 
   function chooseZombieDirection(enemy, player, nx, nz, dist, dt) {
+    var cachedSteer = getCachedZombieSteer(enemy, nx, nz, dist, dt);
+    if (cachedSteer) return cachedSteer;
+
     var target = getZombieNavigationTarget(enemy, player, dist);
     var tx = target.x - enemy.x;
     var tz = target.z - enemy.z;
@@ -9587,7 +14530,38 @@
       enemy.steerZ = chosen.z;
       len = 1;
     }
-    return { x: enemy.steerX / len, z: enemy.steerZ / len };
+    var steerX = enemy.steerX / len;
+    var steerZ = enemy.steerZ / len;
+    cacheZombieSteer(enemy, wantX, wantZ, steerX, steerZ, dist);
+    zombieSteerResultScratch.x = steerX;
+    zombieSteerResultScratch.z = steerZ;
+    return zombieSteerResultScratch;
+  }
+
+  function getCachedZombieSteer(enemy, nx, nz, dist, dt) {
+    if (enemy.cachedSteerTimer > 0) enemy.cachedSteerTimer = Math.max(0, enemy.cachedSteerTimer - dt);
+    if (enemy.type === "spitter" || dist < ZOMBIE_STEER_CACHE_MIN_DISTANCE || enemy.navGoal || enemy.stuckTimer > 0.03) return null;
+    if (enemy.cachedSteerTimer <= 0) return null;
+    var wantDot = (enemy.cachedSteerWantX || 0) * nx + (enemy.cachedSteerWantZ || 0) * nz;
+    if (wantDot < ZOMBIE_STEER_CACHE_DOT) {
+      enemy.cachedSteerTimer = 0;
+      return null;
+    }
+    zombieSteerResultScratch.x = enemy.cachedSteerX || nx;
+    zombieSteerResultScratch.z = enemy.cachedSteerZ || nz;
+    return zombieSteerResultScratch;
+  }
+
+  function cacheZombieSteer(enemy, wantX, wantZ, steerX, steerZ, dist) {
+    if (enemy.type === "spitter" || dist < ZOMBIE_STEER_CACHE_MIN_DISTANCE || enemy.navGoal || enemy.stuckTimer > 0.03) {
+      enemy.cachedSteerTimer = 0;
+      return;
+    }
+    enemy.cachedSteerX = steerX;
+    enemy.cachedSteerZ = steerZ;
+    enemy.cachedSteerWantX = wantX;
+    enemy.cachedSteerWantZ = wantZ;
+    enemy.cachedSteerTimer = ZOMBIE_STEER_CACHE_INTERVAL;
   }
 
   function getZombieNavigationTarget(enemy, player, dist) {
@@ -9612,12 +14586,12 @@
     var corner = chooseObstacleCorner(enemy, blocker.rect, player.x, player.z);
     if (!corner) return player;
 
-    enemy.navGoal = {
-      x: corner.x,
-      z: corner.z,
-      holdUntil: state.time + 0.35,
-      expires: state.time + 2.8,
-    };
+    var navGoal = enemy.navGoalStorage;
+    navGoal.x = corner.x;
+    navGoal.z = corner.z;
+    navGoal.holdUntil = state.time + 0.35;
+    navGoal.expires = state.time + 2.8;
+    enemy.navGoal = navGoal;
     return enemy.navGoal;
   }
 
@@ -9673,47 +14647,46 @@
 
   function chooseClearZombieDirection(enemy, wantX, wantZ, dt) {
     var side = enemy.avoidSide || 1;
-    var offsets = [0, 0.28 * side, -0.28 * side, 0.58 * side, -0.58 * side, 0.95 * side, -0.95 * side, 1.35 * side, -1.35 * side, Math.PI * side];
     var prevX = enemy.steerX || wantX;
     var prevZ = enemy.steerZ || wantZ;
-    var best = { x: wantX, z: wantZ };
+    var bestX = wantX;
+    var bestZ = wantZ;
     var bestScore = -Infinity;
     var lookNear = enemy.radius + 0.35 + enemy.speed * dt;
     var lookFar = enemy.radius + Math.min(1.8, 0.9 + enemy.speed * 0.2 + enemy.stuckTimer * 2);
+    var useCachedAngles = side === 1 || side === -1;
 
-    for (var i = 0; i < offsets.length; i++) {
-      var dir = rotateDirection(wantX, wantZ, offsets[i]);
-      var nearX = enemy.x + dir.x * lookNear;
-      var nearZ = enemy.z + dir.z * lookNear;
-      var farX = enemy.x + dir.x * lookFar;
-      var farZ = enemy.z + dir.z * lookFar;
+    for (var i = 0; i < ZOMBIE_CLEAR_DIRECTION_OFFSETS.length; i++) {
+      var offset = ZOMBIE_CLEAR_DIRECTION_OFFSETS[i] * side;
+      var ca = useCachedAngles ? ZOMBIE_CLEAR_DIRECTION_COS[i] : Math.cos(offset);
+      var sa = useCachedAngles ? ZOMBIE_CLEAR_DIRECTION_SIN[i] * side : Math.sin(offset);
+      var dirX = wantX * ca - wantZ * sa;
+      var dirZ = wantX * sa + wantZ * ca;
+      var nearX = enemy.x + dirX * lookNear;
+      var nearZ = enemy.z + dirZ * lookNear;
+      var farX = enemy.x + dirX * lookFar;
+      var farZ = enemy.z + dirZ * lookFar;
       var blocked =
         pointHitsObstacle(nearX, nearZ, enemy.radius + 0.08) ||
         pointHitsObstacle(farX, farZ, enemy.radius + 0.08) ||
         !pointInsideEnemyBounds(farX, farZ, enemy.radius);
       var clearance = obstacleClearanceAt(farX, farZ, enemy.radius);
-      var wantDot = dir.x * wantX + dir.z * wantZ;
-      var prevDot = dir.x * prevX + dir.z * prevZ;
+      var wantDot = dirX * wantX + dirZ * wantZ;
+      var prevDot = dirX * prevX + dirZ * prevZ;
       var score = wantDot * 3.4 + prevDot * 0.7 + clearance * 0.32;
       if (blocked) score -= 7.5;
-      if (enemy.stuckTimer > 0.18) score += prevDot * 0.7 + Math.abs(offsets[i]) * 0.22;
+      if (enemy.stuckTimer > 0.18) score += prevDot * 0.7 + Math.abs(offset) * 0.22;
 
       if (score > bestScore) {
         bestScore = score;
-        best = dir;
+        bestX = dirX;
+        bestZ = dirZ;
       }
     }
 
-    return best;
-  }
-
-  function rotateDirection(x, z, angle) {
-    var ca = Math.cos(angle);
-    var sa = Math.sin(angle);
-    return {
-      x: x * ca - z * sa,
-      z: x * sa + z * ca,
-    };
+    zombieClearDirectionScratch.x = bestX;
+    zombieClearDirectionScratch.z = bestZ;
+    return zombieClearDirectionScratch;
   }
 
   function updateZombieStuckState(enemy, moved, dist, dt) {
@@ -9732,7 +14705,8 @@
   }
 
   function updateZombieVisual(enemy) {
-    var parts = enemy.group.userData.animParts || {};
+    var parts = enemy.group.userData.animParts;
+    if (!parts) return;
     var intensity = enemy.moveAmount || 0;
     var fast = enemy.type === "fastZombie";
     var runner = enemy.type === "runner";
@@ -9756,47 +14730,45 @@
     enemy.group.position.y = Math.abs(Math.sin(enemy.walkPhase * 2)) * (fast ? 0.06 : runner ? 0.05 : 0.055) * intensity;
     enemy.group.rotation.z = lurch + enemy.hitPulse * 0.04;
     enemy.group.rotation.x = fast ? -0.025 * intensity : 0;
-    animateMesh(parts.leftLeg, { rx: stride * legSwing * intensity, z: -Math.abs(stride) * (fast ? 0.08 : 0.05) * intensity });
-    animateMesh(parts.rightLeg, { rx: counterStride * legSwing * intensity, z: -Math.abs(counterStride) * (fast ? 0.08 : 0.05) * intensity });
-    var leftArmPose = {
-      rx: armReach - spit * 0.58 + counterStride * armSwing * intensity,
-      rz: (fast ? -0.18 : runner ? -0.16 : -0.12) - spit * 0.22 + stride * (fast ? 0.1 : runner ? 0.16 : 0.12) * intensity,
-      z: spit * 0.12 + (fast ? 0.025 * intensity : 0),
-    };
-    var rightArmPose = {
-      rx: armReach - spit * 0.58 + stride * armSwing * intensity,
-      rz: (fast ? 0.18 : runner ? 0.16 : 0.12) + spit * 0.22 + counterStride * (fast ? 0.1 : runner ? 0.16 : 0.12) * intensity,
-      z: spit * 0.12 + (fast ? 0.025 * intensity : 0),
-    };
-    animateMesh(parts.leftArm, leftArmPose);
-    animateMesh(parts.rightArm, rightArmPose);
-    animateMesh(parts.leftWrist, { rx: leftArmPose.rx + 0.04, rz: leftArmPose.rz * 0.85 - 0.02, z: leftArmPose.z + 0.012 * intensity });
-    animateMesh(parts.rightWrist, { rx: rightArmPose.rx + 0.04, rz: rightArmPose.rz * 0.85 + 0.02, z: rightArmPose.z + 0.012 * intensity });
-    animateMesh(parts.leftClaw, { rx: leftArmPose.rx + 0.08, rz: leftArmPose.rz * 0.75 - 0.04, z: leftArmPose.z + 0.018 * intensity });
-    animateMesh(parts.rightClaw, { rx: rightArmPose.rx + 0.08, rz: rightArmPose.rz * 0.75 + 0.04, z: rightArmPose.z + 0.018 * intensity });
-    animateMesh(parts.torso, { rx: torsoLean, rz: lurch * (fast ? 0.8 : 0.7), z: spit * 0.08 + (fast ? 0.04 * intensity : 0) });
-    animateMesh(parts.chestGash, { rx: torsoLean * 0.35, rz: lurch * 0.8, z: fast ? 0.04 * intensity : 0.1 * intensity });
-    animateMesh(parts.leftShoulder, { rx: torsoLean * 0.65, rz: -0.08 + lurch * 0.7, z: 0.03 * intensity });
-    animateMesh(parts.rightShoulder, { rx: torsoLean * 0.65, rz: 0.08 + lurch * 0.7, z: 0.03 * intensity });
-    animateMesh(parts.neckGore, { rx: torsoLean * 0.45, rz: lurch * 0.65, z: 0.035 * intensity });
-    animateMesh(parts.head, { rx: headLean + Math.sin(enemy.walkPhase * (fast ? 1.9 : 1.4)) * 0.06 * intensity + spit * 0.34, rz: -lurch * (fast ? 1.45 : 1.6), z: spit * 0.18 + (fast ? 0.05 * intensity : 0) });
-    animateMesh(parts.leftEye, { rx: headLean + Math.sin(enemy.walkPhase * (fast ? 1.9 : 1.4)) * 0.06 * intensity + spit * 0.34, rz: -lurch * (fast ? 1.45 : 1.6), z: spit * 0.18 + (fast ? 0.05 * intensity : 0) });
-    animateMesh(parts.rightEye, { rx: headLean + Math.sin(enemy.walkPhase * (fast ? 1.9 : 1.4)) * 0.06 * intensity + spit * 0.34, rz: -lurch * (fast ? 1.45 : 1.6), z: spit * 0.18 + (fast ? 0.05 * intensity : 0) });
-    animateMesh(parts.mouth, { rx: headLean + Math.sin(enemy.walkPhase * (fast ? 1.9 : 1.4)) * 0.06 * intensity + spit * 0.46, rz: -lurch * (fast ? 1.45 : 1.6), z: spit * 0.27 + (fast ? 0.05 * intensity : 0) });
+    animateMeshValues(parts.leftLeg, stride * legSwing * intensity, 0, 0, 0, 0, -Math.abs(stride) * (fast ? 0.08 : 0.05) * intensity);
+    animateMeshValues(parts.rightLeg, counterStride * legSwing * intensity, 0, 0, 0, 0, -Math.abs(counterStride) * (fast ? 0.08 : 0.05) * intensity);
+    var leftArmRx = armReach - spit * 0.58 + counterStride * armSwing * intensity;
+    var leftArmRz = (fast ? -0.18 : runner ? -0.16 : -0.12) - spit * 0.22 + stride * (fast ? 0.1 : runner ? 0.16 : 0.12) * intensity;
+    var rightArmRx = armReach - spit * 0.58 + stride * armSwing * intensity;
+    var rightArmRz = (fast ? 0.18 : runner ? 0.16 : 0.12) + spit * 0.22 + counterStride * (fast ? 0.1 : runner ? 0.16 : 0.12) * intensity;
+    var armZ = spit * 0.12 + (fast ? 0.025 * intensity : 0);
+    animateMeshValues(parts.leftArm, leftArmRx, 0, leftArmRz, 0, 0, armZ);
+    animateMeshValues(parts.rightArm, rightArmRx, 0, rightArmRz, 0, 0, armZ);
+    animateMeshValues(parts.leftWrist, leftArmRx + 0.04, 0, leftArmRz * 0.85 - 0.02, 0, 0, armZ + 0.012 * intensity);
+    animateMeshValues(parts.rightWrist, rightArmRx + 0.04, 0, rightArmRz * 0.85 + 0.02, 0, 0, armZ + 0.012 * intensity);
+    animateMeshValues(parts.leftClaw, leftArmRx + 0.08, 0, leftArmRz * 0.75 - 0.04, 0, 0, armZ + 0.018 * intensity);
+    animateMeshValues(parts.rightClaw, rightArmRx + 0.08, 0, rightArmRz * 0.75 + 0.04, 0, 0, armZ + 0.018 * intensity);
+    animateMeshValues(parts.torso, torsoLean, 0, lurch * (fast ? 0.8 : 0.7), 0, 0, spit * 0.08 + (fast ? 0.04 * intensity : 0));
+    animateMeshValues(parts.chestGash, torsoLean * 0.35, 0, lurch * 0.8, 0, 0, fast ? 0.04 * intensity : 0.1 * intensity);
+    animateMeshValues(parts.leftShoulder, torsoLean * 0.65, 0, -0.08 + lurch * 0.7, 0, 0, 0.03 * intensity);
+    animateMeshValues(parts.rightShoulder, torsoLean * 0.65, 0, 0.08 + lurch * 0.7, 0, 0, 0.03 * intensity);
+    animateMeshValues(parts.neckGore, torsoLean * 0.45, 0, lurch * 0.65, 0, 0, 0.035 * intensity);
+    var headWalkLean = headLean + Math.sin(enemy.walkPhase * (fast ? 1.9 : 1.4)) * 0.06 * intensity;
+    var headRz = -lurch * (fast ? 1.45 : 1.6);
+    var headZ = fast ? 0.05 * intensity : 0;
+    animateMeshValues(parts.head, headWalkLean + spit * 0.34, 0, headRz, 0, 0, spit * 0.18 + headZ);
+    animateMeshValues(parts.leftEye, headWalkLean + spit * 0.34, 0, headRz, 0, 0, spit * 0.18 + headZ);
+    animateMeshValues(parts.rightEye, headWalkLean + spit * 0.34, 0, headRz, 0, 0, spit * 0.18 + headZ);
+    animateMeshValues(parts.mouth, headWalkLean + spit * 0.46, 0, headRz, 0, 0, spit * 0.27 + headZ);
     if (fast) {
       var parasitePulse = 1 + Math.sin(enemy.walkPhase * 2.2) * 0.045 * intensity + enemy.hitPulse * 0.12;
       var parasiteLean = 0.08 + Math.sin(enemy.walkPhase * 1.1) * 0.02 * intensity;
       var parasiteZ = 0.025 * intensity;
-      animateMesh(parts.parasiteShell, { rx: parasiteLean, rz: -lurch * 0.8, z: parasiteZ });
-      animateMesh(parts.parasiteShellRidge, { rx: parasiteLean + 0.03, rz: -lurch * 0.85, z: parasiteZ });
-      animateMesh(parts.parasiteLeftPlate, { rx: parasiteLean * 0.8, rz: -0.08 - lurch * 0.7, z: parasiteZ * 0.8 });
-      animateMesh(parts.parasiteRightPlate, { rx: parasiteLean * 0.8, rz: 0.08 - lurch * 0.7, z: parasiteZ * 0.8 });
-      animateMesh(parts.parasiteBody, { rx: parasiteLean + 0.05, rz: -lurch * 0.75, z: parasiteZ });
-      animateMesh(parts.parasiteLeftForeLeg, { rz: -0.18 + counterStride * 0.05 * intensity, z: parasiteZ * 0.5 });
-      animateMesh(parts.parasiteRightForeLeg, { rz: 0.18 + stride * 0.05 * intensity, z: parasiteZ * 0.5 });
-      animateMesh(parts.parasiteLeftLeg, { rz: -0.12 + stride * 0.04 * intensity, z: parasiteZ * 0.35 });
-      animateMesh(parts.parasiteRightLeg, { rz: 0.12 + counterStride * 0.04 * intensity, z: parasiteZ * 0.35 });
-      animateMesh(parts.parasiteBackLeg, { rz: Math.sin(enemy.walkPhase) * 0.04 * intensity });
+      animateMeshValues(parts.parasiteShell, parasiteLean, 0, -lurch * 0.8, 0, 0, parasiteZ);
+      animateMeshValues(parts.parasiteShellRidge, parasiteLean + 0.03, 0, -lurch * 0.85, 0, 0, parasiteZ);
+      animateMeshValues(parts.parasiteLeftPlate, parasiteLean * 0.8, 0, -0.08 - lurch * 0.7, 0, 0, parasiteZ * 0.8);
+      animateMeshValues(parts.parasiteRightPlate, parasiteLean * 0.8, 0, 0.08 - lurch * 0.7, 0, 0, parasiteZ * 0.8);
+      animateMeshValues(parts.parasiteBody, parasiteLean + 0.05, 0, -lurch * 0.75, 0, 0, parasiteZ);
+      animateMeshValues(parts.parasiteLeftForeLeg, 0, 0, -0.18 + counterStride * 0.05 * intensity, 0, 0, parasiteZ * 0.5);
+      animateMeshValues(parts.parasiteRightForeLeg, 0, 0, 0.18 + stride * 0.05 * intensity, 0, 0, parasiteZ * 0.5);
+      animateMeshValues(parts.parasiteLeftLeg, 0, 0, -0.12 + stride * 0.04 * intensity, 0, 0, parasiteZ * 0.35);
+      animateMeshValues(parts.parasiteRightLeg, 0, 0, 0.12 + counterStride * 0.04 * intensity, 0, 0, parasiteZ * 0.35);
+      animateMeshValues(parts.parasiteBackLeg, 0, 0, stride * 0.04 * intensity, 0, 0, 0);
       scaleFromBase(parts.parasiteShell, parasitePulse, 1 + (parasitePulse - 1) * 0.5, parasitePulse);
       scaleFromBase(parts.parasiteShellRidge, 1, parasitePulse, 1);
       scaleFromBase(parts.parasiteLeftPlate, 1 + (parasitePulse - 1) * 0.5, 1, parasitePulse);
@@ -9825,10 +14797,53 @@
     if (p.hp <= 0) endGame();
   }
 
+  function isShrapnelTrailPointVisible(x, z, visibleGround) {
+    if (!visibleGround) return true;
+    return !pointOutsideVisibleGround(x, z, SHRAPNEL_TRAIL_VIEW_PAD, visibleGround);
+  }
+
+  function getLauncherShrapnelTrailX(b, dt) {
+    return b.x + b.dirX * b.speed * dt - b.dirX * 0.2;
+  }
+
+  function getLauncherShrapnelTrailZ(b, dt) {
+    return b.z + b.dirZ * b.speed * dt - b.dirZ * 0.2;
+  }
+
+  function countLauncherShrapnelTrailParticles(dt, startIndex, visibleGround) {
+    var start = Math.max(0, Math.floor(Number(startIndex) || 0));
+    var count = 0;
+    for (var i = state.bullets.length - 1; i >= start; i--) {
+      var bullet = state.bullets[i];
+      if (!bullet || bullet.type !== "launcherShrapnel" || bullet.trailTimer - dt > 0) continue;
+      if (!isShrapnelTrailPointVisible(getLauncherShrapnelTrailX(bullet, dt), getLauncherShrapnelTrailZ(bullet, dt), visibleGround)) continue;
+      count += 1;
+    }
+    return count;
+  }
+
+  function prepareLauncherShrapnelTrailBudget(count) {
+    var requested = Math.max(0, Math.floor(Number(count) || 0));
+    if (requested <= 0) return null;
+    var visibleBudget = Math.min(requested, MAX_PARTICLES);
+    reserveParticleSlots(visibleBudget);
+    visibleBudget = Math.min(requested, Math.max(0, MAX_PARTICLES - state.particles.length));
+    launcherShrapnelTrailBudgetScratch.skip = requested - visibleBudget;
+    launcherShrapnelTrailBudgetScratch.spawn = visibleBudget;
+    return launcherShrapnelTrailBudgetScratch;
+  }
+
   function updateBullets(dt) {
     if (state.bullets.length && state.enemies.length) ensureZombieSpatialGridCurrent();
+    var shrapnelTrailVisibleGround = state.bullets.length ? getCurrentVisibleGroundRect() : null;
+    var shrapnelTrailParticles = countLauncherShrapnelTrailParticles(dt, 0, shrapnelTrailVisibleGround);
+    var shrapnelTrailBudget = prepareLauncherShrapnelTrailBudget(shrapnelTrailParticles);
     for (var i = state.bullets.length - 1; i >= 0; i--) {
       var b = state.bullets[i];
+      if (b.type === "launcherShrapnel") {
+        updateLauncherShrapnelBullet(b, i, dt, shrapnelTrailBudget, shrapnelTrailVisibleGround);
+        continue;
+      }
       b.age += dt;
       if (b.targetX == null && b.targetZ == null) applyBulletHoming(b, dt);
       if (b.targetX != null && b.targetZ != null) {
@@ -9856,6 +14871,7 @@
         b.y = 0.68 + Math.sin(progress * Math.PI) * 1.15;
         b.mesh.rotation.x += dt * 7.5;
         b.mesh.rotation.z += dt * 5.2;
+        updateLauncherGrenadeWhistle(b);
         if (b.rollingFlame) {
           b.fireTrailTimer -= dt;
           if (b.fireTrailTimer <= 0) {
@@ -9889,6 +14905,7 @@
       }
       updateElectricProjectileVisual(b, dt);
       b.mesh.position.set(b.x, b.y, b.z);
+      syncStandardProjectileVisual(b.visual);
       b.trailTimer -= dt;
       if (b.trailTimer <= 0) {
         b.trailTimer = b.type === "launcher" ? 0.045 : b.chainLightning ? 0.022 : 0.035;
@@ -9953,6 +14970,71 @@
         removeBullet(i);
       }
     }
+  }
+
+  function updateLauncherShrapnelBullet(b, index, dt, trailBudget, visibleGround) {
+    b.age += dt;
+    b.life -= dt;
+    b.x += b.dirX * b.speed * dt;
+    b.z += b.dirZ * b.speed * dt;
+    b.mesh.position.set(b.x, b.y, b.z);
+    syncStandardProjectileVisual(b.visual);
+
+    b.trailTimer -= dt;
+    if (b.trailTimer <= 0) {
+      b.trailTimer = 0.035;
+      var trailX = b.x - b.dirX * 0.2;
+      var trailZ = b.z - b.dirZ * 0.2;
+      if (isShrapnelTrailPointVisible(trailX, trailZ, visibleGround)) {
+        if (trailBudget && trailBudget.skip > 0) {
+          trailBudget.skip -= 1;
+        } else {
+          var reservedTrailParticle = !!(trailBudget && trailBudget.spawn > 0);
+          if (trailBudget && trailBudget.spawn > 0) trailBudget.spawn -= 1;
+          spawnParticle(trailX, b.y, trailZ, 0, 0.2, 0, 0.12, 0.05, mats.flash, reservedTrailParticle);
+        }
+      }
+    }
+
+    var hit = findLauncherShrapnelHitTarget(b);
+    if (hit) {
+      if (b.hitEnemies) b.hitEnemies.push(hit);
+      damageEnemy(hit, getBulletDamage(b), b.x, b.z, b);
+      removeBullet(index);
+      return;
+    }
+
+    var obstacleHit = pointHitsObstacle(b.x, b.z, b.hitRadius * 0.7);
+    var expired =
+      b.life <= 0 ||
+      obstacleHit ||
+      b.x < -ARENA_W / 2 - 5 ||
+      b.x > ARENA_W / 2 + 5 ||
+      b.z < -ARENA_D / 2 - 5 ||
+      b.z > ARENA_D / 2 + 5;
+    if (!expired) return;
+    if (obstacleHit) addHitSpark(b.x, b.z);
+    removeBullet(index);
+  }
+
+  function findLauncherShrapnelHitTarget(b) {
+    if (!state.enemies.length) return null;
+    var hit = null;
+    var hitOrder = Infinity;
+    var hitRadius = b.hitRadius || 0.12;
+    forEachEnemyNearCircle(b.x, b.z, hitRadius + 1.1, function (enemy) {
+      if (!enemy || enemy.active === false) return;
+      var radius = enemy.radius + hitRadius;
+      var dx = b.x - enemy.x;
+      var dz = b.z - enemy.z;
+      if (dx * dx + dz * dz >= radius * radius) return;
+      var order = getEnemySpatialOrder(enemy);
+      if (order < hitOrder) {
+        hitOrder = order;
+        hit = enemy;
+      }
+    }, true);
+    return hit;
   }
 
   function updateElectricProjectileVisual(b, dt) {
@@ -10034,8 +15116,11 @@
     var hitOrder = Infinity;
     forEachEnemyNearCircle(b.x, b.z, b.hitRadius + 1.1, function (enemy) {
       if (shouldBulletSkipEnemy(b, enemy)) return;
-      var d = Math.hypot(b.x - enemy.x, b.z - enemy.z);
-      if (d >= enemy.radius + b.hitRadius) return;
+      var radius = enemy.radius + b.hitRadius;
+      var dx = b.x - enemy.x;
+      var dz = b.z - enemy.z;
+      if (dx * dx + dz * dz >= radius * radius) return;
+      if (Math.hypot(dx, dz) >= radius) return;
       var order = getEnemySpatialOrder(enemy);
       if (order < hitOrder) {
         hitOrder = order;
@@ -10069,6 +15154,7 @@
       if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) return;
       var dx = enemy.x - b.x;
       var dz = enemy.z - b.z;
+      if (dx * dx + dz * dz > maxDistance * maxDistance) return;
       var dist = Math.hypot(dx, dz);
       if (dist <= 0.001 || dist > maxDistance) return;
       var dot = (dx / dist) * b.dirX + (dz / dist) * b.dirZ;
@@ -10126,7 +15212,10 @@
     forEachEnemyNearCircle(b.x, b.z, bestDist, function (enemy) {
       if (!enemy || enemy.active === false || enemy === hit) return;
       if (b.hitEnemies && b.hitEnemies.indexOf(enemy) !== -1) return;
-      var dist = Math.hypot(enemy.x - b.x, enemy.z - b.z);
+      var dx = enemy.x - b.x;
+      var dz = enemy.z - b.z;
+      if (dx * dx + dz * dz >= bestDist * bestDist) return;
+      var dist = Math.hypot(dx, dz);
       if (dist < bestDist) {
         best = enemy;
         bestDist = dist;
@@ -10183,7 +15272,10 @@
     forEachEnemyNearCircle(x, z, bestDist, function (enemy) {
       if (!enemy || enemy.active === false) return;
       if (existingTargets.indexOf(enemy) !== -1) return;
-      var dist = Math.hypot(enemy.x - x, enemy.z - z);
+      var dx = enemy.x - x;
+      var dz = enemy.z - z;
+      if (dx * dx + dz * dz >= bestDist * bestDist) return;
+      var dist = Math.hypot(dx, dz);
       if (dist < bestDist) {
         best = enemy;
         bestDist = dist;
@@ -10195,6 +15287,7 @@
   function addLightningBolt(x1, z1, x2, z2) {
     var group = new THREE.Group();
     group.name = "chain lightning";
+    group.userData.fadeParts = [];
     effectRoot.add(group);
     var points = [];
     var segments = 7;
@@ -10254,6 +15347,7 @@
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     group.add(mesh);
+    group.userData.fadeParts.push(mesh);
 
     var glow = new THREE.Mesh(getSharedGeometry("lightning-ground-glow", function () {
       return new THREE.BoxGeometry(1, 1, 1);
@@ -10269,6 +15363,7 @@
     glow.receiveShadow = false;
     glow.renderOrder = 2;
     group.add(glow);
+    group.userData.fadeParts.push(glow);
   }
 
   function updateRifleTimers(dt) {
@@ -10372,12 +15467,15 @@
 
   function updateRifleTraps(dt) {
     if (state.rifleTraps.length && state.enemies.length) ensureZombieSpatialGridCurrent();
+    var visibleGround = state.rifleTraps.length ? getCurrentVisibleGroundRect(trapVisibleGroundScratch) : null;
     for (var i = state.rifleTraps.length - 1; i >= 0; i--) {
       var trap = state.rifleTraps[i];
       trap.age += dt;
       if (!trap.permanent) trap.life -= dt;
       trap.armTime = Math.max(0, trap.armTime - dt);
-      updateRifleTrapVisual(trap);
+      var visualVisible = !pointOutsideVisibleGround(trap.x, trap.z, trap.triggerRadius + TRAP_VISUAL_CULL_PAD, visibleGround);
+      if (trap.mesh) trap.mesh.visible = visualVisible;
+      if (dt > 0 && visualVisible) updateRifleTrapVisual(trap);
       if (trap.lure && dt > 0) lureEnemiesToTrap(trap, dt);
       if (trap.armTime <= 0 && findEnemyNearTrap(trap)) {
         triggerRifleTrap(i);
@@ -10444,7 +15542,11 @@
     var found = null;
     forEachEnemyNearCircle(trap.x, trap.z, trap.triggerRadius + 1, function (enemy) {
       if (found || !enemy || enemy.active === false) return;
-      if (Math.hypot(enemy.x - trap.x, enemy.z - trap.z) <= trap.triggerRadius + enemy.radius) found = enemy;
+      var dx = enemy.x - trap.x;
+      var dz = enemy.z - trap.z;
+      var radius = trap.triggerRadius + enemy.radius;
+      if (dx * dx + dz * dz > radius * radius) return;
+      if (Math.hypot(dx, dz) <= radius) found = enemy;
     }, true);
     return found;
   }
@@ -10457,8 +15559,12 @@
     addLightFlash(trap.x, 0.9, trap.z, trap.lure ? 0xffd36b : 0xffb35f, 3.2, 7, 0.2);
     forEachEnemyNearCircle(trap.x, trap.z, trap.blastRadius + 1.2, function (enemy) {
       if (!enemy || enemy.active === false) return;
-      var dist = Math.hypot(enemy.x - trap.x, enemy.z - trap.z);
-      if (dist > trap.blastRadius + enemy.radius * 0.35) return;
+      var dx = enemy.x - trap.x;
+      var dz = enemy.z - trap.z;
+      var hitRadius = trap.blastRadius + enemy.radius * 0.35;
+      if (dx * dx + dz * dz > hitRadius * hitRadius) return;
+      var dist = Math.hypot(dx, dz);
+      if (dist > hitRadius) return;
       var ratio = 1 - clamp(dist / trap.blastRadius, 0, 1);
       damageEnemy(enemy, Math.max(1, Math.ceil(trap.damage * (0.65 + ratio * 0.55))), trap.x, trap.z, { type: "rifleTrap", trap: trap });
     }, true);
@@ -10477,7 +15583,10 @@
     addLightFlash(b.x, 1.1, b.z, 0xffb347, 2.8, 6, 0.18);
     forEachEnemyNearCircle(b.x, b.z, radius + 1.1, function (enemy) {
       if (!enemy || enemy.active === false) return;
-      var dist = Math.hypot(enemy.x - b.x, enemy.z - b.z);
+      var dx = enemy.x - b.x;
+      var dz = enemy.z - b.z;
+      if (dx * dx + dz * dz > radius * radius) return;
+      var dist = Math.hypot(dx, dz);
       if (dist > radius) return;
       damageEnemy(enemy, Math.max(1, Math.ceil(2.4 * (1 - dist / radius))), b.x, b.z, b);
     }, true);
@@ -10488,10 +15597,15 @@
     enemy.hp -= damage;
     if (source && source.executioner && enemy.hp > 0 && enemy.hp <= enemy.maxHp * 0.28) enemy.hp = 0;
     enemy.hitPulse = 1;
-    playZombieHitSound(x, z, damage, source);
-    addHitSpark(x, z);
+    if (!(source && source.aggregateHitSound && source.aggregateHitSoundPlayed)) {
+      playZombieHitSound(x, z, damage, source);
+      if (source && source.aggregateHitSound) source.aggregateHitSoundPlayed = true;
+    }
+    var preReservedHitParticles = !!(source && source.preReservedHitParticles);
+    addHitSpark(x, z, preReservedHitParticles);
+    if (!preReservedHitParticles) reserveParticleSlots(6);
     for (var i = 0; i < 6; i++) {
-      spawnParticle(x, 1.05, z, rand(-2.5, 2.5), rand(0.8, 3.6), rand(-2.5, 2.5), 0.28, rand(0.08, 0.18), mats.zombieBlood);
+      spawnParticle(x, 1.05, z, rand(-2.5, 2.5), rand(0.8, 3.6), rand(-2.5, 2.5), 0.28, rand(0.08, 0.18), mats.zombieBlood, true);
     }
     state.shake = Math.min(1, state.shake + 0.1);
     if (enemy.hp <= 0) killEnemy(enemy, source);
@@ -10499,6 +15613,15 @@
 
   function killEnemy(enemy, source) {
     if (!enemy || enemy.active === false) return;
+    var marshalKillSnapshot = {
+      x: enemy.x,
+      z: enemy.z,
+      xp: enemy.xp || 1,
+      type: enemy.type,
+      maxHp: enemy.maxHp || 1,
+      marked: isMarshalEnemyMarked(enemy),
+      bounty: !!enemy.marshalBounty,
+    };
     if (source && source.killedEnemies) {
       source.killedEnemies.push({
         x: enemy.x,
@@ -10507,35 +15630,129 @@
         type: enemy.type,
       });
     }
-    var idx = state.enemies.indexOf(enemy);
-    if (idx !== -1) state.enemies.splice(idx, 1);
+    if (!(source && source.deferEnemyRemoval)) {
+      var idx = state.enemies.indexOf(enemy);
+      if (idx !== -1) state.enemies.splice(idx, 1);
+    }
     zombieSpatialDirty = true;
-    createDeathDebris(enemy);
+    var preReservedKillParticles = !!(source && source.preReservedKillParticles);
+    createDeathDebris(enemy, source && source.preReservedDeathDebris);
     releaseZombieToPool(enemy);
     state.score += enemy.score;
     state.kills += 1;
-    spawnXpOrb(enemy.x, enemy.z, enemy.xp || 1);
-    addScorchMark(enemy.x, enemy.z, 0.9);
-    addGoldBurst(enemy.x, enemy.z, enemy.score);
+    spawnXpOrb(enemy.x, enemy.z, enemy.xp || 1, source && source.preReservedXpOrbs);
+    addScorchMark(enemy.x, enemy.z, 0.9, source && source.preReservedScorchDecals);
+    addGoldBurst(enemy.x, enemy.z, enemy.score, preReservedKillParticles);
+    if (!preReservedKillParticles) reserveParticleSlots(18);
     for (var i = 0; i < 18; i++) {
-      spawnParticle(enemy.x, rand(0.7, 2.1), enemy.z, rand(-4, 4), rand(1.4, 5.2), rand(-4, 4), rand(0.35, 0.7), rand(0.08, 0.22), i % 3 === 0 ? mats.zombieSkin : mats.zombieBlood);
+      spawnParticle(enemy.x, rand(0.7, 2.1), enemy.z, rand(-4, 4), rand(1.4, 5.2), rand(-4, 4), rand(0.35, 0.7), rand(0.08, 0.22), i % 3 === 0 ? mats.zombieSkin : mats.zombieBlood, true);
     }
     handleRevolverKillEffects(enemy, source);
     handleRifleKillEffects(enemy, source);
     handleLauncherKillEffects(enemy, source);
+    handleMarshalKillEffects(marshalKillSnapshot, source);
+  }
+
+  function handleMarshalKillEffects(enemy, source) {
+    if (!enemy || !source || source.type !== "coachGun" || state.playerClass !== "marshal") return;
+    if (source.pointBlank) {
+      if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("shellCatcher")) {
+        state.marshalShellCatcherKills += 1;
+        if (state.marshalShellCatcherKills >= 3) {
+          state.marshalShellCatcherKills = 0;
+          grantMarshalGeneratedShells(1);
+        }
+      }
+      if (state.marshalUpgrade === "breachMarshal" && hasUpgrade("noTimeToBleed")) {
+        state.marshalCloseKills += 1;
+        if (state.marshalCloseKills >= 6) {
+          state.marshalCloseKills = 0;
+          if (state.player) state.player.hp = Math.min(state.player.maxHp, state.player.hp + 4);
+        }
+      }
+    }
+
+    var markedKill = !!(enemy.marked || source.targetWasMarked);
+    var bountyKill = !!(enemy.bounty || source.targetWasBounty);
+    if (state.marshalUpgrade !== "graveWarden" || !markedKill) return;
+
+    if (hasUpgrade("graveTithe")) {
+      state.marshalGraveTitheKills += 1;
+      if (state.marshalGraveTitheKills >= 2) {
+        state.marshalGraveTitheKills = 0;
+        grantMarshalGeneratedShells(1);
+      }
+    }
+    if (hasUpgrade("lastRites")) tryRaisePaleDeputy(enemy.x, enemy.z);
+    if (hasUpgrade("passingJudgment")) passMarshalJudgment(enemy.x, enemy.z);
+    if (hasUpgrade("hallowedGround") && (enemy.type === "brute" || enemy.type === "spitter" || enemy.maxHp >= 4)) {
+      spawnMarshalHallowedGround(enemy.x, enemy.z);
+    }
+    if (bountyKill && hasUpgrade("heavensBounty")) {
+      state.marshalBountiesClaimed += 1;
+      state.marshalBountyEnemy = null;
+      state.marshalBountyTimer = 12;
+      state.ammoReserve.coachGun = Math.max(0, state.ammoReserve.coachGun || 0) + 2;
+      spawnXpOrb(enemy.x + 0.2, enemy.z - 0.2, Math.max(1, Math.round(enemy.xp * 0.5)));
+    }
+  }
+
+  function triggerMarshalFearBurst(x, z) {
+    var radius = 5.2;
+    state.marshalFearBursts += 1;
+    addShockwave(x, z, radius, 0.4, 0xffefbd);
+    forEachEnemyNearCircle(x, z, radius + 1.2, function (enemy) {
+      if (!enemy || enemy.active === false) return;
+      var dx = enemy.x - x;
+      var dz = enemy.z - z;
+      if (dx * dx + dz * dz > radius * radius) return;
+      enemy.marshalFearTimer = Math.max(enemy.marshalFearTimer || 0, 1);
+      enemy.marshalFearX = x;
+      enemy.marshalFearZ = z;
+      enemy.navGoal = null;
+    }, true);
+  }
+
+  function passMarshalJudgment(x, z) {
+    var candidates = [];
+    forEachEnemyNearCircle(x, z, 8.5, function (enemy) {
+      if (!enemy || enemy.active === false || isMarshalEnemyMarked(enemy)) return;
+      candidates.push({ enemy: enemy, distance: Math.hypot(enemy.x - x, enemy.z - z) });
+    }, true);
+    candidates.sort(function (a, b) {
+      return a.distance - b.distance;
+    });
+    var count = Math.min(2, candidates.length);
+    for (var i = 0; i < count; i++) {
+      applyMarshalMark(candidates[i].enemy, 3);
+      state.marshalMarksPassed += 1;
+    }
+  }
+
+  function compactEnemiesAfterDeferredRemoval() {
+    var write = 0;
+    var changed = false;
+    for (var read = 0; read < state.enemies.length; read++) {
+      var enemy = state.enemies[read];
+      if (enemy && enemy.active !== false) {
+        if (write !== read) {
+          state.enemies[write] = enemy;
+          changed = true;
+        }
+        write += 1;
+      } else {
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    state.enemies.length = write;
+    zombieSpatialDirty = true;
   }
 
   function handleRevolverKillEffects(enemy, source) {
     if (state.revolverUpgrade === "dualRevolvers") {
       if (hasUpgrade("fanTheHammer")) state.fanTheHammerTimer = Math.max(state.fanTheHammerTimer, 1.8);
-      if (hasUpgrade("killReload")) {
-        state.dualKillReloadCounter += 1;
-        if (state.dualKillReloadCounter >= 3) {
-          state.dualKillReloadCounter = 0;
-          state.ammo.revolver = Math.min(getWeaponMagazine(WEAPONS.revolver), (state.ammo.revolver || 0) + 3);
-          if (state.ammo.revolver > 0) state.reloadTimers.revolver = 0;
-        }
-      }
+      handleAllRightAllLeftKill(source);
     }
     handleSilverCacheKill(enemy, source);
     if (source && source.leadBloom && source.type === "revolver") spawnLeadBloom(enemy.x, enemy.z, source);
@@ -10598,8 +15815,12 @@
     });
     forEachEnemyNearCircle(x, z, 2.25 + 1.2, function (enemy) {
       if (!enemy || enemy.active === false) return;
-      var dist = Math.hypot(enemy.x - x, enemy.z - z);
-      if (dist > 2.25 + enemy.radius * 0.25) return;
+      var dx = enemy.x - x;
+      var dz = enemy.z - z;
+      var hitRadius = 2.25 + enemy.radius * 0.25;
+      if (dx * dx + dz * dz > hitRadius * hitRadius) return;
+      var dist = Math.hypot(dx, dz);
+      if (dist > hitRadius) return;
       damageEnemy(enemy, Math.max(1, Math.ceil(2.2 * (1 - clamp(dist / 2.25, 0, 1)) + 0.4)), x, z, { type: "launcherBackdraft" });
     }, true);
   }
@@ -10614,6 +15835,16 @@
     state.ammo[id] = current + restored;
     if (state.ammo[id] > 0) state.reloadTimers[id] = 0;
     return restored;
+  }
+
+  function grantMarshalGeneratedShells(amount) {
+    var requested = Math.max(0, Math.round(Number(amount) || 0));
+    if (!requested) return 0;
+    var loaded = restoreWeaponAmmo("coachGun", requested);
+    var overflow = requested - loaded;
+    if (overflow > 0) state.ammoReserve.coachGun = Math.max(0, state.ammoReserve.coachGun || 0) + overflow;
+    state.marshalGeneratedShells = (state.marshalGeneratedShells || 0) + requested;
+    return requested;
   }
 
   function spawnLeadBloom(x, z, source) {
@@ -10677,6 +15908,7 @@
   function removeBullet(index) {
     var b = state.bullets[index];
     if (!b) return;
+    if (b.launcherWhistle) stopLauncherGrenadeWhistle(b.launcherWhistle, 0.045);
     if (b.visual) {
       releaseProjectileVisual(b.visual);
     } else {
@@ -10701,9 +15933,8 @@
         p.vx *= 0.65;
         p.vz *= 0.65;
       }
-      p.mesh.position.set(p.x, p.y, p.z);
       var fade = clamp(p.life / p.startLife, 0, 1);
-      p.mesh.scale.setScalar(Math.max(0.05, fade) * p.startScale);
+      writeParticleVisualMatrix(p.visual, p.x, p.y, p.z, Math.max(0.05, fade) * p.startScale);
       if (p.life <= 0) {
         removeParticle(i);
       }
@@ -10711,6 +15942,7 @@
   }
 
   function updateVisualEffects(dt) {
+    var visibleGround = state.lightFlashes.length ? getCurrentVisibleGroundRect(lightVisibleGroundScratch) : null;
     for (var i = state.shockwaves.length - 1; i >= 0; i--) {
       var wave = state.shockwaves[i];
       wave.life -= dt;
@@ -10726,12 +15958,14 @@
       var bolt = state.lightningBolts[lb];
       bolt.life -= dt;
       var boltFade = clamp(bolt.life / bolt.startLife, 0, 1);
-      bolt.mesh.traverse(function (child) {
+      var fadeParts = bolt.mesh.userData.fadeParts || [];
+      for (var partIndex = 0; partIndex < fadeParts.length; partIndex++) {
+        var child = fadeParts[partIndex];
         if (child.material && child.material.opacity != null) {
           var startOpacity = child.userData && child.userData.startOpacity != null ? child.userData.startOpacity : 0.92;
           child.material.opacity = startOpacity * boltFade;
         }
-      });
+      }
       if (bolt.life <= 0) {
         removeLightningBolt(lb);
       }
@@ -10751,6 +15985,12 @@
       var flash = state.lightFlashes[l];
       flash.life -= dt;
       flash.light.intensity = flash.startIntensity * clamp(flash.life / flash.startLife, 0, 1);
+      flash.light.visible = !pointOutsideVisibleGround(
+        flash.light.position.x,
+        flash.light.position.z,
+        (flash.light.distance || 0) + LIGHT_VISUAL_CULL_PAD,
+        visibleGround
+      );
       if (flash.life <= 0) {
         removeLightFlash(l);
       }
@@ -10813,12 +16053,17 @@
   function removeParticle(index) {
     var particle = state.particles[index];
     if (!particle) return;
+    releaseParticleEntry(particle);
+    state.particles.splice(index, 1);
+  }
+
+  function releaseParticleEntry(particle) {
+    if (!particle) return;
     if (particle.visual) {
       releaseParticleVisual(particle.visual);
     } else {
       removeObject3D(particle.mesh);
     }
-    state.particles.splice(index, 1);
   }
 
   function removeShockwave(index) {
@@ -10845,15 +16090,29 @@
   function removeDecal(index) {
     var decal = state.decals[index];
     if (!decal) return;
-    removeObject3D(decal.mesh);
+    releaseDecalEntry(decal);
     state.decals.splice(index, 1);
+  }
+
+  function releaseDecalEntry(decal) {
+    if (!decal) return;
+    if (decal.visual) {
+      releaseScorchDecalVisual(decal.visual);
+    } else {
+      removeObject3D(decal.mesh);
+    }
   }
 
   function removeSmokePuff(index) {
     var puff = state.smokePuffs[index];
     if (!puff) return;
-    releaseSmokePuffVisual(puff.visual);
+    releaseSmokePuffEntry(puff);
     state.smokePuffs.splice(index, 1);
+  }
+
+  function releaseSmokePuffEntry(puff) {
+    if (!puff) return;
+    releaseSmokePuffVisual(puff.visual);
   }
 
   function removeLightFlash(index) {
@@ -10866,27 +16125,98 @@
   function removeDebris(index) {
     var piece = state.debris[index];
     if (!piece) return;
-    removeObject3D(piece.mesh);
+    releaseDebrisEntry(piece);
     state.debris.splice(index, 1);
+  }
+
+  function releaseDebrisEntry(piece) {
+    if (!piece) return;
+    if (piece.visual) {
+      releaseDeathDebrisVisual(piece.visual);
+    } else {
+      removeObject3D(piece.mesh);
+    }
   }
 
   function removeXpOrb(index) {
     var orb = state.xpOrbs[index];
     if (!orb) return;
-    removeObject3D(orb.mesh);
+    releaseXpOrbEntry(orb);
     state.xpOrbs.splice(index, 1);
+  }
+
+  function releaseXpOrbEntry(orb) {
+    if (!orb) return;
+    if (orb.visual) {
+      releaseXpOrbVisual(orb.visual);
+    } else {
+      removeObject3D(orb.mesh);
+    }
   }
 
   function trimEffects(array, maxCount, remover) {
     while (array.length > maxCount) remover(0);
   }
 
+  function reserveEffectSlots(array, maxCount, releaser, count) {
+    if (gameplayWarmupMode) return;
+    var requested = Math.max(0, Math.floor(Number(count) || 0));
+    if (requested <= 0) return;
+    var overflow = array.length + requested - maxCount;
+    if (overflow <= 0 || !array.length) return;
+    var removeCount = Math.min(overflow, array.length);
+    for (var i = 0; i < removeCount; i++) {
+      releaser(array[i]);
+    }
+    array.splice(0, removeCount);
+  }
+
+  function reserveParticleSlots(count) {
+    reserveEffectSlots(state.particles, MAX_PARTICLES, releaseParticleEntry, count);
+  }
+
   function reserveParticleSlot() {
     if (state.particles.length >= MAX_PARTICLES) removeParticle(0);
   }
 
+  function reserveShockwaveSlot() {
+    if (state.shockwaves.length >= MAX_SHOCKWAVES) removeShockwave(0);
+  }
+
+  function reserveSmokePuffSlot() {
+    if (state.smokePuffs.length >= MAX_SMOKE_PUFFS) removeSmokePuff(0);
+  }
+
+  function reserveSmokePuffSlots(count) {
+    reserveEffectSlots(state.smokePuffs, MAX_SMOKE_PUFFS, releaseSmokePuffEntry, count);
+  }
+
   function reserveLightFlashSlot() {
     if (state.lightFlashes.length >= MAX_LIGHT_FLASHES) removeLightFlash(0);
+  }
+
+  function reserveDecalSlot() {
+    if (state.decals.length >= MAX_DECALS) removeDecal(0);
+  }
+
+  function reserveDebrisSlot() {
+    if (state.debris.length >= MAX_DEBRIS) removeDebris(0);
+  }
+
+  function reserveDebrisSlots(count) {
+    reserveEffectSlots(state.debris, MAX_DEBRIS, releaseDebrisEntry, count);
+  }
+
+  function reserveXpOrbSlot() {
+    if (state.xpOrbs.length >= MAX_XP_ORBS) removeXpOrb(0);
+  }
+
+  function reserveXpOrbSlots(count) {
+    reserveEffectSlots(state.xpOrbs, MAX_XP_ORBS, releaseXpOrbEntry, count);
+  }
+
+  function reserveDecalSlots(count) {
+    reserveEffectSlots(state.decals, MAX_DECALS, releaseDecalEntry, count);
   }
 
   function updateWaveProgress(dt) {
@@ -10943,16 +16273,21 @@
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     setPanel(levelUpPanel, false);
     gameOverStats.textContent = "Wave " + state.wave + " - Level " + state.level + " - Score " + state.score + " - Zombies " + state.kills;
     updateHud();
   }
 
-  function spawnParticle(x, y, z, vx, vy, vz, life, size, mat) {
-    reserveParticleSlot();
+  function spawnParticle(x, y, z, vx, vy, vz, life, size, mat, reserved) {
+    if (gameplayWarmupMode) {
+      var warmupVisual = acquireParticleVisual("box", x, y, z, size, mat);
+      releaseParticleVisual(warmupVisual);
+      return;
+    }
+    if (!reserved || state.particles.length >= MAX_PARTICLES) reserveParticleSlot();
     var visual = acquireParticleVisual("box", x, y, z, size, mat);
-    var mesh = visual.mesh;
-    state.particles.push({
+    var particle = {
       x: x,
       y: y,
       z: z,
@@ -10963,16 +16298,21 @@
       startLife: life,
       startScale: size,
       visual: visual,
-      mesh: mesh,
-    });
-    trimEffects(state.particles, MAX_PARTICLES, removeParticle);
+      mesh: visual.batch ? visual.batch.mesh : null,
+    };
+    visual.particle = particle;
+    state.particles.push(particle);
   }
 
-  function spawnSlimeParticle(x, y, z, vx, vy, vz, life, size, mat) {
-    reserveParticleSlot();
+  function spawnSlimeParticle(x, y, z, vx, vy, vz, life, size, mat, reserved) {
+    if (gameplayWarmupMode) {
+      var warmupVisual = acquireParticleVisual("sphere", x, y, z, size, mat);
+      releaseParticleVisual(warmupVisual);
+      return;
+    }
+    if (!reserved || state.particles.length >= MAX_PARTICLES) reserveParticleSlot();
     var visual = acquireParticleVisual("sphere", x, y, z, size, mat);
-    var mesh = visual.mesh;
-    state.particles.push({
+    var particle = {
       x: x,
       y: y,
       z: z,
@@ -10983,37 +16323,23 @@
       startLife: life,
       startScale: size,
       visual: visual,
-      mesh: mesh,
-    });
-    trimEffects(state.particles, MAX_PARTICLES, removeParticle);
+      mesh: visual.batch ? visual.batch.mesh : null,
+    };
+    visual.particle = particle;
+    state.particles.push(particle);
   }
 
-  function spawnXpOrb(x, z, value) {
+  function spawnXpOrb(x, z, value, reserved) {
     var amount = Math.max(1, Math.round(Number(value) || 1));
     var coreScale = amount >= 12 ? 0.31 : 0.24;
     var glintScale = amount >= 12 ? 0.14 : 0.105;
-    var group = new THREE.Group();
-    group.position.set(x + rand(-0.2, 0.2), 0.5, z + rand(-0.2, 0.2));
-    effectRoot.add(group);
-    var core = new THREE.Mesh(getSharedGeometry("xp-orb-core", function () {
-      return new THREE.OctahedronGeometry(1, 0);
-    }), mats.xp);
-    core.userData.disposeGeometry = false;
-    core.scale.setScalar(coreScale);
-    core.castShadow = false;
-    core.receiveShadow = false;
-    rememberBase(core);
-    group.add(core);
-    var glint = new THREE.Mesh(getSharedGeometry("xp-orb-glint", function () {
-      return new THREE.OctahedronGeometry(1, 0);
-    }), mats.xpLight);
-    glint.userData.disposeGeometry = false;
-    glint.scale.setScalar(glintScale);
-    glint.position.set(0.08, 0.11, 0.07);
-    glint.castShadow = false;
-    glint.receiveShadow = false;
-    rememberBase(glint);
-    group.add(glint);
+    if (gameplayWarmupMode) {
+      warmupXpOrbVisual(x, z, coreScale, glintScale);
+      return;
+    }
+    if (!reserved || state.xpOrbs.length >= MAX_XP_ORBS) reserveXpOrbSlot();
+    var visual = acquireXpOrbVisual(x, z, coreScale, glintScale);
+    var group = visual.group;
     state.xpOrbs.push({
       x: group.position.x,
       y: group.position.y,
@@ -11023,12 +16349,12 @@
       value: amount,
       age: 0,
       phase: rand(0, Math.PI * 2),
+      visual: visual,
       mesh: group,
-      core: core,
-      glint: glint,
+      core: visual.core,
+      glint: visual.glint,
       visualScale: coreScale,
     });
-    trimEffects(state.xpOrbs, MAX_XP_ORBS, removeXpOrb);
   }
 
   function updateXpOrbs(dt) {
@@ -11112,7 +16438,14 @@
   }
 
   function maybeOfferNextLevelReward() {
-    return maybeOfferClassChoice() || maybeOfferRevolverUpgradeChoice() || maybeOfferRifleUpgradeChoice() || maybeOfferLauncherUpgradeChoice() || maybeOfferStandardUpgradeChoice();
+    return (
+      maybeOfferClassChoice() ||
+      maybeOfferRevolverUpgradeChoice() ||
+      maybeOfferRifleUpgradeChoice() ||
+      maybeOfferLauncherUpgradeChoice() ||
+      maybeOfferMarshalUpgradeChoice() ||
+      maybeOfferStandardUpgradeChoice()
+    );
   }
 
   function queueStandardUpgradeLevel(level) {
@@ -11134,6 +16467,7 @@
     if (level === REVOLVER_UPGRADE_LEVEL && (state.playerClass === "gunslinger" || !state.playerClass)) return false;
     if (level === RIFLE_UPGRADE_LEVEL && (state.playerClass === "ranger" || !state.playerClass)) return false;
     if (level === LAUNCHER_UPGRADE_LEVEL && (state.playerClass === "demolitionist" || !state.playerClass)) return false;
+    if (level === MARSHAL_UPGRADE_LEVEL && (state.playerClass === "marshal" || !state.playerClass)) return false;
     return true;
   }
 
@@ -11153,6 +16487,7 @@
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     setPanel(levelUpPanel, false);
     updateModeClass();
     render();
@@ -11175,6 +16510,7 @@
     setPanel(classChoicePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     setPanel(levelUpPanel, false);
     updateModeClass();
     render();
@@ -11198,6 +16534,7 @@
     setPanel(revolverUpgradePanel, false);
     setPanel(levelUpPanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     render();
     return true;
@@ -11219,6 +16556,30 @@
     setPanel(classChoicePanel, false);
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
+    setPanel(levelUpPanel, false);
+    setPanel(marshalUpgradePanel, false);
+    updateModeClass();
+    render();
+    return true;
+  }
+
+  function maybeOfferMarshalUpgradeChoice() {
+    if (state.playerClass !== "marshal" || state.marshalUpgrade || state.marshalUpgradePending || state.marshalUpgradeOffered) return false;
+    if (state.level < MARSHAL_UPGRADE_LEVEL || state.mode !== "playing") return false;
+    state.marshalUpgradePending = true;
+    state.marshalUpgradeOffered = true;
+    state.mode = "marshal-upgrade";
+    pointerDown = false;
+    touchFire.active = false;
+    if (mobileFire) mobileFire.classList.remove("is-pressed");
+    setPanel(marshalUpgradePanel, true);
+    alignClassWeaponIcons(marshalUpgradePanel);
+    setPanel(menu, false);
+    setPanel(gameOverPanel, false);
+    setPanel(classChoicePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
     setPanel(levelUpPanel, false);
     updateModeClass();
     render();
@@ -11243,6 +16604,7 @@
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     render();
     return true;
@@ -11256,6 +16618,8 @@
       choices = choices.concat(rollFromPool(getEligibleRifleSpecialUpgrades(state.standardUpgradeLevel), 2));
     } else if (isLauncherSpecialUpgradeLevel(state.standardUpgradeLevel)) {
       choices = choices.concat(rollFromPool(getEligibleLauncherSpecialUpgrades(state.standardUpgradeLevel), 2));
+    } else if (isMarshalSpecialUpgradeLevel(state.standardUpgradeLevel)) {
+      choices = choices.concat(rollMarshalSpecialUpgradeChoices(state.standardUpgradeLevel));
     }
     return choices.concat(rollFromPool(STANDARD_UPGRADES, 3 - choices.length));
   }
@@ -11285,6 +16649,7 @@
       if (spec.minLevel && level < spec.minLevel) return false;
       if (!spec.repeatable && hasUpgrade(spec.id)) return false;
       if (spec.maxStacks && getUpgradeCount(spec.id) >= spec.maxStacks) return false;
+      if (spec.id === "quickerTrail" && getRifleAutoTrapInterval() <= RIFLE_AUTO_TRAP_MIN_INTERVAL + 0.001) return false;
       if (spec.requires) {
         for (var i = 0; i < spec.requires.length; i++) {
           if (!hasUpgrade(spec.requires[i])) return false;
@@ -11350,6 +16715,82 @@
     });
   }
 
+  function isMarshalSpecialUpgradeLevel(level) {
+    return (
+      state.playerClass === "marshal" &&
+      !!state.marshalUpgrade &&
+      level >= MARSHAL_SPECIAL_START_LEVEL &&
+      (level - MARSHAL_UPGRADE_LEVEL) % MARSHAL_SPECIAL_INTERVAL === 0
+    );
+  }
+
+  function getEligibleMarshalSpecialUpgrades(level) {
+    return MARSHAL_SPECIAL_UPGRADES.filter(function (spec) {
+      if (spec.branch !== state.marshalUpgrade) return false;
+      if (level === MARSHAL_SPECIAL_START_LEVEL && !spec.starter) return false;
+      if (spec.minLevel && level < spec.minLevel) return false;
+      if (!spec.repeatable && hasUpgrade(spec.id)) return false;
+      if (spec.maxStacks && getUpgradeCount(spec.id) >= spec.maxStacks) return false;
+      if (spec.requires) {
+        for (var i = 0; i < spec.requires.length; i++) {
+          if (!hasUpgrade(spec.requires[i])) return false;
+        }
+      }
+      if (spec.requiresAny) {
+        var any = false;
+        for (var j = 0; j < spec.requiresAny.length; j++) {
+          if (hasUpgrade(spec.requiresAny[j])) any = true;
+        }
+        if (!any) return false;
+      }
+      return true;
+    });
+  }
+
+  function rollMarshalSpecialUpgradeChoices(level) {
+    var choices = rollFromPool(getEligibleMarshalSpecialUpgrades(level), 2);
+    if (choices.length >= 2) return choices;
+    var used = {};
+    for (var i = 0; i < choices.length; i++) used[choices[i].id] = true;
+    var fallback = getMarshalMasteryFallbackUpgrades().filter(function (spec) {
+      return !used[spec.id];
+    });
+    return choices.concat(rollFromPool(fallback, 2 - choices.length));
+  }
+
+  function getMarshalMasteryFallbackUpgrades() {
+    var ids = MARSHAL_MASTERY_UPGRADE_IDS[state.marshalUpgrade] || [];
+    var titles = {
+      packedBuckshot: "Packed Mastery",
+      hardCast: "Hard Cast Mastery",
+      fineChoke: "Choke Mastery",
+      sanctifiedLead: "Sanctified Mastery",
+    };
+    return ids.map(function (id) {
+      var base = getStandardUpgradeById(id);
+      return Object.assign({}, base, {
+        title: titles[id] || base.title + " Mastery",
+        description: "Beyond the cap: +3% Coach Gun damage.",
+        repeatable: true,
+        maxStacks: null,
+        masteryFallback: true,
+      });
+    });
+  }
+
+  function getMarshalMasteryStackCount() {
+    return (
+      Math.max(0, getUpgradeCount("packedBuckshot") - 4) +
+      Math.max(0, getUpgradeCount("hardCast") - 5) +
+      Math.max(0, getUpgradeCount("fineChoke") - 5) +
+      Math.max(0, getUpgradeCount("sanctifiedLead") - 5)
+    );
+  }
+
+  function getMarshalMasteryDamageMultiplier() {
+    return 1 + getMarshalMasteryStackCount() * MARSHAL_MASTERY_DAMAGE_PER_STACK;
+  }
+
   function renderStandardUpgradeChoices() {
     if (!levelUpOptions) return;
     levelUpOptions.innerHTML = "";
@@ -11379,7 +16820,7 @@
     button.setAttribute("data-standard-upgrade", spec.id);
     button.setAttribute("data-upgrade-kind", isSpecialUpgradeSpec(spec) ? "special" : "standard");
     button.setAttribute("data-rank", spec.rank);
-    button.setAttribute("data-suit", spec.suit);
+    button.setAttribute("data-suit", { D: "♦", H: "♥", S: "♠", C: "♣" }[spec.suit] || spec.suit);
 
     var mark = document.createElement("span");
     mark.className = "class-card__mark";
@@ -11390,7 +16831,15 @@
     mark.appendChild(symbol);
 
     var title = document.createElement("strong");
-    title.textContent = spec.title;
+    if (spec.subtitle) {
+      title.appendChild(document.createTextNode(spec.title));
+      var titleSubtitle = document.createElement("span");
+      titleSubtitle.className = "upgrade-card__subtitle";
+      titleSubtitle.textContent = spec.subtitle;
+      title.appendChild(titleSubtitle);
+    } else {
+      title.textContent = spec.title;
+    }
     var description = document.createElement("span");
     description.textContent = spec.description;
     button.appendChild(mark);
@@ -11416,6 +16865,9 @@
     for (var l = 0; l < LAUNCHER_SPECIAL_UPGRADES.length; l++) {
       if (LAUNCHER_SPECIAL_UPGRADES[l].id === id) return LAUNCHER_SPECIAL_UPGRADES[l];
     }
+    for (var m = 0; m < MARSHAL_SPECIAL_UPGRADES.length; m++) {
+      if (MARSHAL_SPECIAL_UPGRADES[m].id === id) return MARSHAL_SPECIAL_UPGRADES[m];
+    }
     return null;
   }
 
@@ -11440,6 +16892,7 @@
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     grantWeapon(spec.weapon, true);
     spawnClassChoiceBurst(spec.id);
@@ -11465,6 +16918,7 @@
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     setWeaponVisual("revolver");
     spawnRevolverUpgradeBurst(spec.id);
@@ -11485,6 +16939,7 @@
     state.mode = "playing";
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     spawnRifleUpgradeBurst(spec.id);
     maybeOfferNextLevelReward();
@@ -11503,10 +16958,36 @@
     state.launcherMagazineMultiplier = spec.launcherMagazineMultiplier || 1;
     resizeWeaponAmmo("launcher", previousMagazine, getWeaponMagazine(WEAPONS.launcher));
     if (spec.id === "pyrotechnician") state.launcherFireAmmoAccumulator = 0;
+    if (spec.id === "bombardier") {
+      requestLauncherCascadeWarmup();
+      requestLauncherShrapnelResourceWarmup();
+    }
     state.mode = "playing";
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     spawnLauncherUpgradeBurst(spec.id);
+    maybeOfferNextLevelReward();
+    updateHud();
+    render();
+    return true;
+  }
+
+  function chooseMarshalUpgrade(id) {
+    var spec = MARSHAL_UPGRADES[id];
+    if (!spec || state.playerClass !== "marshal" || state.marshalUpgrade || state.level < MARSHAL_UPGRADE_LEVEL) return false;
+    state.marshalUpgrade = spec.id;
+    state.marshalUpgradePending = false;
+    state.marshalUpgradeOffered = true;
+    state.marshalBountyTimer = 12;
+    state.mode = "playing";
+    setPanel(marshalUpgradePanel, false);
+    setPanel(revolverUpgradePanel, false);
+    setPanel(rifleUpgradePanel, false);
+    setPanel(launcherUpgradePanel, false);
+    updateModeClass();
+    setWeaponVisual("coachGun");
+    spawnMarshalUpgradeBurst(spec.id);
     maybeOfferNextLevelReward();
     updateHud();
     render();
@@ -11530,6 +17011,7 @@
     setPanel(levelUpPanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     spawnStandardUpgradeBurst(spec);
     maybeOfferNextLevelReward();
@@ -11544,11 +17026,25 @@
     if (spec.id === "silverBullet") state.bigIronShotsFired = 0;
     if (spec.id === "silverCache") state.silverBulletAmmoKills = 0;
     if (spec.id === "duelistFocus") state.duelistFocus = 0;
+    if (spec.id === "allRightAllLeft") activateAllRightAllLeft();
     if (spec.id === "chainDetonation") state.launcherChainDetonations = 0;
     if (spec.id === "fireproofPowder") state.launcherFireAmmoAccumulator = 0;
+    if (spec.id === "heavensBounty") state.marshalBountyTimer = Math.min(state.marshalBountyTimer || 12, 1.5);
     if (spec.id === "madmansJourney") {
       state.launcherMadmanStacks = 0;
       state.launcherMadmanTriggers = 0;
+    }
+    if (
+      state.launcherUpgrade === "bombardier" &&
+      (spec.id === "clusterCharge" ||
+        spec.id === "moreBomblets" ||
+        spec.id === "chainDetonation" ||
+        spec.id === "moreChainDetonations" ||
+        spec.id === "shrapnelRain" ||
+        spec.id === "powderEcho" ||
+        spec.id === "madmansJourney")
+    ) {
+      requestLauncherShrapnelResourceWarmup();
     }
     if (typeof spec.apply === "function") spec.apply();
   }
@@ -11567,6 +17063,7 @@
     setPanel(levelUpPanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     updateModeClass();
     maybeOfferNextLevelReward();
     updateHud();
@@ -11602,6 +17099,10 @@
     if (state.player) state.player.weapon = id;
     if ((state.ammo[id] || 0) <= 0) startReload(id);
     setWeaponVisual(id);
+    if (id === "launcher") {
+      warmupGameplayEffectResources();
+      warmupLauncherExplosionAudioGraph();
+    }
     updateHud();
     return true;
   }
@@ -11609,12 +17110,13 @@
   function getWeaponDamage(weapon) {
     if (!weapon) return 0;
     var damage = weapon.id === "revolver" ? weapon.damage * (state.revolverDamageMultiplier || 1) : weapon.damage;
+    if (weapon.id === "coachGun") damage *= getMarshalMasteryDamageMultiplier();
     return damage * (1 + Math.max(0, state.globalDamageBonus || 0));
   }
 
   function spawnClassChoiceBurst(classId) {
     if (!state.player) return;
-    var color = classId === "demolitionist" ? 0xff8b35 : classId === "ranger" ? 0xffd66d : 0x87eaff;
+    var color = classId === "demolitionist" ? 0xff8b35 : classId === "marshal" ? 0xffd99a : classId === "ranger" ? 0xffd66d : 0x87eaff;
     addShockwave(state.player.x, state.player.z, 3.2, 0.46, color);
     addLightFlash(state.player.x, 1.5, state.player.z, color, 3.2, 7, 0.24);
     spawnPurchaseBurst();
@@ -11641,6 +17143,14 @@
     var color = upgradeId === "pyrotechnician" ? 0xff6a16 : 0xffc45f;
     addShockwave(state.player.x, state.player.z, 3.6, 0.48, color);
     addLightFlash(state.player.x, 1.5, state.player.z, color, 3.7, 7.8, 0.25);
+    spawnPurchaseBurst();
+  }
+
+  function spawnMarshalUpgradeBurst(upgradeId) {
+    if (!state.player) return;
+    var color = upgradeId === "graveWarden" ? 0xffe8ad : 0xff8f62;
+    addShockwave(state.player.x, state.player.z, 3.5, 0.48, color);
+    addLightFlash(state.player.x, 1.5, state.player.z, color, 3.6, 7.5, 0.25);
     spawnPurchaseBurst();
   }
 
@@ -11677,7 +17187,7 @@
     for (var i = 0; i < 42; i++) {
       var mat = mats.dust.clone();
       mat.opacity = rand(0.06, 0.16);
-      var mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
+      var mesh = new THREE.Mesh(getSharedBoxGeometry(1, 1, 1), mat);
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       mesh.renderOrder = 1;
@@ -11694,6 +17204,7 @@
       };
       mesh.scale.set(rand(0.035, 0.11), rand(0.035, 0.11), rand(0.035, 0.11));
       mesh.position.set(dust.x, dust.y, dust.z);
+      mesh.userData.disposeGeometry = false;
       mesh.userData.disposeMaterial = true;
       effectRoot.add(mesh);
       state.ambientDust.push(dust);
@@ -11707,24 +17218,35 @@
     }
   }
 
-  function addHitSpark(x, z) {
+  function addHitSpark(x, z, reserved) {
+    if (!reserved) reserveParticleSlots(8);
     for (var i = 0; i < 8; i++) {
       var angle = rand(0, Math.PI * 2);
       var speed = rand(1.8, 5.4);
-      spawnParticle(x, rand(0.75, 1.45), z, Math.cos(angle) * speed, rand(0.8, 3.4), Math.sin(angle) * speed, 0.2, rand(0.05, 0.13), i % 2 === 0 ? mats.flash : mats.rifleTracer);
+      spawnParticle(x, rand(0.75, 1.45), z, Math.cos(angle) * speed, rand(0.8, 3.4), Math.sin(angle) * speed, 0.2, rand(0.05, 0.13), i % 2 === 0 ? mats.flash : mats.rifleTracer, true);
     }
   }
 
-  function addGoldBurst(x, z, score) {
-    var count = score >= 250 ? 14 : 9;
+  function getGoldBurstParticleCount(score) {
+    return score >= 250 ? 14 : 9;
+  }
+
+  function addGoldBurst(x, z, score, reserved) {
+    var count = getGoldBurstParticleCount(score);
+    if (!reserved) reserveParticleSlots(count);
     for (var i = 0; i < count; i++) {
       var angle = rand(0, Math.PI * 2);
       var speed = rand(1.2, 4.4);
-      spawnParticle(x, rand(0.7, 1.8), z, Math.cos(angle) * speed, rand(1.2, 4.8), Math.sin(angle) * speed, rand(0.25, 0.52), rand(0.08, 0.18), mats.gold);
+      spawnParticle(x, rand(0.7, 1.8), z, Math.cos(angle) * speed, rand(1.2, 4.8), Math.sin(angle) * speed, rand(0.25, 0.52), rand(0.08, 0.18), mats.gold, true);
     }
   }
 
   function addShockwave(x, z, targetRadius, life, color) {
+    if (gameplayWarmupMode) {
+      warmupShockwaveVisual(x, z, color);
+      return;
+    }
+    reserveShockwaveSlot();
     var visual = acquireShockwaveVisual(x, z, color);
     var mesh = visual.mesh;
     state.shockwaves.push({
@@ -11735,35 +17257,30 @@
       targetRadius: targetRadius,
       startOpacity: mesh.material.opacity,
     });
-    trimEffects(state.shockwaves, MAX_SHOCKWAVES, removeShockwave);
   }
 
-  function addScorchMark(x, z, radius) {
-    var mat = mats.scorch.clone();
-    mat.opacity = rand(0.16, 0.28);
-    var mesh = new THREE.Mesh(getSharedGeometry("scorch-circle", function () {
-      return new THREE.CircleGeometry(1, 14);
-    }), mat);
-    mesh.userData.disposeGeometry = false;
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.rotation.z = rand(0, Math.PI * 2);
-    mesh.position.set(x, 0.065, z);
-    mesh.scale.set(radius * rand(0.75, 1.2), radius * rand(0.55, 0.95), 1);
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
-    mesh.renderOrder = -3;
-    mesh.userData.disposeMaterial = true;
-    effectRoot.add(mesh);
+  function addScorchMark(x, z, radius, reserved) {
+    if (gameplayWarmupMode) {
+      warmupScorchDecalVisual(x, z, radius);
+      return;
+    }
+    if (!reserved || state.decals.length >= MAX_DECALS) reserveDecalSlot();
+    var visual = acquireScorchDecalVisual(x, z, radius);
+    var mesh = visual.mesh;
     state.decals.push({
+      visual: visual,
       mesh: mesh,
       life: 7.5,
       startLife: 7.5,
-      startOpacity: mat.opacity,
+      startOpacity: mesh.material.opacity,
     });
-    trimEffects(state.decals, MAX_DECALS, removeDecal);
   }
 
   function addLightFlash(x, y, z, color, intensity, distance, life) {
+    if (gameplayWarmupMode) {
+      warmupLightFlashVisual(x, y, z, color, intensity, distance);
+      return;
+    }
     reserveLightFlashSlot();
     var visual = acquireLightFlashVisual(x, y, z, color, intensity, distance);
     var light = visual.light;
@@ -11776,7 +17293,12 @@
     });
   }
 
-  function addSmokePuff(x, y, z, scale, life) {
+  function addSmokePuff(x, y, z, scale, life, reserved) {
+    if (gameplayWarmupMode) {
+      warmupSmokePuffVisual(x, y, z, scale);
+      return;
+    }
+    if (!reserved || state.smokePuffs.length >= MAX_SMOKE_PUFFS) reserveSmokePuffSlot();
     var visual = acquireSmokePuffVisual(x, y, z, scale);
     var mesh = visual.mesh;
     state.smokePuffs.push({
@@ -11794,7 +17316,6 @@
       startOpacity: mesh.material.opacity,
       mesh: mesh,
     });
-    trimEffects(state.smokePuffs, MAX_SMOKE_PUFFS, removeSmokePuff);
   }
 
   function buyOrSelectWeapon(id) {
@@ -11828,6 +17349,8 @@
 
   function getWeaponVisualId(id) {
     if (id === "revolver" && state.revolverUpgrade === "dualRevolvers") return "dualRevolvers";
+    if (id === "coachGun" && state.marshalUpgrade === "breachMarshal") return "coachGunBreach";
+    if (id === "coachGun" && state.marshalUpgrade === "graveWarden") return "coachGunGrave";
     return id;
   }
 
@@ -11845,14 +17368,186 @@
   function startGame() {
     lockLandscapeIfPossible();
     resetRun("playing");
+    warmupGameplayEffectResources();
+    warmupLauncherExplosionAudioGraph();
     if (isRifleListenSceneRequested()) setupRifleListenScene();
     setPanel(menu, false);
     setPanel(gameOverPanel, false);
     setPanel(revolverUpgradePanel, false);
     setPanel(rifleUpgradePanel, false);
     setPanel(launcherUpgradePanel, false);
+    setPanel(marshalUpgradePanel, false);
     setPanel(levelUpPanel, false);
     updateModeClass();
+  }
+
+  function canOpenPauseMenu() {
+    return state.mode === "playing" && !isIntroActive();
+  }
+
+  function clearActiveInput() {
+    pointerDown = false;
+    Object.keys(keys).forEach(function (code) {
+      keys[code] = false;
+    });
+    resetTouchControls();
+  }
+
+  function showPauseMenuView(view) {
+    var showSettings = view === "settings";
+    if (pauseMainPanel) pauseMainPanel.classList.toggle("is-visible", !showSettings);
+    if (pauseSettingsPanel) pauseSettingsPanel.classList.toggle("is-visible", showSettings);
+    if (showSettings) updatePauseVolumeControls();
+  }
+
+  function syncPauseMenuUi() {
+    var open = !!state.paused;
+    if (pauseMenu) {
+      pauseMenu.classList.toggle("is-visible", open);
+      pauseMenu.setAttribute("aria-hidden", open ? "false" : "true");
+    }
+    if (pauseMenuBtn) pauseMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    updateModeClass();
+  }
+
+  function setPauseMenuOpen(open) {
+    var shouldOpen = !!open && canOpenPauseMenu();
+    if (!shouldOpen && controlLayoutState.editing) finishControlLayoutEdit(false);
+    state.paused = shouldOpen;
+    clearActiveInput();
+    if (shouldOpen) {
+      showPauseMenuView("main");
+      updatePauseVolumeControls();
+    }
+    syncPauseMenuUi();
+  }
+
+  function exitToMainMenu() {
+    setPauseMenuOpen(false);
+    resetRun("menu");
+    updateModeClass();
+  }
+
+  function applyMarshalPreviewFromQuery() {
+    var params = new URLSearchParams(window.location.search || "");
+    var preview = (params.get("preview") || "").toLowerCase();
+    if (!preview) return false;
+
+    var galleries = {
+      "marshal-breach-a": {
+        branch: "breachMarshal",
+        subtitle: "Display only · Breach Marshal · I",
+        ids: ["doorKicker", "doubleTap", "lastWord", "shellCatcher", "buckAndBall"],
+      },
+      "marshal-breach-b": {
+        branch: "breachMarshal",
+        subtitle: "Display only · Breach Marshal · II",
+        ids: ["rideTheRecoil", "bonebreaker", "noTimeToBleed", "packedBuckshot", "hardCast"],
+      },
+      "marshal-grave-a": {
+        branch: "graveWarden",
+        subtitle: "Display only · Grave Warden · I",
+        ids: ["rockSalt", "stillness", "lastRites", "graveTithe", "heavensBounty"],
+      },
+      "marshal-grave-b": {
+        branch: "graveWarden",
+        subtitle: "Display only · Grave Warden · II",
+        ids: ["passingJudgment", "purifyingSalt", "hallowedGround", "fineChoke", "sanctifiedLead"],
+      },
+    };
+
+    var knownPreview =
+      preview === "marshal-class" ||
+      preview === "marshal-subclasses" ||
+      preview === "marshal-gameplay" ||
+      preview === "marshal-gameplay-breach" ||
+      preview === "pale-deputy" ||
+      !!galleries[preview];
+    if (!knownPreview) return false;
+
+    resetRun("playing");
+    setIntroActive(false);
+
+    if (preview === "marshal-class") {
+      state.level = CLASS_CHOICE_LEVEL;
+      state.mode = "playing";
+      maybeOfferClassChoice();
+      return true;
+    }
+
+    state.playerClass = "marshal";
+    state.classChoiceOffered = true;
+    grantWeapon("coachGun", true);
+
+    if (preview === "pale-deputy") {
+      state.level = 19;
+      state.marshalUpgrade = "graveWarden";
+      state.marshalUpgradeOffered = true;
+      state.upgradeCounts.lastRites = 1;
+      releaseAllEnemiesToPool();
+      state.spawnLeft = 0;
+      state.waveSuspended = true;
+      state.player.aimAngle = Math.PI * 0.84;
+      state.pointerWorld.x = state.player.x + Math.sin(state.player.aimAngle) * 5;
+      state.pointerWorld.z = state.player.z + Math.cos(state.player.aimAngle) * 5;
+      var previewDeputy = tryRaisePaleDeputy(state.player.x + 0.5, state.player.z + 0.2);
+      if (previewDeputy) previewDeputy.previewDisplay = true;
+      state.player.group.visible = false;
+      camera.zoom = 3.4;
+      setWeaponVisual("coachGun");
+      updateModeClass();
+      updateHud();
+      render();
+      return true;
+    }
+
+    if (preview === "marshal-subclasses") {
+      state.level = MARSHAL_UPGRADE_LEVEL;
+      state.mode = "playing";
+      maybeOfferMarshalUpgradeChoice();
+      return true;
+    }
+
+    var gallery = galleries[preview];
+    if (gallery) {
+      state.level = 19;
+      state.marshalUpgrade = gallery.branch;
+      state.marshalUpgradeOffered = true;
+      state.standardUpgradeLevel = 19;
+      state.standardUpgradePending = true;
+      state.standardUpgradeChoices = gallery.ids.map(getStandardUpgradeById).filter(Boolean);
+      state.mode = "level-up";
+      setWeaponVisual("coachGun");
+      renderStandardUpgradeChoices();
+      var previewHeading = levelUpPanel ? levelUpPanel.querySelector("h2") : null;
+      if (previewHeading) previewHeading.textContent = "Icon Showcase";
+      if (levelUpSubtitle) levelUpSubtitle.textContent = gallery.subtitle;
+      setPanel(levelUpPanel, true);
+      setPanel(menu, false);
+      setPanel(gameOverPanel, false);
+      setPanel(classChoicePanel, false);
+      setPanel(revolverUpgradePanel, false);
+      setPanel(rifleUpgradePanel, false);
+      setPanel(launcherUpgradePanel, false);
+      setPanel(marshalUpgradePanel, false);
+      updateModeClass();
+      updateHud();
+      render();
+      return true;
+    }
+
+    if (preview === "marshal-gameplay" || preview === "marshal-gameplay-breach") {
+      state.level = 19;
+      state.marshalUpgrade = preview === "marshal-gameplay-breach" ? "breachMarshal" : "graveWarden";
+      state.marshalUpgradeOffered = true;
+      setWeaponVisual("coachGun");
+      updateModeClass();
+      updateHud();
+      render();
+      return true;
+    }
+
+    return false;
   }
 
   function isRifleListenSceneRequested() {
@@ -11887,6 +17582,32 @@
     startBtn.addEventListener("click", startGame);
     restartBtn.addEventListener("click", startGame);
     if (menuMusicBtn) menuMusicBtn.addEventListener("click", handleMenuMusicButtonClick);
+    if (pauseMenuBtn) {
+      pauseMenuBtn.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        setPauseMenuOpen(true);
+      });
+    }
+    if (pauseCloseBtn) pauseCloseBtn.addEventListener("click", function () { setPauseMenuOpen(false); });
+    if (pauseContinueBtn) pauseContinueBtn.addEventListener("click", function () { setPauseMenuOpen(false); });
+    if (pauseSettingsBtn) pauseSettingsBtn.addEventListener("click", function () { showPauseMenuView("settings"); });
+    if (pauseSettingsBackBtn) pauseSettingsBackBtn.addEventListener("click", function () { showPauseMenuView("main"); });
+    if (pauseExitBtn) pauseExitBtn.addEventListener("click", exitToMainMenu);
+    if (controlLayoutBtn) controlLayoutBtn.addEventListener("click", beginControlLayoutEdit);
+    if (controlLayoutApplyBtn) controlLayoutApplyBtn.addEventListener("click", function () { finishControlLayoutEdit(true); });
+    if (controlLayoutResetBtn) controlLayoutResetBtn.addEventListener("click", resetControlLayoutDraft);
+    if (musicVolumeInput) {
+      musicVolumeInput.addEventListener("input", function () {
+        setAudioVolume("music", musicVolumeInput.value);
+      });
+    }
+    if (sfxVolumeInput) {
+      sfxVolumeInput.addEventListener("input", function () {
+        setAudioVolume("sfx", sfxVolumeInput.value);
+      });
+    }
+    updatePauseVolumeControls();
     if (introScreen) {
       window.addEventListener("pointerdown", dismissIntroScreen, true);
       window.addEventListener("keydown", dismissIntroScreen, true);
@@ -11913,6 +17634,11 @@
         chooseLauncherUpgrade(button.getAttribute("data-launcher-upgrade"));
       });
     });
+    marshalUpgradeButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        chooseMarshalUpgrade(button.getAttribute("data-marshal-upgrade"));
+      });
+    });
     if (levelUpOptions) {
       levelUpOptions.addEventListener("click", function (event) {
         var button = event.target.closest("[data-standard-upgrade]");
@@ -11921,9 +17647,26 @@
     }
 
     window.addEventListener("keydown", function (event) {
+      if (event.code === "Escape") {
+        if (state.paused) {
+          event.preventDefault();
+          setPauseMenuOpen(false);
+          return;
+        }
+        if (canOpenPauseMenu()) {
+          event.preventDefault();
+          setPauseMenuOpen(true);
+          return;
+        }
+      }
+      if (state.paused) {
+        event.preventDefault();
+        return;
+      }
       keys[event.code] = true;
       if (event.code === "KeyF") toggleFullscreen();
       if (event.code === "KeyR" && state.mode === "gameover") startGame();
+      if (event.code === "KeyR" && state.mode === "playing") startReload(state.weapon);
       if ((event.code === "Enter" || event.code === "Space") && (state.mode === "menu" || state.mode === "gameover")) startGame();
     });
     window.addEventListener("keyup", function (event) {
@@ -11931,6 +17674,9 @@
     });
 
     bindCanvasInput(renderer.domElement);
+    window.addEventListener("pointermove", handleControlLayoutDragMove);
+    window.addEventListener("pointerup", endControlLayoutDrag);
+    window.addEventListener("pointercancel", endControlLayoutDrag);
     window.addEventListener("pointerup", function () {
       pointerDown = false;
     });
@@ -11975,6 +17721,7 @@
   }
 
   function handleCanvasPointerMove(event) {
+    if (state.paused) return;
     if (mobileFieldFire.active && event.pointerId === mobileFieldFire.pointerId) {
       event.preventDefault();
       setMobileAimTargetFromClient(event.clientX, event.clientY);
@@ -11986,6 +17733,7 @@
 
   function handleCanvasPointerDown(event) {
     if (event.button !== 0) return;
+    if (state.paused) return;
     if (state.mode === "playing" && isTouchPointerEvent(event)) {
       event.preventDefault();
       startMobileFieldFire(event);
@@ -12037,6 +17785,8 @@
     if (moveStick) {
       moveStick.addEventListener("pointerdown", function (event) {
         if (event.button !== 0 && event.pointerType !== "touch") return;
+        if (beginControlLayoutDrag(event, "move")) return;
+        if (state.paused) return;
         event.preventDefault();
         event.stopPropagation();
         stopTouchAutoRun(false);
@@ -12067,6 +17817,8 @@
     if (mobileFire) {
       mobileFire.addEventListener("pointerdown", function (event) {
         if (event.button !== 0 && event.pointerType !== "touch") return;
+        if (beginControlLayoutDrag(event, "fire")) return;
+        if (state.paused) return;
         event.preventDefault();
         event.stopPropagation();
         touchFire.active = true;
@@ -12208,11 +17960,14 @@
     root.classList.toggle("is-intro", isIntroActive());
     root.classList.toggle("is-menu", state.mode === "menu");
     root.classList.toggle("is-playing", state.mode === "playing");
+    root.classList.toggle("is-paused", !!state.paused);
+    root.classList.toggle("is-layout-editing", !!state.controlLayoutEditing);
     root.classList.toggle("is-gameover", state.mode === "gameover");
     root.classList.toggle("is-class-choice", state.mode === "class-choice");
     root.classList.toggle("is-revolver-upgrade", state.mode === "revolver-upgrade");
     root.classList.toggle("is-rifle-upgrade", state.mode === "rifle-upgrade");
     root.classList.toggle("is-launcher-upgrade", state.mode === "launcher-upgrade");
+    root.classList.toggle("is-marshal-upgrade", state.mode === "marshal-upgrade");
     root.classList.toggle("is-level-up", state.mode === "level-up");
   }
 
@@ -12308,6 +18063,7 @@
       state.revolverUpgradePending ? 1 : 0,
       state.rifleUpgradePending ? 1 : 0,
       state.launcherUpgradePending ? 1 : 0,
+      state.marshalUpgradePending ? 1 : 0,
     ].join("|");
     if (hudCache.interactivitySignature === signature) return;
     hudCache.interactivitySignature = signature;
@@ -12315,6 +18071,7 @@
     syncButtonDisabledState(revolverUpgradeButtons, state.mode !== "revolver-upgrade" || !state.revolverUpgradePending);
     syncButtonDisabledState(rifleUpgradeButtons, state.mode !== "rifle-upgrade" || !state.rifleUpgradePending);
     syncButtonDisabledState(launcherUpgradeButtons, state.mode !== "launcher-upgrade" || !state.launcherUpgradePending);
+    syncButtonDisabledState(marshalUpgradeButtons, state.mode !== "marshal-upgrade" || !state.marshalUpgradePending);
   }
 
   function syncButtonDisabledState(buttons, disabled) {
@@ -12327,6 +18084,9 @@
     if (!minimapCanvas || !minimapCtx) return;
     if (state.mode !== "playing" || !state.player) return;
     resizeMinimapCanvas();
+    if (state.time + 1 < minimapNextDynamicUpdateAt) minimapNextDynamicUpdateAt = 0;
+    if (!minimapStaticDirty && state.time + 0.0001 < minimapNextDynamicUpdateAt) return;
+    minimapNextDynamicUpdateAt = state.time + MINIMAP_DYNAMIC_INTERVAL;
     var ctx = minimapCtx;
     var width = minimapCanvas.width;
     var height = minimapCanvas.height;
@@ -12556,13 +18316,18 @@
     var ammoWarning = getAmmoWarningLevel(ammo);
     ammoHud.classList.toggle("is-low-ammo", ammoWarning === "low");
     ammoHud.classList.toggle("is-critical-ammo", ammoWarning === "critical");
+    ammoHud.classList.toggle("is-dual-hands-ammo", !!ammo.dualHands);
     if (ammoStatus) {
       var remainingStatus = getAmmoRemainingStatusText(ammo, ammoWarning);
-      var statusText = ammo.reloading
-        ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s / " + remainingStatus
-        : ammo.total <= 0
-          ? "Empty"
-          : remainingStatus;
+      var statusText = ammo.dualHands
+        ? getDualRevolverAmmoStatusText(ammo.dualHands)
+        : weapon.id === "coachGun" && ammo.reloading
+          ? "LOAD " + ammo.current + "/" + ammo.magazine + " / LEFT " + ammo.total
+        : ammo.reloading
+          ? "Reload " + ammo.reloadRemaining.toFixed(1) + "s / " + remainingStatus
+          : ammo.total <= 0
+            ? "Empty"
+            : remainingStatus;
       if (ammoHudCache.statusText !== statusText) {
         ammoStatus.textContent = statusText;
         ammoHudCache.statusText = statusText;
@@ -12578,17 +18343,40 @@
       ammoMax.textContent = maxText;
       ammoHudCache.maxText = maxText;
     }
-    var ariaLabel = weapon.label + " ammo " + ammo.current + " of " + ammo.magazine + ", total " + ammo.total + ", reserve " + ammo.reserve;
+    var ariaLabel = ammo.dualHands
+      ? weapon.label +
+        " ammo " +
+        ammo.current +
+        " of " +
+        ammo.magazine +
+        ", right " +
+        ammo.dualHands.right.current +
+        " of " +
+        ammo.dualHands.right.magazine +
+        ", left " +
+        ammo.dualHands.left.current +
+        " of " +
+        ammo.dualHands.left.magazine +
+        ", reserve " +
+        ammo.reserve
+      : weapon.label + " ammo " + ammo.current + " of " + ammo.magazine + ", total " + ammo.total + ", reserve " + ammo.reserve;
     if (ammoHudCache.ariaLabel !== ariaLabel) {
       ammoHud.setAttribute("aria-label", ariaLabel);
       ammoHudCache.ariaLabel = ariaLabel;
     }
     syncAmmoRack(weapon, ammo);
     if (ammoReloadFill) ammoReloadFill.style.transform = ammo.reloading ? "scaleX(" + reloadProgressText + ")" : "scaleX(0)";
-    if (ammoWeaponIcon && currentAmmoIcon !== weapon.id) {
-      ammoWeaponIcon.innerHTML = WEAPON_ICONS[weapon.id] || WEAPON_ICONS.revolver;
-      currentAmmoIcon = weapon.id;
+    var weaponIconId = getWeaponHudIconId(weapon.id);
+    if (ammoWeaponIcon && currentAmmoIcon !== weaponIconId) {
+      ammoWeaponIcon.innerHTML = WEAPON_ICONS[weaponIconId] || WEAPON_ICONS[weapon.id] || WEAPON_ICONS.revolver;
+      currentAmmoIcon = weaponIconId;
     }
+  }
+
+  function getWeaponHudIconId(id) {
+    if (id === "coachGun" && state.marshalUpgrade === "breachMarshal") return "coachGunBreach";
+    if (id === "coachGun" && state.marshalUpgrade === "graveWarden") return "coachGunGrave";
+    return id;
   }
 
   function getAmmoWarningLevel(ammo) {
@@ -12603,6 +18391,16 @@
     if (warningLevel === "critical") return "LAST MAG / LEFT " + ammo.total;
     if (warningLevel === "low") return "LOW AMMO / LEFT " + ammo.total;
     return "LEFT " + ammo.total;
+  }
+
+  function getDualRevolverAmmoStatusText(hands) {
+    if (!hands) return "";
+    function handText(label, hand) {
+      var text = label + " " + hand.current + "/" + hand.magazine;
+      if (hand.freeReloads > 0) text += "+" + hand.freeReloads;
+      return text;
+    }
+    return handText("R", hands.right) + "  " + handText("L", hands.left);
   }
 
   function render() {
@@ -12630,7 +18428,7 @@
       renderCamera = menuCamera;
     } else {
       var p = state.player;
-      var follow = clampCameraTarget(p ? p.x : 0, p ? p.z : 0);
+      var follow = clampCameraTarget(p ? p.x : 0, p ? p.z : 0, cameraFollowScratch);
       var shakePower = state.shake * state.shake;
       var sx = shakePower > 0 ? rand(-0.45, 0.45) * shakePower : 0;
       var sz = shakePower > 0 ? rand(-0.45, 0.45) * shakePower : 0;
@@ -12641,6 +18439,7 @@
         cameraTarget.z + cameraBaseOffset.z + sz
       );
       camera.lookAt(cameraTarget);
+      updateGameplayShadowCamera(follow);
     }
     try {
       renderer.render(renderScene, renderCamera);
@@ -12651,15 +18450,80 @@
     }
   }
 
-  function clampCameraTarget(x, z) {
+  function clampCameraTarget(x, z, out) {
     var minTargetX = cameraMapBounds.minX - cameraGroundBounds.minX;
     var maxTargetX = cameraMapBounds.maxX - cameraGroundBounds.maxX;
     var minTargetZ = cameraMapBounds.minZ - cameraGroundBounds.minZ;
     var maxTargetZ = cameraMapBounds.maxZ - cameraGroundBounds.maxZ;
-    return {
-      x: minTargetX > maxTargetX ? 0 : clamp(x, minTargetX, maxTargetX),
-      z: minTargetZ > maxTargetZ ? 0 : clamp(z, minTargetZ, maxTargetZ),
-    };
+    var result = out || {};
+    result.x = minTargetX > maxTargetX ? 0 : clamp(x, minTargetX, maxTargetX);
+    result.z = minTargetZ > maxTargetZ ? 0 : clamp(z, minTargetZ, maxTargetZ);
+    return result;
+  }
+
+  function updateGameplayShadowBounds() {
+    if (!gameplaySun) return;
+    var pad = 12;
+    var minX = cameraGroundBounds.minX - pad;
+    var maxX = cameraGroundBounds.maxX + pad;
+    var minZ = cameraGroundBounds.minZ - pad;
+    var maxZ = cameraGroundBounds.maxZ + pad;
+    var minLightX = Infinity;
+    var maxLightX = -Infinity;
+    var minLightY = Infinity;
+    var maxLightY = -Infinity;
+    var minDepth = Infinity;
+    var maxDepth = -Infinity;
+    var sunDistance = gameplaySunOffset.length();
+    var xs = [minX, maxX];
+    var ys = [-1, 10];
+    var zs = [minZ, maxZ];
+    for (var xi = 0; xi < 2; xi++) {
+      for (var yi = 0; yi < 2; yi++) {
+        for (var zi = 0; zi < 2; zi++) {
+          var x = xs[xi];
+          var y = ys[yi];
+          var z = zs[zi];
+          var lightX = x * gameplaySunRight.x + y * gameplaySunRight.y + z * gameplaySunRight.z;
+          var lightY = x * gameplaySunUp.x + y * gameplaySunUp.y + z * gameplaySunUp.z;
+          var depth = sunDistance - (x * gameplaySunBack.x + y * gameplaySunBack.y + z * gameplaySunBack.z);
+          minLightX = Math.min(minLightX, lightX);
+          maxLightX = Math.max(maxLightX, lightX);
+          minLightY = Math.min(minLightY, lightY);
+          maxLightY = Math.max(maxLightY, lightY);
+          minDepth = Math.min(minDepth, depth);
+          maxDepth = Math.max(maxDepth, depth);
+        }
+      }
+    }
+    var edgeGuard = 2;
+    var shadowCamera = gameplaySun.shadow.camera;
+    shadowCamera.left = minLightX - edgeGuard;
+    shadowCamera.right = maxLightX + edgeGuard;
+    shadowCamera.bottom = minLightY - edgeGuard;
+    shadowCamera.top = maxLightY + edgeGuard;
+    shadowCamera.near = Math.max(0.1, minDepth - 4);
+    shadowCamera.far = Math.max(shadowCamera.near + 1, maxDepth + 4);
+    shadowCamera.updateProjectionMatrix();
+    gameplayShadowTexelX = (shadowCamera.right - shadowCamera.left) / gameplaySun.shadow.mapSize.x;
+    gameplayShadowTexelY = (shadowCamera.top - shadowCamera.bottom) / gameplaySun.shadow.mapSize.y;
+    gameplayShadowBoundsDirty = false;
+  }
+
+  function updateGameplayShadowCamera(follow) {
+    if (!gameplaySun || !follow) return;
+    if (gameplayShadowBoundsDirty) updateGameplayShadowBounds();
+    var anchor = gameplayShadowAnchorScratch.set(follow.x, 0, follow.z);
+    if (gameplayShadowTexelX > 0 && gameplayShadowTexelY > 0) {
+      var projectedX = anchor.dot(gameplaySunRight);
+      var projectedY = anchor.dot(gameplaySunUp);
+      var snapX = Math.round(projectedX / gameplayShadowTexelX) * gameplayShadowTexelX - projectedX;
+      var snapY = Math.round(projectedY / gameplayShadowTexelY) * gameplayShadowTexelY - projectedY;
+      anchor.addScaledVector(gameplaySunRight, snapX);
+      anchor.addScaledVector(gameplaySunUp, snapY);
+    }
+    gameplaySun.target.position.copy(anchor);
+    gameplaySun.position.copy(anchor).add(gameplaySunOffset);
   }
 
   function updateCameraGroundBounds() {
@@ -12693,6 +18557,7 @@
     }
     if (isFinite(minX) && isFinite(maxX) && isFinite(minZ) && isFinite(maxZ)) {
       cameraGroundBounds = { minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ };
+      gameplayShadowBoundsDirty = true;
     }
 
     camera.position.copy(savedPosition);
@@ -12709,39 +18574,6 @@
       renderDiagnostics.contextLost = true;
       recoverRenderer("isContextLost");
       return;
-    }
-
-    var pixels = new Uint8Array(4 * 4 * 4);
-    try {
-      gl.readPixels(
-        Math.max(0, Math.floor(renderer.domElement.width / 2) - 2),
-        Math.max(0, Math.floor(renderer.domElement.height / 2) - 2),
-        4,
-        4,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        pixels
-      );
-    } catch (err) {
-      recoverRenderer("readPixels");
-      return;
-    }
-
-    var total = 0;
-    var low = 255;
-    var high = 0;
-    for (var i = 0; i < pixels.length; i += 4) {
-      var brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-      total += brightness;
-      low = Math.min(low, brightness);
-      high = Math.max(high, brightness);
-    }
-    var avg = total / (pixels.length / 4);
-    if (avg > 247 && high - low < 9 && state.mode === "playing") {
-      renderDiagnostics.whiteFrames += 1;
-      if (renderDiagnostics.whiteFrames >= 2) recoverRenderer("white-canvas");
-    } else {
-      renderDiagnostics.whiteFrames = 0;
     }
   }
 
@@ -12831,6 +18663,14 @@
     );
   }
 
+  function animateMeshValues(mesh, rx, ry, rz, x, y, z) {
+    if (!mesh || !mesh.userData.basePosition || !mesh.userData.baseRotation) return;
+    var bp = mesh.userData.basePosition;
+    var br = mesh.userData.baseRotation;
+    mesh.position.set(bp.x + (x || 0), bp.y + (y || 0), bp.z + (z || 0));
+    mesh.rotation.set(br.x + (rx || 0), br.y + (ry || 0), br.z + (rz || 0));
+  }
+
   function scaleFromBase(mesh, sx, sy, sz) {
     if (!mesh || !mesh.userData.baseScale) return;
     var bs = mesh.userData.baseScale;
@@ -12843,7 +18683,7 @@
     var offhandRig = group.userData.offhandWeaponRig;
     var weaponId = state.weapon || "revolver";
     var bob = Math.sin(state.time * 9) * 0.012 * intensity;
-    var recoil = weaponId === "launcher" ? 0.3 : weaponId === "rifle" ? 0.22 : 0.16;
+    var recoil = weaponId === "launcher" ? 0.3 : weaponId === "coachGun" ? 0.28 : weaponId === "rifle" ? 0.22 : 0.16;
     var dualActive = weaponId === "revolver" && state.revolverUpgrade === "dualRevolvers";
     var rightKick = dualActive && state.lastDualShotSide < 0 ? kick * 0.22 : kick;
     var leftKick = dualActive && state.lastDualShotSide > 0 ? kick * 0.22 : kick;
@@ -12867,34 +18707,47 @@
     }
   }
 
-  function createDeathDebris(enemy) {
-    var origin = new THREE.Vector3(enemy.x, 0.8, enemy.z);
+  function collectDeathDebrisParts(group) {
     var pieces = [];
-    enemy.group.traverse(function (child) {
+    if (!group) return pieces;
+    group.traverse(function (child) {
       if (!child.isMesh || child.userData.noDebris) return;
       if (pieces.length >= 13) return;
       pieces.push(child);
     });
+    return pieces;
+  }
 
+  function getDeathDebrisPieces(enemy) {
+    if (!enemy || !enemy.group || !enemy.group.userData) return [];
+    var pieces = enemy.group.userData.deathDebrisParts;
+    if (!pieces || !pieces.length) {
+      pieces = collectDeathDebrisParts(enemy.group);
+      enemy.group.userData.deathDebrisParts = pieces;
+    }
+    return pieces;
+  }
+
+  function createDeathDebris(enemy, reserved) {
+    var originX = enemy.x;
+    var originZ = enemy.z;
+    var pieces = getDeathDebrisPieces(enemy);
+    if (!reserved) reserveDebrisSlots(pieces.length);
     pieces.forEach(function (source, index) {
-      var worldPos = new THREE.Vector3();
-      var worldQuat = new THREE.Quaternion();
+      var worldPos = deathDebrisWorldPosScratch;
+      var worldQuat = deathDebrisWorldQuatScratch;
       source.getWorldPosition(worldPos);
       source.getWorldQuaternion(worldQuat);
-      var mat = source.material.clone();
-      mat.transparent = true;
-      mat.opacity = 1;
-      var mesh = new THREE.Mesh(source.geometry.clone(), mat);
-      mesh.userData.disposeMaterial = true;
-      mesh.position.copy(worldPos);
-      mesh.quaternion.copy(worldQuat);
-      mesh.scale.copy(source.scale);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      effectRoot.add(mesh);
+      if (gameplayWarmupMode) {
+        warmupDeathDebrisVisual(source, worldPos, worldQuat);
+        return;
+      }
+      if (reserved && state.debris.length >= MAX_DEBRIS) reserveDebrisSlot();
+      var visual = acquireDeathDebrisVisual(source, worldPos, worldQuat);
+      var mesh = visual.mesh;
 
-      var awayX = worldPos.x - origin.x;
-      var awayZ = worldPos.z - origin.z;
+      var awayX = worldPos.x - originX;
+      var awayZ = worldPos.z - originZ;
       var awayLen = Math.hypot(awayX, awayZ);
       if (awayLen < 0.001) {
         var angle = index * 2.399963 + rand(-0.3, 0.3);
@@ -12904,6 +18757,7 @@
       }
       var force = rand(2.2, 6.8) * (enemy.type === "brute" ? 0.8 : 1);
       state.debris.push({
+        visual: visual,
         mesh: mesh,
         x: worldPos.x,
         y: worldPos.y,
@@ -12918,15 +18772,15 @@
         startLife: 3.2,
         startOpacity: 1,
       });
-      trimEffects(state.debris, MAX_DEBRIS, removeDebris);
     });
   }
 
   function addBox(parent, w, h, d, mat, x, y, z) {
-    var mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    var mesh = new THREE.Mesh(getSharedBoxGeometry(w, h, d), mat);
     mesh.position.set(x || 0, y || 0, z || 0);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.userData.disposeGeometry = false;
     parent.add(mesh);
     return mesh;
   }
@@ -13045,6 +18899,7 @@
       state: {
         enemies: state.enemies.length,
         bullets: state.bullets.length,
+        coachGunTracers: state.coachGunTracers.length,
         particles: state.particles.length,
         smokePuffs: state.smokePuffs.length,
         shockwaves: state.shockwaves.length,
@@ -13080,6 +18935,8 @@
         rifleTrapVisuals: getRifleTrapVisualPoolStats(),
         explosionEffects: getExplosionEffectPoolStats(),
         particleVisuals: getParticleVisualPoolStats(),
+        xpOrbVisuals: getXpOrbVisualPoolStats(),
+        deathDebrisVisuals: getDeathDebrisVisualPoolStats(),
         projectileVisuals: getProjectileVisualPoolStats(),
       },
       limits: {
@@ -13092,6 +18949,7 @@
         debris: MAX_DEBRIS,
         xpOrbs: MAX_XP_ORBS,
         rifleTraps: MAX_RIFLE_TRAPS,
+        coachGunTracers: MAX_COACH_GUN_TRACERS,
       },
       rendererMemory: renderer && renderer.info && renderer.info.memory
         ? {
@@ -13122,7 +18980,10 @@
       halfD: d / 2,
       pad: obstaclePad,
       rotation: angle,
+      rotationCos: Math.cos(angle),
+      rotationSin: Math.sin(angle),
       type: obstacleType,
+      _obstacleQueryId: 0,
       minX: x - bounds.w / 2 - obstaclePad,
       maxX: x + bounds.w / 2 + obstaclePad,
       minZ: z - bounds.d / 2 - obstaclePad,
@@ -13142,10 +19003,10 @@
     for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
       for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
         var key = getObstacleCellKey(cellX, cellZ);
-        var bucket = obstacleSpatialGrid[key];
+        var bucket = obstacleSpatialGrid.get(key);
         if (!bucket) {
           bucket = [];
-          obstacleSpatialGrid[key] = bucket;
+          obstacleSpatialGrid.set(key, bucket);
           obstacleSpatialGridKeys.push(key);
         }
         bucket.push(rect);
@@ -13161,7 +19022,7 @@
   }
 
   function getObstacleCellKey(cellX, cellZ) {
-    return cellX + ":" + cellZ;
+    return cellX * SPATIAL_CELL_KEY_STRIDE + cellZ;
   }
 
   function nextObstacleSpatialQueryId() {
@@ -13180,7 +19041,7 @@
     var queryId = nextObstacleSpatialQueryId();
     for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
       for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
-        var bucket = obstacleSpatialGrid[getObstacleCellKey(cellX, cellZ)];
+        var bucket = obstacleSpatialGrid.get(getObstacleCellKey(cellX, cellZ));
         if (!bucket) continue;
         for (var i = 0; i < bucket.length; i++) {
           var rect = bucket[i];
@@ -13229,8 +19090,8 @@
     var dx = x - rect.x;
     var dz = z - rect.z;
     if (!angle) return { x: dx, z: dz };
-    var c = Math.cos(angle);
-    var s = Math.sin(angle);
+    var c = rect.rotationCos == null ? Math.cos(angle) : rect.rotationCos;
+    var s = rect.rotationSin == null ? Math.sin(angle) : rect.rotationSin;
     return {
       x: dx * c - dz * s,
       z: dx * s + dz * c,
@@ -13261,24 +19122,36 @@
     mover.x = clamp(mover.x, -ARENA_W / 2 - extra + radius, ARENA_W / 2 + extra - radius);
     mover.z = clamp(mover.z, -ARENA_D / 2 - extra + radius, ARENA_D / 2 + extra - radius);
     for (var pass = 0; pass < 2; pass++) {
-      var pushed = false;
-      visitObstaclesNearCircle(mover.x, mover.z, radius + 4.0, function (rect) {
-        if (pushCircleOutOfRect(mover, rect, radius)) pushed = true;
-        return false;
-      });
-      if (!pushed) break;
+      moverObstacleQueryScratch.mover = mover;
+      moverObstacleQueryScratch.radius = radius;
+      moverObstacleQueryScratch.pushed = false;
+      visitObstaclesNearCircle(mover.x, mover.z, radius + 4.0, resolveMoverObstacleCallback);
+      if (!moverObstacleQueryScratch.pushed) break;
     }
     mover.x = clamp(mover.x, -ARENA_W / 2 - extra + radius, ARENA_W / 2 + extra - radius);
     mover.z = clamp(mover.z, -ARENA_D / 2 - extra + radius, ARENA_D / 2 + extra - radius);
   }
 
+  function resolveMoverObstacleCallback(rect) {
+    if (pushCircleOutOfRect(moverObstacleQueryScratch.mover, rect, moverObstacleQueryScratch.radius)) {
+      moverObstacleQueryScratch.pushed = true;
+    }
+    return false;
+  }
+
   function pushCircleOutOfRect(circle, rect, radius) {
     var minDist = radius + rect.pad;
-    var local = worldToRectLocal(circle.x, circle.z, rect);
-    var closestX = clamp(local.x, -rect.halfW, rect.halfW);
-    var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
-    var dx = local.x - closestX;
-    var dz = local.z - closestZ;
+    var angle = rect.rotation || 0;
+    var c = rect.rotationCos == null ? Math.cos(angle) : rect.rotationCos;
+    var s = rect.rotationSin == null ? Math.sin(angle) : rect.rotationSin;
+    var worldDx = circle.x - rect.x;
+    var worldDz = circle.z - rect.z;
+    var localX = angle ? worldDx * c - worldDz * s : worldDx;
+    var localZ = angle ? worldDx * s + worldDz * c : worldDz;
+    var closestX = clamp(localX, -rect.halfW, rect.halfW);
+    var closestZ = clamp(localZ, -rect.halfD, rect.halfD);
+    var dx = localX - closestX;
+    var dz = localZ - closestZ;
     var distSq = dx * dx + dz * dz;
     if (distSq >= minDist * minDist) return false;
 
@@ -13290,36 +19163,46 @@
       pushX = (dx / dist) * push;
       pushZ = (dz / dist) * push;
     } else {
-      var left = Math.abs(local.x + rect.halfW);
-      var right = Math.abs(rect.halfW - local.x);
-      var top = Math.abs(local.z + rect.halfD);
-      var bottom = Math.abs(rect.halfD - local.z);
+      var left = Math.abs(localX + rect.halfW);
+      var right = Math.abs(rect.halfW - localX);
+      var top = Math.abs(localZ + rect.halfD);
+      var bottom = Math.abs(rect.halfD - localZ);
       var minEdge = Math.min(left, right, top, bottom);
-      if (minEdge === left) pushX = -rect.halfW - minDist - local.x;
-      else if (minEdge === right) pushX = rect.halfW + minDist - local.x;
-      else if (minEdge === top) pushZ = -rect.halfD - minDist - local.z;
-      else pushZ = rect.halfD + minDist - local.z;
+      if (minEdge === left) pushX = -rect.halfW - minDist - localX;
+      else if (minEdge === right) pushX = rect.halfW + minDist - localX;
+      else if (minEdge === top) pushZ = -rect.halfD - minDist - localZ;
+      else pushZ = rect.halfD + minDist - localZ;
     }
 
-    var worldPush = rectLocalDeltaToWorld(pushX, pushZ, rect.rotation || 0);
-    circle.x += worldPush.x;
-    circle.z += worldPush.z;
+    circle.x += angle ? pushX * c + pushZ * s : pushX;
+    circle.z += angle ? -pushX * s + pushZ * c : pushZ;
     return true;
   }
 
   function pointHitsObstacle(x, z, radius) {
-    return visitObstaclesNearCircle(x, z, radius + 0.05, function (rect) {
-      return circleIntersectsRect(x, z, radius, rect);
-    });
+    pointObstacleQueryScratch.x = x;
+    pointObstacleQueryScratch.z = z;
+    pointObstacleQueryScratch.radius = radius;
+    return visitObstaclesNearCircle(x, z, radius + 0.05, pointHitsObstacleCallback);
+  }
+
+  function pointHitsObstacleCallback(rect) {
+    return circleIntersectsRect(pointObstacleQueryScratch.x, pointObstacleQueryScratch.z, pointObstacleQueryScratch.radius, rect);
   }
 
   function circleIntersectsRect(x, z, radius, rect) {
     var minDist = radius + rect.pad;
-    var local = worldToRectLocal(x, z, rect);
-    var closestX = clamp(local.x, -rect.halfW, rect.halfW);
-    var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
-    var dx = local.x - closestX;
-    var dz = local.z - closestZ;
+    var angle = rect.rotation || 0;
+    var c = rect.rotationCos == null ? Math.cos(angle) : rect.rotationCos;
+    var s = rect.rotationSin == null ? Math.sin(angle) : rect.rotationSin;
+    var worldDx = x - rect.x;
+    var worldDz = z - rect.z;
+    var localX = angle ? worldDx * c - worldDz * s : worldDx;
+    var localZ = angle ? worldDx * s + worldDz * c : worldDz;
+    var closestX = clamp(localX, -rect.halfW, rect.halfW);
+    var closestZ = clamp(localZ, -rect.halfD, rect.halfD);
+    var dx = localX - closestX;
+    var dz = localZ - closestZ;
     return dx * dx + dz * dz < minDist * minDist;
   }
 
@@ -13333,59 +19216,95 @@
   }
 
   function obstacleClearanceAt(x, z, radius) {
-    var best = 3;
-    visitObstaclesNearCircle(x, z, radius + 3.05, function (rect) {
-      var local = worldToRectLocal(x, z, rect);
-      var closestX = clamp(local.x, -rect.halfW, rect.halfW);
-      var closestZ = clamp(local.z, -rect.halfD, rect.halfD);
-      var dx = local.x - closestX;
-      var dz = local.z - closestZ;
-      var clearance = Math.sqrt(dx * dx + dz * dz) - (radius + rect.pad);
-      best = Math.min(best, clearance);
-      return false;
-    });
-    return clamp(best, -2, 3);
+    clearanceObstacleQueryScratch.x = x;
+    clearanceObstacleQueryScratch.z = z;
+    clearanceObstacleQueryScratch.radius = radius;
+    clearanceObstacleQueryScratch.best = 3;
+    visitObstaclesNearCircle(x, z, radius + 3.05, obstacleClearanceCallback);
+    return clamp(clearanceObstacleQueryScratch.best, -2, 3);
+  }
+
+  function obstacleClearanceCallback(rect) {
+    var query = clearanceObstacleQueryScratch;
+    var angle = rect.rotation || 0;
+    var c = rect.rotationCos == null ? Math.cos(angle) : rect.rotationCos;
+    var s = rect.rotationSin == null ? Math.sin(angle) : rect.rotationSin;
+    var worldDx = query.x - rect.x;
+    var worldDz = query.z - rect.z;
+    var localX = angle ? worldDx * c - worldDz * s : worldDx;
+    var localZ = angle ? worldDx * s + worldDz * c : worldDz;
+    var closestX = clamp(localX, -rect.halfW, rect.halfW);
+    var closestZ = clamp(localZ, -rect.halfD, rect.halfD);
+    var dx = localX - closestX;
+    var dz = localZ - closestZ;
+    var clearance = Math.sqrt(dx * dx + dz * dz) - (query.radius + rect.pad);
+    query.best = Math.min(query.best, clearance);
+    return false;
   }
 
   function findBlockingObstacle(x1, z1, x2, z2, radius, ignoreRect) {
-    var best = null;
-    var bestT = Infinity;
+    var query = blockingObstacleQueryScratch;
+    query.x1 = x1;
+    query.z1 = z1;
+    query.x2 = x2;
+    query.z2 = z2;
+    query.radius = radius;
+    query.ignoreRect = ignoreRect;
+    query.bestRect = null;
+    query.bestT = Infinity;
     var queryPad = radius + 0.75;
     visitObstaclesInAabb(
       Math.min(x1, x2) - queryPad,
       Math.max(x1, x2) + queryPad,
       Math.min(z1, z2) - queryPad,
       Math.max(z1, z2) + queryPad,
-      function (rect) {
-        if (rect === ignoreRect) return false;
-        var t = segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius);
-        if (t !== null && t > 0.015 && t < bestT) {
-          bestT = t;
-          best = { rect: rect, t: t };
-        }
-        return false;
-      }
+      findBlockingObstacleCallback
     );
-    return best;
+    if (!query.bestRect) return null;
+    var result = blockingObstacleResultPool[blockingObstacleResultCursor];
+    blockingObstacleResultCursor = (blockingObstacleResultCursor + 1) % blockingObstacleResultPool.length;
+    result.rect = query.bestRect;
+    result.t = query.bestT;
+    return result;
+  }
+
+  function findBlockingObstacleCallback(rect) {
+    var query = blockingObstacleQueryScratch;
+    if (rect === query.ignoreRect) return false;
+    var t = segmentExpandedRectEntry(query.x1, query.z1, query.x2, query.z2, rect, query.radius);
+    if (t !== null && t > 0.015 && t < query.bestT) {
+      query.bestT = t;
+      query.bestRect = rect;
+    }
+    return false;
   }
 
   function segmentExpandedRectEntry(x1, z1, x2, z2, rect, radius) {
-    var start = worldToRectLocal(x1, z1, rect);
-    var end = worldToRectLocal(x2, z2, rect);
+    var angle = rect.rotation || 0;
+    var c = rect.rotationCos == null ? Math.cos(angle) : rect.rotationCos;
+    var s = rect.rotationSin == null ? Math.sin(angle) : rect.rotationSin;
+    var startWorldX = x1 - rect.x;
+    var startWorldZ = z1 - rect.z;
+    var endWorldX = x2 - rect.x;
+    var endWorldZ = z2 - rect.z;
+    var startX = angle ? startWorldX * c - startWorldZ * s : startWorldX;
+    var startZ = angle ? startWorldX * s + startWorldZ * c : startWorldZ;
+    var endX = angle ? endWorldX * c - endWorldZ * s : endWorldX;
+    var endZ = angle ? endWorldX * s + endWorldZ * c : endWorldZ;
     var minX = -rect.halfW - rect.pad - radius;
     var maxX = rect.halfW + rect.pad + radius;
     var minZ = -rect.halfD - rect.pad - radius;
     var maxZ = rect.halfD + rect.pad + radius;
-    var dx = end.x - start.x;
-    var dz = end.z - start.z;
+    var dx = endX - startX;
+    var dz = endZ - startZ;
     var tMin = 0;
     var tMax = 1;
 
     if (Math.abs(dx) < 0.000001) {
-      if (start.x < minX || start.x > maxX) return null;
+      if (startX < minX || startX > maxX) return null;
     } else {
-      var tx1 = (minX - start.x) / dx;
-      var tx2 = (maxX - start.x) / dx;
+      var tx1 = (minX - startX) / dx;
+      var tx2 = (maxX - startX) / dx;
       if (tx1 > tx2) {
         var txSwap = tx1;
         tx1 = tx2;
@@ -13397,10 +19316,10 @@
     }
 
     if (Math.abs(dz) < 0.000001) {
-      if (start.z < minZ || start.z > maxZ) return null;
+      if (startZ < minZ || startZ > maxZ) return null;
     } else {
-      var tz1 = (minZ - start.z) / dz;
-      var tz2 = (maxZ - start.z) / dz;
+      var tz1 = (minZ - startZ) / dz;
+      var tz2 = (maxZ - startZ) / dz;
       if (tz1 > tz2) {
         var tzSwap = tz1;
         tz1 = tz2;
@@ -13821,6 +19740,7 @@
     return JSON.stringify({
       coordinateSystem: "origin arena center; x east/right; z south/down; y up",
       mode: state.mode,
+      paused: !!state.paused,
       wave: state.wave,
       waveSpawnTarget: state.waveSpawnTarget || getWaveZombieCount(state.wave),
       waveSpawnMultiplier: getWaveZombieMultiplier(state.wave),
@@ -13949,6 +19869,9 @@
         launcherUpgrade: state.launcherUpgrade,
         launcherUpgradePending: state.launcherUpgradePending,
         launcherUpgradeLevel: LAUNCHER_UPGRADE_LEVEL,
+        marshalUpgrade: state.marshalUpgrade,
+        marshalUpgradePending: state.marshalUpgradePending,
+        marshalUpgradeLevel: MARSHAL_UPGRADE_LEVEL,
         standardUpgradePending: state.standardUpgradePending,
         standardUpgradeLevel: state.standardUpgradeLevel,
         standardUpgradeChoices: state.standardUpgradeChoices.map(function (spec) {
@@ -13957,6 +19880,7 @@
         revolverSpecialLevel: isRevolverSpecialUpgradeLevel(state.standardUpgradeLevel),
         rifleSpecialLevel: isRifleSpecialUpgradeLevel(state.standardUpgradeLevel),
         launcherSpecialLevel: isLauncherSpecialUpgradeLevel(state.standardUpgradeLevel),
+        marshalSpecialLevel: isMarshalSpecialUpgradeLevel(state.standardUpgradeLevel),
         pendingStandardUpgrades: state.pendingStandardUpgradeLevels.length,
         standardUpgradesChosen: state.standardUpgradesChosen,
         upgrades: Object.assign({}, state.upgradeCounts),
@@ -13966,7 +19890,9 @@
           fanTheHammerTimer: Number((state.fanTheHammerTimer || 0).toFixed(2)),
           duelistFocus: Number((state.duelistFocus || 0).toFixed(2)),
           dualRicochets: getDualRicochetLimit(),
-          dualKillReloadCounter: state.dualKillReloadCounter || 0,
+          allRightAllLeft: hasAllRightAllLeft(),
+          dualHands: getAmmoState("revolver").dualHands || null,
+          dualFreeReloadsEarned: state.dualFreeReloadsEarned || 0,
           bigIronShotsFired: state.bigIronShotsFired || 0,
           bigIronRuptures: state.bigIronRuptures || 0,
           silverBulletAmmoKills: state.silverBulletAmmoKills || 0,
@@ -14024,6 +19950,57 @@
           fireDamage: getLauncherFireDamage(),
           blastRadius: Number(getLauncherBlastRadius().toFixed(2)),
           blastDamage: Number(getLauncherBlastDamage().toFixed(2)),
+          cascadeWarmup: {
+            pending: !!launcherCascadeWarmup.pending,
+            completed: !!launcherCascadeWarmup.completed,
+            stage: launcherCascadeWarmup.stage,
+            steps: launcherCascadeWarmup.steps,
+            lastMs: Number((launcherCascadeWarmup.lastMs || 0).toFixed(3)),
+            maxMs: Number((launcherCascadeWarmup.maxMs || 0).toFixed(3)),
+          },
+          shrapnelResourceWarmup: {
+            pending: !!launcherShrapnelResourceWarmup.pending,
+            completed: !!launcherShrapnelResourceWarmup.completed,
+            stage: launcherShrapnelResourceWarmup.stage,
+            steps: launcherShrapnelResourceWarmup.steps,
+            lastMs: Number((launcherShrapnelResourceWarmup.lastMs || 0).toFixed(3)),
+            maxMs: Number((launcherShrapnelResourceWarmup.maxMs || 0).toFixed(3)),
+          },
+        },
+        marshalSpecial: {
+          nextStartLevel: MARSHAL_SPECIAL_START_LEVEL,
+          interval: MARSHAL_SPECIAL_INTERVAL,
+          branch: state.marshalUpgrade,
+          pelletCount: getCoachGunPelletCount(),
+          spread: Number(getCoachGunSpread(false).toFixed(3)),
+          range: Number(getCoachGunRange().toFixed(2)),
+          visualPelletCount: getCoachGunVisualPelletCount(getCoachGunPelletCount()),
+          activeTracers: state.coachGunTracers.length,
+          tracerLimit: MAX_COACH_GUN_TRACERS,
+          masteryStacks: getMarshalMasteryStackCount(),
+          masteryDamageMultiplier: Number(getMarshalMasteryDamageMultiplier().toFixed(3)),
+          recoilSpeedTimer: Number((state.marshalRecoilSpeedTimer || 0).toFixed(2)),
+          shellCatcherKills: state.marshalShellCatcherKills || 0,
+          closeKills: state.marshalCloseKills || 0,
+          graveTitheKills: state.marshalGraveTitheKills || 0,
+          bountyTimer: Number((state.marshalBountyTimer || 0).toFixed(2)),
+          bountiesMarked: state.marshalBountiesMarked || 0,
+          bountiesClaimed: state.marshalBountiesClaimed || 0,
+          marksApplied: state.marshalMarksApplied || 0,
+          marksPassed: state.marshalMarksPassed || 0,
+          fearBursts: state.marshalFearBursts || 0,
+          generatedShells: state.marshalGeneratedShells || 0,
+          paleDeputies: getPaleDeputyDiagnostics(),
+          acidCleansed: state.marshalAcidCleansed || 0,
+          purifyReloadTimer: Number((state.marshalPurifyReloadTimer || 0).toFixed(2)),
+          hallowedGroundsCreated: state.marshalHallowedGroundsCreated || 0,
+          activeHallowedGrounds: state.marshalHallowedGrounds.length,
+          lastVolley: state.marshalLastVolley,
+          hallowedVisualPool: {
+            available: marshalHallowedVisualPool.length,
+            created: marshalHallowedVisualCreated,
+            inUse: marshalHallowedVisualInUse,
+          },
         },
         modifiers: {
           moveSpeed: Number((1 + (state.moveSpeedBonus || 0)).toFixed(3)),
@@ -14070,6 +20047,27 @@
             reloading: ammo.reloading,
             reloadRemaining: Number(ammo.reloadRemaining.toFixed(2)),
           };
+          if (ammo.dualHands) {
+            acc[id].dualHands = {
+              active: ammo.dualHands.active,
+              lastShot: ammo.dualHands.lastShot,
+              maxFreeReloads: ammo.dualHands.maxFreeReloads,
+              right: {
+                current: ammo.dualHands.right.current,
+                magazine: ammo.dualHands.right.magazine,
+                reloading: ammo.dualHands.right.reloading,
+                reloadRemaining: Number(ammo.dualHands.right.reloadRemaining.toFixed(2)),
+                freeReloads: ammo.dualHands.right.freeReloads,
+              },
+              left: {
+                current: ammo.dualHands.left.current,
+                magazine: ammo.dualHands.left.magazine,
+                reloading: ammo.dualHands.left.reloading,
+                reloadRemaining: Number(ammo.dualHands.left.reloadRemaining.toFixed(2)),
+                freeReloads: ammo.dualHands.left.freeReloads,
+              },
+            };
+          }
           return acc;
         }, {}),
       },
@@ -14152,6 +20150,13 @@
         aimTarget: getMobileAimTargetDiagnostics(),
         fieldFireActive: !!mobileFieldFire.active,
         fireActive: touchFire.active,
+        layoutEditing: !!state.controlLayoutEditing,
+        customLayout: !!controlLayoutState.saved,
+      },
+      audio: {
+        enabled: audioState.enabled,
+        musicVolumePercent: getAudioVolumePercent("music"),
+        sfxVolumePercent: getAudioVolumePercent("sfx"),
       },
       bullets: state.bullets.length,
       acidProjectiles: state.acidProjectiles.length,
@@ -14168,6 +20173,9 @@
       }),
       effects: {
         particles: state.particles.length,
+        coachGunTracers: state.coachGunTracers.length,
+        paleDeputyTracers: state.paleDeputyTracers.length,
+        paleDeputies: state.paleDeputies.length,
         smoke: state.smokePuffs.length,
         shockwaves: state.shockwaves.length,
         lightningBolts: state.lightningBolts.length,
@@ -14200,6 +20208,7 @@
           piercing: !!b.piercing,
           pierced: b.piercedEnemies ? b.piercedEnemies.length : 0,
           muzzleSide: b.muzzleSide || 0,
+          dualHand: b.dualHand || "",
           ricochetRemaining: b.ricochetRemaining || 0,
           ricochetDepth: b.ricochetDepth || 0,
           homing: Number((b.homing || 0).toFixed(3)),
@@ -14273,11 +20282,18 @@
       enemies: state.enemies.slice(0, 12).map(function (e) {
         return {
           type: e.type,
+          groupId: e.group.uuid,
           x: Number(e.x.toFixed(2)),
           z: Number(e.z.toFixed(2)),
           hp: Number(e.hp.toFixed(1)),
           xp: e.xp || 0,
           speed: Number(refreshZombieSpeed(e).toFixed(2)),
+          marked: isMarshalEnemyMarked(e),
+          markTimer: Number((e.marshalMarkTimer || 0).toFixed(2)),
+          bounty: !!e.marshalBounty,
+          bountyTimer: Number((e.marshalBountyTimer || 0).toFixed(2)),
+          stunTimer: Number((e.marshalStunTimer || 0).toFixed(2)),
+          fearTimer: Number((e.marshalFearTimer || 0).toFixed(2)),
           spawnSide: e.spawnSide === undefined ? null : e.spawnSide,
           outsideView: pointOutsideVisibleGround(e.x, e.z, e.radius + 0.2, visibleGround),
           insideEnemyBounds: pointInsideEnemyBounds(e.x, e.z, e.radius),
@@ -14316,6 +20332,8 @@
         rifleUpgradePending: state.rifleUpgradePending,
         launcherUpgrade: state.launcherUpgrade,
         launcherUpgradePending: state.launcherUpgradePending,
+        marshalUpgrade: state.marshalUpgrade,
+        marshalUpgradePending: state.marshalUpgradePending,
         standardUpgradePending: state.standardUpgradePending,
         pendingStandardUpgrades: state.pendingStandardUpgradeLevels.length,
         mode: state.mode,
@@ -14333,11 +20351,36 @@
     chooseLauncherUpgrade: function (id) {
       return chooseLauncherUpgrade(id);
     },
+    chooseMarshalUpgrade: function (id) {
+      return chooseMarshalUpgrade(id);
+    },
     chooseStandardUpgrade: function (id) {
       return chooseStandardUpgrade(id);
     },
     forceStandardUpgrade: function (id) {
       return forceStandardUpgradeForTest(id);
+    },
+    grantUpgrade: function (id) {
+      var spec = getStandardUpgradeById(id);
+      if (!spec) return false;
+      applyStandardUpgrade(spec);
+      updateHud();
+      return getUpgradeCount(id);
+    },
+    getEligibleMarshalUpgrades: function (level) {
+      return getEligibleMarshalSpecialUpgrades(Number(level) || state.level).map(function (spec) {
+        return spec.id;
+      });
+    },
+    rollMarshalSpecialChoices: function (level) {
+      return rollMarshalSpecialUpgradeChoices(Number(level) || state.level).map(function (spec) {
+        return {
+          id: spec.id,
+          title: spec.title,
+          description: spec.description,
+          masteryFallback: !!spec.masteryFallback,
+        };
+      });
     },
     forceAllStandardUpgrades: function (id) {
       var count = 0;
@@ -14359,6 +20402,38 @@
       killEnemy(enemy);
       updateHud();
       return true;
+    },
+    killNearestZombieWithCoachGun: function (marked, bounty) {
+      if (!state.player || !state.enemies.length) return false;
+      var enemy = findNearestEnemy(state.player.x, state.player.z, Infinity);
+      if (!enemy) return false;
+      if (marked || bounty) enemy.marshalMarkTimer = Math.max(enemy.marshalMarkTimer || 0, COACH_GUN_MARK_LIFE);
+      if (bounty) {
+        enemy.marshalBounty = true;
+        enemy.marshalBountyTimer = Math.max(enemy.marshalBountyTimer || 0, 4);
+        state.marshalBountyEnemy = enemy;
+      }
+      var distance = Math.hypot(enemy.x - state.player.x, enemy.z - state.player.z);
+      killEnemy(enemy, {
+        type: "coachGun",
+        pointBlank: distance <= COACH_GUN_POINT_BLANK_RANGE,
+        targetWasMarked: !!marked || !!bounty,
+        targetWasBounty: !!bounty,
+      });
+      updateHud();
+      return true;
+    },
+    getPaleDeputyDiagnostics: function () {
+      return getPaleDeputyDiagnostics();
+    },
+    spawnPaleDeputyAt: function (x, z) {
+      var deputy = tryRaisePaleDeputy(Number(x) || 0, Number(z) || 0);
+      return deputy ? getPaleDeputyDiagnostics().units.find(function (unit) { return unit.groupId === deputy.group.uuid; }) : null;
+    },
+    clearPaleDeputies: function () {
+      releaseAllPaleDeputies();
+      releaseAllPaleDeputyTracersToPool();
+      return getPaleDeputyDiagnostics();
     },
     clearEnemies: function () {
       releaseAllEnemiesToPool();
@@ -14583,8 +20658,14 @@
       state.ammo[weapon.id] = clamp(Number(current) || 0, 0, getWeaponMagazine(weapon));
       state.ammoReserve[weapon.id] = Math.max(0, Number(reserve) || 0);
       state.reloadTimers[weapon.id] = 0;
+      if (weapon.id === "revolver" && hasAllRightAllLeft()) setDualRevolverHandAmmoFromAggregate(state.ammo[weapon.id]);
       updateHud();
       return getAmmoState(weapon.id);
+    },
+    startReload: function (id) {
+      startReload(id || state.weapon);
+      updateHud();
+      return getAmmoState(id || state.weapon);
     },
     setPlayerPosition: function (x, z) {
       if (!state.player) return null;
@@ -14630,6 +20711,29 @@
       var fired = shoot();
       updateHud();
       return fired;
+    },
+    spawnAcidPuddleAt: function (x, z) {
+      spawnAcidPuddle(Number(x) || 0, Number(z) || 0);
+      return state.acidPuddles.length;
+    },
+    previewUpgradeCards: function (ids) {
+      var list = Array.isArray(ids) ? ids.slice(0, 10) : [];
+      var specs = list.map(getStandardUpgradeById).filter(Boolean);
+      setIntroActive(false);
+      state.standardUpgradeLevel = 13;
+      state.standardUpgradeChoices = specs;
+      state.mode = "level-up";
+      renderStandardUpgradeChoices();
+      setPanel(levelUpPanel, true);
+      setPanel(menu, false);
+      setPanel(classChoicePanel, false);
+      setPanel(revolverUpgradePanel, false);
+      setPanel(rifleUpgradePanel, false);
+      setPanel(launcherUpgradePanel, false);
+      setPanel(marshalUpgradePanel, false);
+      updateModeClass();
+      render();
+      return specs.map(function (spec) { return spec.id; });
     },
     readyNearestSpitter: function () {
       if (!state.player) return null;
@@ -14705,7 +20809,9 @@
     getParticleOptimizationStats: function () {
       return {
         visuals: getParticleVisualPoolStats(),
+        xpOrbVisuals: getXpOrbVisualPoolStats(),
         activeParticles: state.particles.length,
+        activeXpOrbs: state.xpOrbs.length,
       };
     },
     getProjectileOptimizationStats: function () {

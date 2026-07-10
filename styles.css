@@ -65,6 +65,10 @@ button:disabled {
 #game-root {
   position: fixed;
   inset: 0;
+  --combat-hud-top: 16px;
+  --combat-hud-right: 16px;
+  --ammo-hud-width: min(246px, calc(100vw - 32px));
+  --pause-menu-gap: 10px;
   overflow: hidden;
 }
 
@@ -157,14 +161,14 @@ canvas {
 
 .ammo-hud {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: var(--combat-hud-top);
+  right: var(--combat-hud-right);
   z-index: 4;
   display: none;
   grid-template-columns: 70px minmax(112px, 1fr);
   gap: 10px;
   align-items: center;
-  width: min(246px, calc(100vw - 32px));
+  width: var(--ammo-hud-width);
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 8px;
@@ -177,10 +181,35 @@ canvas {
   display: grid;
 }
 
+.pause-menu-btn {
+  position: fixed;
+  top: var(--combat-hud-top);
+  right: calc(var(--combat-hud-right) + var(--ammo-hud-width) + var(--pause-menu-gap));
+  z-index: 4;
+  display: none;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 24px;
+  line-height: 1;
+}
+
+#game-root.is-playing .pause-menu-btn {
+  display: grid;
+}
+
+#game-root.is-paused .pause-menu-btn {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .ammo-icon-frame {
   display: grid;
   place-items: center;
   height: 54px;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.08);
@@ -196,6 +225,12 @@ canvas {
   color: #ffffff;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35));
   shape-rendering: geometricPrecision;
+}
+
+.ammo-hud.is-dual-hands-ammo .ammo-weapon-icon {
+  width: 66px;
+  height: 36px;
+  transform: translateX(-2px);
 }
 
 .ammo-readout {
@@ -299,17 +334,48 @@ canvas {
   min-height: 55px;
 }
 
-.ammo-cartridge-rack[data-layout="dual"] {
+.ammo-cartridge-rack[data-layout="dual"],
+.ammo-cartridge-rack[data-layout="dual-hands"] {
   gap: 5px 5px;
   align-items: center;
 }
 
-.ammo-cartridge-rack[data-layout="dual"] .ammo-round[data-row="top"] {
+.ammo-cartridge-rack[data-layout="dual"] .ammo-round[data-row="top"],
+.ammo-cartridge-rack[data-layout="dual-hands"] .ammo-round[data-row="top"] {
   transform: translateY(-1px);
 }
 
-.ammo-cartridge-rack[data-layout="dual"] .ammo-round[data-row="bottom"] {
+.ammo-cartridge-rack[data-layout="dual"] .ammo-round[data-row="bottom"],
+.ammo-cartridge-rack[data-layout="dual-hands"] .ammo-round[data-row="bottom"] {
   transform: translateY(2px);
+}
+
+.ammo-cartridge-rack[data-layout="dual-hands"] {
+  position: relative;
+  padding-left: 13px;
+}
+
+.ammo-cartridge-rack[data-layout="dual-hands"]::before,
+.ammo-cartridge-rack[data-layout="dual-hands"]::after {
+  position: absolute;
+  left: 0;
+  width: 9px;
+  color: rgba(255, 220, 139, 0.92);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.ammo-cartridge-rack[data-layout="dual-hands"]::before {
+  content: "R";
+  top: 6px;
+}
+
+.ammo-cartridge-rack[data-layout="dual-hands"]::after {
+  content: "L";
+  bottom: 7px;
 }
 
 .ammo-cartridge-rack[data-magazine="3"] {
@@ -403,6 +469,36 @@ canvas {
 .ammo-round.is-silver-bullet .ammo-round-live::after {
   background: rgba(63, 7, 6, 0.86);
   box-shadow: 0 -2px 0 rgba(255, 197, 116, 0.45), inset 0 1px 0 rgba(255, 230, 191, 0.38);
+}
+
+.ammo-round.is-chain-lightning-round .ammo-round-live {
+  filter: drop-shadow(0 0 6px rgba(99, 226, 255, 0.72)) drop-shadow(0 1px 0 rgba(0, 0, 0, 0.4));
+  background:
+    linear-gradient(90deg, rgba(16, 42, 68, 0.98) 0%, rgba(146, 241, 255, 0.98) 33%, rgba(36, 119, 176, 0.98) 70%, rgba(8, 32, 58, 0.98) 100%);
+}
+
+.ammo-round.is-chain-lightning-round .ammo-round-live::before {
+  background: linear-gradient(90deg, #f6ffff 0%, #83ecff 46%, #1d7fd8 100%);
+  box-shadow: inset 2px 0 0 rgba(255, 255, 255, 0.52), 0 0 8px rgba(85, 224, 255, 0.7);
+}
+
+.ammo-round.is-chain-lightning-round .ammo-round-live::after {
+  background: rgba(8, 34, 64, 0.86);
+  box-shadow: 0 -2px 0 rgba(137, 239, 255, 0.62), inset 0 1px 0 rgba(238, 255, 255, 0.46);
+}
+
+.ammo-round.is-chain-lightning-round::after {
+  position: absolute;
+  z-index: 3;
+  left: 18%;
+  top: 21%;
+  width: 64%;
+  height: 58%;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(180deg, #f9ffff 0%, #76edff 48%, #227fe0 100%);
+  clip-path: polygon(54% 0, 76% 0, 58% 35%, 78% 35%, 34% 100%, 45% 58%, 25% 58%);
+  filter: drop-shadow(0 0 4px rgba(103, 231, 255, 0.82));
 }
 
 .ammo-cartridge-rack[data-weapon="launcher"] .ammo-round::before,
@@ -511,6 +607,11 @@ canvas {
   pointer-events: none;
   width: 204px;
   padding-top: 16px;
+}
+
+.minimap,
+.minimap * {
+  pointer-events: none;
 }
 
 #game-root.is-playing .minimap {
@@ -864,6 +965,185 @@ canvas {
   line-height: 1.45;
 }
 
+.pause-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: none;
+  place-items: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 50% 32%, rgba(255, 214, 138, 0.14), transparent 28%),
+    rgba(9, 6, 4, 0.68);
+  backdrop-filter: blur(8px);
+}
+
+.pause-menu.is-visible {
+  display: grid;
+}
+
+.pause-menu__panel {
+  position: relative;
+  display: grid;
+  width: min(430px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid rgba(255, 229, 173, 0.46);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(80, 43, 20, 0.92), rgba(23, 14, 8, 0.96)),
+    rgba(26, 16, 9, 0.94);
+  box-shadow:
+    0 26px 82px rgba(0, 0, 0, 0.52),
+    inset 0 1px 0 rgba(255, 242, 208, 0.1);
+}
+
+.pause-menu__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.pause-menu__view {
+  display: none;
+  gap: 14px;
+  padding-top: 8px;
+}
+
+.pause-menu__view.is-visible {
+  display: grid;
+}
+
+.pause-menu h2 {
+  margin: 0 48px 4px 0;
+  color: #ffe2a3;
+  font-size: clamp(30px, 6vw, 44px);
+  line-height: 1;
+}
+
+.pause-menu__actions {
+  display: grid;
+  gap: 10px;
+}
+
+.pause-menu__actions button {
+  width: 100%;
+}
+
+.pause-menu__danger {
+  background:
+    linear-gradient(180deg, #ffb36d, #c45b35 58%, #73301f);
+  color: #fff4da;
+}
+
+.pause-menu__danger:hover,
+.pause-menu__danger:focus-visible {
+  background:
+    linear-gradient(180deg, #ffc58a, #dd7047 58%, #8e3e29);
+}
+
+.pause-volume {
+  display: grid;
+  gap: 18px;
+  margin: 4px 0 6px;
+}
+
+.pause-volume__control {
+  display: grid;
+  gap: 10px;
+  color: #ffe8b7;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pause-volume__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.pause-volume output {
+  color: #ffffff;
+  font-size: 15px;
+}
+
+.pause-volume input[type="range"] {
+  width: 100%;
+  height: 28px;
+  accent-color: #f0a64a;
+}
+
+.control-layout-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 11;
+  display: none;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(7, 5, 3, 0.42), transparent 35%, rgba(7, 5, 3, 0.28)),
+    rgba(9, 6, 4, 0.16);
+}
+
+.control-layout-editor.is-visible {
+  display: block;
+}
+
+.control-layout-editor__bar {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 13;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  width: min(560px, calc(100vw - 28px));
+  padding: 10px;
+  border: 1px solid rgba(255, 229, 173, 0.46);
+  border-radius: 8px;
+  background: rgba(26, 16, 9, 0.9);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.control-layout-editor__bar strong {
+  color: #ffe2a3;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.control-layout-editor__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.control-layout-editor__actions button {
+  padding: 11px 14px;
+  font-size: 12px;
+}
+
+#game-root.is-layout-editing .pause-menu {
+  display: none;
+}
+
+#game-root.is-paused .mobile-controls {
+  pointer-events: none;
+}
+
 #game-root.is-menu .hud {
   opacity: 0;
   pointer-events: none;
@@ -1063,15 +1343,25 @@ canvas {
   gap: 12px;
 }
 
+.class-options--classes {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#class-choice {
+  width: min(980px, calc(100vw - 32px));
+}
+
 .revolver-upgrade-panel,
 .rifle-upgrade-panel,
-.launcher-upgrade-panel {
+.launcher-upgrade-panel,
+.marshal-upgrade-panel {
   width: min(560px, calc(100vw - 32px));
 }
 
 .revolver-upgrade-panel .class-options,
 .rifle-upgrade-panel .class-options,
-.launcher-upgrade-panel .class-options {
+.launcher-upgrade-panel .class-options,
+.marshal-upgrade-panel .class-options {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
@@ -1188,6 +1478,23 @@ canvas {
   filter:
     drop-shadow(0 1px 0 rgba(255, 248, 220, 0.52))
     drop-shadow(0 4px 5px rgba(45, 20, 7, 0.24));
+}
+
+.class-card__weapon-icon[data-weapon-icon^="coachGun"] {
+  filter: drop-shadow(0 4px 5px rgba(45, 20, 7, 0.24));
+}
+
+.class-card__weapon-icon[data-weapon-icon="coachGunBreach"] {
+  --coach-gun-breach-accent: #321b0e;
+}
+
+.class-card__weapon-icon[data-weapon-icon="coachGunGrave"] {
+  --coach-gun-grave-accent: #b77932;
+}
+
+.marshal-upgrade-panel .class-card__mark::before,
+.marshal-upgrade-panel .class-card__mark::after {
+  opacity: 0.12;
 }
 
 .class-card__mark--dual {
@@ -1372,6 +1679,17 @@ canvas {
   line-height: 0.98;
 }
 
+.upgrade-card__subtitle {
+  display: block;
+  margin-top: 3px;
+  color: #713716 !important;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px !important;
+  font-style: italic;
+  line-height: 1 !important;
+  text-align: center;
+}
+
 .class-card > span:not(.class-card__mark) {
   position: relative;
   z-index: 2;
@@ -1407,6 +1725,16 @@ canvas {
   pointer-events: none;
 }
 
+#game-root.has-custom-controls .mobile-controls,
+#game-root.is-layout-editing .mobile-controls {
+  inset: 0;
+}
+
+#game-root.is-layout-editing .mobile-controls {
+  z-index: 12;
+  display: block;
+}
+
 .move-stick,
 .mobile-fire {
   position: absolute;
@@ -1414,6 +1742,38 @@ canvas {
   pointer-events: auto;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+#game-root.has-custom-controls .move-stick,
+#game-root.is-layout-editing .move-stick,
+#game-root.has-custom-controls .mobile-fire,
+#game-root.is-layout-editing .mobile-fire {
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+
+#game-root.has-custom-controls .move-stick,
+#game-root.is-layout-editing .move-stick {
+  left: var(--move-stick-left);
+  top: var(--move-stick-top);
+}
+
+#game-root.has-custom-controls .mobile-fire,
+#game-root.is-layout-editing .mobile-fire {
+  left: var(--mobile-fire-left);
+  top: var(--mobile-fire-top);
+}
+
+#game-root.is-layout-editing .move-stick,
+#game-root.is-layout-editing .mobile-fire {
+  cursor: grab;
+}
+
+#game-root.is-layout-editing .move-stick.is-layout-dragging,
+#game-root.is-layout-editing .mobile-fire.is-layout-dragging {
+  cursor: grabbing;
+  filter: brightness(1.14);
 }
 
 .move-stick {
@@ -1577,6 +1937,12 @@ canvas {
 }
 
 @media (max-width: 640px) {
+  #game-root {
+    --combat-hud-top: 10px;
+    --combat-hud-right: 10px;
+    --ammo-hud-width: 226px;
+  }
+
   .menu-panel {
     top: auto;
     bottom: 16px;
@@ -1611,11 +1977,32 @@ canvas {
   }
 
   .ammo-hud {
-    top: 10px;
-    right: 10px;
     grid-template-columns: 64px minmax(112px, 1fr);
-    width: 226px;
     padding: 8px;
+  }
+
+  .pause-menu-btn {
+    width: 42px;
+    height: 42px;
+    font-size: 21px;
+  }
+
+  .pause-menu__panel {
+    padding: 20px;
+  }
+
+  .pause-menu h2 {
+    font-size: clamp(28px, 9vw, 38px);
+  }
+
+  .control-layout-editor__bar {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .control-layout-editor__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   .ammo-icon-frame {
@@ -1655,7 +2042,7 @@ canvas {
     --round-h: 31px;
   }
 
-  .ammo-cartridge-rack[data-weapon="launcher"] {
+.ammo-cartridge-rack[data-weapon="launcher"] {
     --round-w: 19px;
     --round-h: 32px;
     gap: 9px;
@@ -1672,6 +2059,47 @@ canvas {
     bottom: 5vh;
   }
 
+}
+
+.ammo-cartridge-rack[data-weapon="coachGun"] {
+  --ammo-cols: 2;
+  --round-w: 20px;
+  --round-h: 36px;
+  gap: 14px;
+}
+
+.ammo-cartridge-rack[data-weapon="coachGun"] .ammo-round::before,
+.ammo-cartridge-rack[data-weapon="coachGun"] .ammo-round-live {
+  border-radius: 3px 3px 5px 5px;
+  clip-path: polygon(17% 0, 83% 0, 90% 8%, 90% 79%, 100% 84%, 100% 96%, 88% 100%, 12% 100%, 0 96%, 0 84%, 10% 79%, 10% 8%);
+}
+
+.ammo-cartridge-rack[data-weapon="coachGun"] .ammo-round-live {
+  background:
+    linear-gradient(90deg, rgba(55, 3, 3, 0.82), rgba(255, 112, 74, 0.92) 34%, rgba(140, 17, 12, 0.96) 73%, rgba(45, 2, 2, 0.9)),
+    linear-gradient(180deg, #d43826 0 72%, #d8a74a 72% 100%);
+  box-shadow: inset 0 -8px 0 rgba(210, 158, 58, 0.92);
+}
+
+.ammo-cartridge-rack[data-weapon="coachGun"] .ammo-round-live::before {
+  left: 12%;
+  right: 12%;
+  top: 0;
+  height: 12%;
+  border-radius: 50%;
+  clip-path: none;
+  background: linear-gradient(90deg, #8f140f, #ff8b66 42%, #7e0b08);
+  box-shadow: inset 0 2px 0 rgba(255, 211, 180, 0.32);
+}
+
+.ammo-cartridge-rack[data-weapon="coachGun"] .ammo-round-live::after {
+  left: 8%;
+  right: 8%;
+  bottom: 3%;
+  height: 17%;
+  border-radius: 1px 1px 50% 50%;
+  background: linear-gradient(90deg, #765018, #f0cc70 45%, #7c4d14);
+  box-shadow: inset 0 1px 0 rgba(255, 244, 187, 0.66);
 }
 
 @media (max-width: 520px) {
@@ -1819,7 +2247,7 @@ canvas {
 
   .minimap {
     left: 50%;
-    bottom: max(56px, calc(env(safe-area-inset-bottom) + 42px));
+    bottom: 0;
     width: 136px;
     padding: 13px 0 0;
     opacity: 0.54;
@@ -1916,6 +2344,73 @@ canvas {
 }
 
 @media (orientation: landscape) and (max-width: 960px) and (max-height: 520px) {
+  .pause-menu {
+    padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+
+  .pause-menu__panel {
+    width: min(520px, calc(100vw - 20px));
+    max-height: calc(100dvh - 20px);
+    overflow: hidden;
+    padding: 12px;
+  }
+
+  .pause-menu__close {
+    top: 8px;
+    right: 8px;
+    width: 34px;
+    height: 34px;
+    font-size: 24px;
+  }
+
+  .pause-menu__view {
+    gap: 9px;
+    padding-top: 0;
+  }
+
+  .pause-menu h2 {
+    margin: 0 42px 0 0;
+    font-size: 26px;
+  }
+
+  .pause-menu__actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .pause-menu__actions button {
+    min-width: 0;
+    padding: 11px 12px;
+    font-size: 12px;
+  }
+
+  #pause-main-panel .pause-menu__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .pause-volume {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0;
+  }
+
+  .pause-volume__control {
+    gap: 5px;
+  }
+
+  .pause-volume__head {
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .pause-volume output {
+    font-size: 13px;
+  }
+
+  .pause-volume input[type="range"] {
+    height: 22px;
+  }
+
   .menu-panel {
     top: 12px;
     bottom: auto;
@@ -1958,9 +2453,14 @@ canvas {
     gap: 8px;
   }
 
+  .class-options--classes {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .revolver-upgrade-panel .class-options,
   .rifle-upgrade-panel .class-options,
-  .launcher-upgrade-panel .class-options {
+  .launcher-upgrade-panel .class-options,
+  .marshal-upgrade-panel .class-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2075,7 +2575,7 @@ canvas {
   }
 
   .class-card {
-    grid-template-rows: 46px 23px 38px;
+    grid-template-rows: 46px 23px minmax(38px, auto);
     gap: 5px;
     min-height: 148px;
     padding: 20px 8px 14px;
@@ -2133,6 +2633,37 @@ canvas {
 @media (max-width: 520px), (orientation: landscape) and (max-width: 960px) and (max-height: 520px) {
   .upgrade-card__icon * {
     vector-effect: none;
+  }
+}
+
+.marshal-upgrade-panel .class-card__mark {
+  width: 116px;
+}
+
+.marshal-upgrade-panel .class-card__weapon-icon {
+  width: 106px;
+  height: 50px;
+}
+
+@media (max-width: 760px), (orientation: landscape) and (max-width: 960px) and (max-height: 520px) {
+  .marshal-upgrade-panel .class-card__mark {
+    width: 88px;
+  }
+
+  .marshal-upgrade-panel .class-card__weapon-icon {
+    width: 80px;
+    height: 36px;
+  }
+}
+
+@media (orientation: landscape) and (max-width: 760px) and (max-height: 400px) {
+  .marshal-upgrade-panel .class-card__mark {
+    width: 84px;
+  }
+
+  .marshal-upgrade-panel .class-card__weapon-icon {
+    width: 78px;
+    height: 34px;
   }
 }
 
