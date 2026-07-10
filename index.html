@@ -46,6 +46,8 @@
         </div>
       </div>
 
+      <button id="pause-menu-btn" class="pause-menu-btn" type="button" aria-label="Открыть меню" aria-controls="pause-menu" aria-expanded="false" title="Меню">&#9776;</button>
+
       <section id="intro-screen" class="intro-screen is-visible" role="button" tabindex="0" aria-label="Press any button to open the menu">
         <div class="intro-screen__inner">
           <div class="intro-screen__title">Dust &amp; Dead</div>
@@ -72,10 +74,59 @@
         <button id="restart-btn" type="button">Ride Again</button>
       </section>
 
+      <section id="pause-menu" class="pause-menu" aria-label="Игровое меню" aria-hidden="true">
+        <div class="pause-menu__panel" role="dialog" aria-modal="true" aria-labelledby="pause-menu-title">
+          <button id="pause-close-btn" class="pause-menu__close" type="button" aria-label="Закрыть меню" title="Закрыть">&times;</button>
+
+          <div id="pause-main-panel" class="pause-menu__view is-visible">
+            <h2 id="pause-menu-title">Пауза</h2>
+            <div class="pause-menu__actions">
+              <button id="pause-continue-btn" type="button">Продолжить</button>
+              <button id="pause-settings-btn" type="button">Настройки</button>
+              <button id="pause-exit-btn" class="pause-menu__danger" type="button">Выход</button>
+            </div>
+          </div>
+
+          <div id="pause-settings-panel" class="pause-menu__view" aria-label="Настройки звука">
+            <h2>Настройки</h2>
+            <div class="pause-volume">
+              <label class="pause-volume__control" for="music-volume">
+                <span class="pause-volume__head">
+                  <span>Музыка</span>
+                  <output id="music-volume-value" for="music-volume">100%</output>
+                </span>
+                <input id="music-volume" type="range" min="0" max="200" step="1" value="100">
+              </label>
+              <label class="pause-volume__control" for="sfx-volume">
+                <span class="pause-volume__head">
+                  <span>Звуковые эффекты</span>
+                  <output id="sfx-volume-value" for="sfx-volume">100%</output>
+                </span>
+                <input id="sfx-volume" type="range" min="0" max="200" step="1" value="100">
+              </label>
+            </div>
+            <div class="pause-menu__actions">
+              <button id="control-layout-btn" type="button">Расположение кнопок</button>
+              <button id="pause-settings-back-btn" type="button">Назад</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="control-layout-editor" class="control-layout-editor" aria-label="Расположение кнопок" aria-hidden="true">
+        <div class="control-layout-editor__bar">
+          <strong>Расположение кнопок</strong>
+          <div class="control-layout-editor__actions">
+            <button id="control-layout-apply-btn" type="button">Применить</button>
+            <button id="control-layout-reset-btn" type="button">Сбросить</button>
+          </div>
+        </div>
+      </section>
+
       <section id="class-choice" class="panel class-choice-panel" aria-label="Class choice">
         <h2>Choose Your Path</h2>
         <p>Level 5. Pick a role for this run.</p>
-        <div class="class-options">
+        <div class="class-options class-options--classes">
           <button class="class-card class-card--black" type="button" data-class="gunslinger" data-rank="A" data-suit="&spades;">
             <span class="class-card__mark" aria-hidden="true">
               <svg class="class-card__weapon-icon" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
@@ -96,6 +147,13 @@
             </span>
             <strong>Demolitionist</strong>
             <span>Unlock launcher; crates give +6 grenades</span>
+          </button>
+          <button class="class-card class-card--red" type="button" data-class="marshal" data-rank="J" data-suit="&diams;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="coachGun" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Marshal</strong>
+              <span>Coach Gun: breach or consecrated path</span>
           </button>
         </div>
       </section>
@@ -160,6 +218,27 @@
             </span>
             <strong>Pyrotechnician</strong>
             <span>Fire pools, fire healing, +9 crate ammo</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="marshal-upgrade" class="panel class-choice-panel marshal-upgrade-panel" aria-label="Marshal upgrade choice">
+        <h2>Choose Your Oath</h2>
+        <p>Level 10. The Marshal path splits.</p>
+        <div class="class-options">
+          <button class="class-card class-card--red" type="button" data-marshal-upgrade="breachMarshal" data-rank="K" data-suit="&diams;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="coachGunBreach" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Breach Marshal</strong>
+            <span>Sawed-off spread, brutal knockback, point-blank momentum</span>
+          </button>
+          <button class="class-card class-card--black" type="button" data-marshal-upgrade="graveWarden" data-rank="A" data-suit="&spades;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="coachGunGrave" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Grave Warden</strong>
+            <span>Tight choke, consecrated marks, control and purification</span>
           </button>
         </div>
       </section>
