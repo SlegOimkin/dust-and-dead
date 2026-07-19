@@ -148,6 +148,20 @@
   // Network interest is deliberately larger than the render culling area. A damaging
   // object must reach a client before it can enter the camera or touch that player.
   var MULTIPLAYER_ENEMY_RELEVANCE_PAD = 20;
+  // Tight array filtering wins comfortably at normal late-wave populations.
+  // Spatial selection is reserved for synthetic/extreme hordes where it can
+  // skip thousands of entries rather than adding Map overhead to 700-1300.
+  var MULTIPLAYER_ENEMY_SPATIAL_SELECTION_MIN_COUNT = 2500;
+  var MULTIPLAYER_ENEMY_SPATIAL_BOUNDS_COVERAGE_LIMIT = 0.6;
+  var MULTIPLAYER_ENEMY_SPATIAL_CANDIDATE_LIMIT = 0.6;
+  // A hash-map cell lookup is materially more expensive than one tight array
+  // predicate in Chromium. Use spatial selection only when it skips enough of
+  // the horde to repay those probes; otherwise retain the proven linear path.
+  var MULTIPLAYER_ENEMY_SPATIAL_CELL_PROBE_WEIGHT = 4;
+  var multiplayerEnemyRelevanceSelectorMode = (function () {
+    var requested = new URLSearchParams(window.location.search || "").get("enemyRelevance");
+    return requested === "linear" || requested === "spatial" ? requested : "hybrid";
+  })();
   var MULTIPLAYER_PROJECTILE_RELEVANCE_PAD = 24;
   var MULTIPLAYER_HAZARD_WARNING_PAD = 5;
   var MULTIPLAYER_SCOPE_REMOVAL_GUARD = 4;
@@ -193,6 +207,7 @@
   var SCORCH_DECAL_VISUAL_PREWARM = MAX_DECALS;
   var MAX_DEBRIS = 120;
   var DEATH_DEBRIS_VISUAL_PREWARM = MAX_DEBRIS;
+  var DEATH_DEBRIS_GROUND_CLEARANCE = 0.12;
   var CONTACT_SHADOW_SURFACE_Y = 0.112;
   var MAX_AMMO_CRATES = 4;
   var MAX_XP_ORBS = 140;
@@ -498,6 +513,8 @@
   var GHOST_TRAIN_TUNNEL_PHASE = 3;
   var GHOST_TRAIN_TUNNEL_DURATION = 2.65;
   var GHOST_TRAIN_TUNNEL_ENTRY_DURATION = 1;
+  var GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY = 0.25;
+  var GHOST_TRAIN_TUNNEL_ENTRY_PORTAL_LEAD = 7.5;
   var GHOST_TRAIN_TUNNEL_PORTAL_LEAD = 5.4;
   var GHOST_TRAIN_TUNNEL_EXIT_TRAVEL = 15;
   var GHOST_TRAIN_TUNNEL_EXIT_ATTACK_FORWARD = 16;
@@ -510,6 +527,7 @@
   var GHOST_TRAIN_TUNNEL_PYLON_CAP = 12;
   var GHOST_TRAIN_TUNNEL_ROOF_SLAB_COUNT = 4;
   var GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH = 1.25;
+  var GHOST_TRAIN_TUNNEL_HIDE_MARGIN = 0.5;
   var GHOST_TRAIN_TUNNEL_STONE_COLORS = [0x788286, 0x59656a, 0x89918f, 0x4c595e];
   var GHOST_TRAIN_TUNNEL_RIM_MAX_TWIST = 0.015;
   var ghostTrainTunnelDissolveUniforms = {
@@ -633,7 +651,8 @@
     [0, 0], [-1, 0], [1, 0], [0, -1], [0, 1],
     [-1, -1], [1, -1], [-1, 1], [1, 1],
   ];
-  var ZOMBIE_INSTANCING_THRESHOLD = 160;
+  var ZOMBIE_INSTANCING_THRESHOLD = 48;
+  var ZOMBIE_INSTANCING_RELEASE_THRESHOLD = 24;
   var ZOMBIE_INSTANCE_CHUNK_CAPACITY = 1024;
   var ZOMBIE_CLEAR_DIRECTION_OFFSETS = [0, 0.28, -0.28, 0.58, -0.58, 0.95, -0.95, 1.35, -1.35, Math.PI];
   var ZOMBIE_CLEAR_DIRECTION_COS = ZOMBIE_CLEAR_DIRECTION_OFFSETS.map(Math.cos);
@@ -705,6 +724,11 @@
   var LAUNCHER_CROSSFIRE_TRAIL_INTERVAL = 0.14;
   var MAX_NETWORK_FIRE_PATCHES_PER_VIEW = 128;
   var MAX_DETAILED_FIRE_PATCH_VISUALS = 100;
+  // A current detailed patch keeps a very small distance advantage. This is
+  // visual-only hysteresis: it prevents the 100th/101st patches from swapping
+  // GPU layouts when the camera moves a few centimetres, while a meaningfully
+  // closer patch still takes the detailed slot.
+  var FIRE_DETAIL_RETAIN_DISTANCE_SCORE = 0.96;
   var FIRE_GPU_DETAIL_LAYER_CAPACITY = {
     ground: MAX_DETAILED_FIRE_PATCH_VISUALS,
     flameCore: MAX_DETAILED_FIRE_PATCH_VISUALS * 24,
@@ -743,6 +767,7 @@
   var RIFLE_LIGHTNING_SHOT_INTERVAL = 4;
   var RIFLE_LIGHTNING_BASE_TARGETS = 4;
   var MAX_RIFLE_TRAPS = 240;
+  var RIFLE_TRAP_GRID_QUERY_OVERHEAD_ESTIMATE = 64;
   // Only viewport-relevant traps own a model. Prewarm the full per-client view
   // budget; denser local clusters may still grow the pool on demand.
   var RIFLE_TRAP_VISUAL_ACTIVE_PREWARM = MAX_NETWORK_RIFLE_TRAPS_PER_VIEW;
@@ -770,8 +795,15 @@
   var ACID_PUDDLE_LIFE = 5.8;
   var ACID_PUDDLE_DAMAGE = 8;
   var ACID_PUDDLE_DAMAGE_INTERVAL = 0.42;
+  var ACID_PUDDLE_BASE_SURFACE_Y = 0.09;
+  var ACID_PUDDLE_ROAD_CLEARANCE = 0.012;
   var MAX_ACID_PROJECTILES = 60;
   var MAX_ACID_PUDDLES = 50;
+  // Projectile color lobes stay on the normal camera layer so Three.js keeps
+  // the authored per-mesh transparent depth order. Their identical shadow
+  // silhouettes are submitted through seven instanced layers seen only by
+  // the gameplay shadow camera.
+  var ACID_PROJECTILE_SHADOW_LAYER = 28;
   var ACID_PROJECTILE_VISUAL_PREWARM = 12;
   var ACID_PUDDLE_VISUAL_PREWARM = 10;
   var MOBILE_RENDER_MODE = isMobileRuntime();
@@ -1020,6 +1052,7 @@
   var zombieSpatialGrid = new Map();
   var zombieSpatialGridKeys = [];
   var zombieSpatialBucketPool = [];
+  var zombieActiveNetworkIds = new Set();
   var zombieSeparationScratch = { x: 0, z: 0 };
   var zombieFarSteerScratch = { x: 0, z: 1 };
   var zombieTeleportSideCountScratch = [0, 0, 0, 0];
@@ -1064,6 +1097,11 @@
     cellCount: 0,
     maxBucketSize: 0,
     occupants: 0,
+    maxRadius: 0,
+    minCellX: 0,
+    maxCellX: -1,
+    minCellZ: 0,
+    maxCellZ: -1,
     separationChecks: 0,
     separationBudgetHits: 0,
     fullRateUpdates: 0,
@@ -1071,6 +1109,16 @@
     farRateSkips: 0,
     offscreenEngagedUpdates: 0,
     offscreenEngagedSkips: 0,
+  };
+  var multiplayerEnemyRelevanceStats = {
+    linearSelections: 0,
+    spatialSelections: 0,
+    hybridFallbacks: 0,
+    candidateChecks: 0,
+    lastCandidateChecks: 0,
+    lastSelected: 0,
+    lastMode: "none",
+    activeIdCacheMismatches: 0,
   };
   var firePatchSpatialIndex = createHazardSpatialIndex("fire");
   var guestFirePatchSpatialIndex = createHazardSpatialIndex("guestFire");
@@ -1090,6 +1138,18 @@
   var rifleTrapSpatialScratch = [];
   var rifleTrapCandidateSet = new Set();
   var rifleTrapVisibleSet = new Set();
+  var rifleTrapCandidateStats = {
+    builds: 0,
+    trapCentricBuilds: 0,
+    enemyCentricBuilds: 0,
+    fullEnemyScans: 0,
+    lastMode: "none",
+    lastGridCellProbes: 0,
+    lastCandidateChecks: 0,
+    lastCandidateCount: 0,
+  };
+  var rifleTrapVisibleTargetX = NaN;
+  var rifleTrapVisibleTargetZ = NaN;
   var hazardSpatialOrderSequence = 0;
   var gameplayWarmupMode = false;
   var launcherCascadeWarmup = {
@@ -1152,6 +1212,12 @@
   var acidProjectileVisualPool = [];
   var acidProjectileVisualCreated = 0;
   var acidProjectileVisualInUse = 0;
+  var acidProjectileVisualRegistry = [];
+  var acidPuddleVisualRegistry = [];
+  var acidInstancedBatch = null;
+  var acidInstancingMode = "pending";
+  var acidInstancingFallbackReason = "";
+  var acidForceVisualFallback = new URLSearchParams(window.location.search || "").get("acidVisualFallback") === "1";
   var acidVisualWarmupTurn = 0;
   var rifleTrapVisualPool = [];
   var rifleTrapVisualCreated = 0;
@@ -1462,6 +1528,12 @@
   var deathDebrisVisualPool = [];
   var deathDebrisVisualCreated = 0;
   var deathDebrisVisualInUse = 0;
+  var deathDebrisInstancedBatches = Object.create(null);
+  var deathDebrisInstancedBatchList = [];
+  var deathDebrisBatchFallbacks = 0;
+  var deathDebrisBatchHandoffs = 0;
+  var deathDebrisForceVisualFallback = new URLSearchParams(window.location.search || "").get("debrisVisualFallback") === "1";
+  var deathDebrisBatchWarmupSuppressed = false;
   var projectileVisualPools = {
     standard: [],
     launcher: [],
@@ -1543,6 +1615,8 @@
   var renderingAnimationFrame = false;
   var deathDebrisWorldPosScratch = new THREE.Vector3();
   var deathDebrisWorldQuatScratch = new THREE.Quaternion();
+  var effectBatchRootInverseScratch = new THREE.Matrix4();
+  var effectBatchMatrixScratch = new THREE.Matrix4();
   var launcherShrapnelStartScratch = new THREE.Vector3();
   var launcherExplosionEnemiesScratch = [];
   var launcherExplosionDamageScratch = [];
@@ -4386,6 +4460,7 @@
     gameplaySun.shadow.mapSize.set(2048, 2048);
     gameplaySun.shadow.camera.near = 8;
     gameplaySun.shadow.camera.far = 88;
+    gameplaySun.shadow.camera.layers.enable(ACID_PROJECTILE_SHADOW_LAYER);
     gameplaySun.target.position.set(0, 0, 0);
     scene.add(gameplaySun, gameplaySun.target);
 
@@ -4523,8 +4598,8 @@
   function buildMenuEnvironment() {
     var menuMats = menuState.mats;
     addSharedBox(menuWorldRoot, 92, 0.32, 92, mats.sand, 0, -0.18, 0);
-    configureRoadSurface(addSharedBox(menuWorldRoot, 18, 0.08, 56, mats.road, 1.5, 0.02, -4.5), 0.08);
-    var angledMenuRoad = configureRoadSurface(addSharedBox(menuWorldRoot, 30, 0.06, 10, mats.road, -9.5, 0.03, 10.5), 0.06);
+    configureRoadSurface(addSharedBox(menuWorldRoot, 18, 0.08, 56, mats.road, 1.5, 0.02, -4.5), 0.08, 18, 56);
+    var angledMenuRoad = configureRoadSurface(addSharedBox(menuWorldRoot, 30, 0.06, 10, mats.road, -9.5, 0.03, 10.5), 0.06, 30, 10);
     angledMenuRoad.rotation.z = -0.06;
 
     for (var i = 0; i < 18; i++) {
@@ -4820,12 +4895,12 @@
 
   function addRoad(w, h, d, x, y, z, pad, type) {
     var road = addBox(worldRoot, w, h, d, mats.road, x, y, z);
-    configureRoadSurface(road, h);
+    configureRoadSurface(road, h, w, d);
     registerMapFootprint(type || "road-clear", x, z, w, d, pad || 0.2, false);
     return road;
   }
 
-  function configureRoadSurface(road, height) {
+  function configureRoadSurface(road, height, width, depth) {
     if (!road) return road;
     road.castShadow = false;
     road.receiveShadow = false;
@@ -4833,6 +4908,8 @@
     road.userData.isRoadSurface = true;
     road.userData.noDebris = true;
     road.userData.surfaceTopY = road.position.y + (Number(height) || 0) / 2;
+    road.userData.surfaceHalfW = Math.max(0, Number(width) || 0) / 2;
+    road.userData.surfaceHalfD = Math.max(0, Number(depth) || 0) / 2;
     roadSurfaceMaxTopY = Math.max(roadSurfaceMaxTopY, road.userData.surfaceTopY);
     roadSurfaceMeshes.push(road);
     return road;
@@ -4843,6 +4920,27 @@
       Math.max(0, Number(baseY) || 0),
       Math.max(0, Number(roadSurfaceMaxTopY) || 0) + Math.max(0, Number(clearance) || 0)
     );
+  }
+
+  function getRoadSurfaceTopYAt(x, z) {
+    var topY = 0;
+    for (var i = 0; i < roadSurfaceMeshes.length; i++) {
+      var road = roadSurfaceMeshes[i];
+      if (!road || road.parent !== worldRoot || !road.userData) continue;
+      var halfW = Math.max(0, Number(road.userData.surfaceHalfW) || 0);
+      var halfD = Math.max(0, Number(road.userData.surfaceHalfD) || 0);
+      if (Math.abs(x - road.position.x) > halfW || Math.abs(z - road.position.z) > halfD) continue;
+      topY = Math.max(topY, Math.max(0, Number(road.userData.surfaceTopY) || 0));
+    }
+    return topY;
+  }
+
+  function getAcidPuddleSurfaceY() {
+    return getRoadSafeGroundOverlayY(ACID_PUDDLE_BASE_SURFACE_Y, ACID_PUDDLE_ROAD_CLEARANCE);
+  }
+
+  function getDeathDebrisRestY(x, z) {
+    return getRoadSurfaceTopYAt(x, z) + DEATH_DEBRIS_GROUND_CLEARANCE;
   }
 
   function addRoadIfLargeClear(w, h, d, x, y, z, pad, type) {
@@ -6062,6 +6160,8 @@
     var shadowCastingRoads = 0;
     var shadowReceivingRoads = 0;
     var minRoadSurfaceTopY = Infinity;
+    var maxRoadSurfaceTopY = -Infinity;
+    var sampleGameplayRoad = null;
     for (var i = 0; i < roadSurfaceMeshes.length; i++) {
       var road = roadSurfaceMeshes[i];
       if (!road) continue;
@@ -6069,6 +6169,14 @@
       if (road.receiveShadow) shadowReceivingRoads += 1;
       if (road.userData && isFinite(road.userData.surfaceTopY)) {
         minRoadSurfaceTopY = Math.min(minRoadSurfaceTopY, road.userData.surfaceTopY);
+        maxRoadSurfaceTopY = Math.max(maxRoadSurfaceTopY, road.userData.surfaceTopY);
+        if (!sampleGameplayRoad && road.parent === worldRoot) {
+          sampleGameplayRoad = {
+            x: Number(road.position.x.toFixed(4)),
+            z: Number(road.position.z.toFixed(4)),
+            topY: Number(road.userData.surfaceTopY.toFixed(4)),
+          };
+        }
       }
     }
 
@@ -6086,7 +6194,53 @@
       shadowReceivingRoads: shadowReceivingRoads,
       terrainPatchCount: terrainPatchMeshes.length,
       minRoadSurfaceTopY: isFinite(minRoadSurfaceTopY) ? Number(minRoadSurfaceTopY.toFixed(4)) : null,
+      maxRoadSurfaceTopY: isFinite(maxRoadSurfaceTopY) ? Number(maxRoadSurfaceTopY.toFixed(4)) : null,
       maxTerrainPatchTopY: isFinite(maxTerrainPatchTopY) ? Number(maxTerrainPatchTopY.toFixed(4)) : null,
+      acidPuddleSurfaceY: Number(getAcidPuddleSurfaceY().toFixed(4)),
+      acidPuddleRoadClearance: Number(ACID_PUDDLE_ROAD_CLEARANCE.toFixed(4)),
+      deathDebrisGroundClearance: Number(DEATH_DEBRIS_GROUND_CLEARANCE.toFixed(4)),
+      sampleGameplayRoad: sampleGameplayRoad,
+    };
+  }
+
+  function getGroundEffectDepthDiagnostics() {
+    function acidEntry(puddle) {
+      var visual = puddle && puddle.visual;
+      if (!visual) return null;
+      var bubbles = visual.bubbles || [];
+      var minBubbleY = Infinity;
+      for (var i = 0; i < bubbles.length; i++) minBubbleY = Math.min(minBubbleY, bubbles[i].position.y);
+      return {
+        x: Number((Number(puddle.x) || 0).toFixed(4)),
+        z: Number((Number(puddle.z) || 0).toFixed(4)),
+        surfaceY: Number((visual.surface ? visual.surface.position.y : visual.surfaceY || 0).toFixed(4)),
+        darkY: Number((visual.darkPatch ? visual.darkPatch.position.y : 0).toFixed(4)),
+        ringY: Number((visual.ring ? visual.ring.position.y : 0).toFixed(4)),
+        foamY: Number((visual.foam ? visual.foam.position.y : 0).toFixed(4)),
+        minBubbleY: isFinite(minBubbleY) ? Number(minBubbleY.toFixed(4)) : null,
+      };
+    }
+
+    var guestAcid = [];
+    Object.keys(multiplayerState.guestAcidPuddleMap || {}).forEach(function (key) {
+      var entry = acidEntry(multiplayerState.guestAcidPuddleMap[key]);
+      if (entry) guestAcid.push(entry);
+    });
+
+    return {
+      roadSurfaceMaxTopY: Number((Number(roadSurfaceMaxTopY) || 0).toFixed(4)),
+      acidPuddles: state.acidPuddles.slice(0, 12).map(acidEntry).filter(Boolean),
+      guestAcidPuddles: guestAcid.slice(0, 12),
+      debris: state.debris.slice(0, 24).map(function (piece) {
+        var roadTopY = getRoadSurfaceTopYAt(piece.x, piece.z);
+        return {
+          x: Number(piece.x.toFixed(4)),
+          y: Number(piece.y.toFixed(4)),
+          z: Number(piece.z.toFixed(4)),
+          roadTopY: Number(roadTopY.toFixed(4)),
+          restY: Number(getDeathDebrisRestY(piece.x, piece.z).toFixed(4)),
+        };
+      }),
     };
   }
 
@@ -6427,6 +6581,10 @@
     camera.zoom = 1;
     camera.updateProjectionMatrix();
     releaseAllGuestMultiplayerCombatReplicas();
+    // Local/host acid visuals are not removed through combat events during a
+    // run reset. Return them directly so pooled materials and batch mappings
+    // remain valid without emitting network hazard removals.
+    releaseAllLocalAcidVisualsToPool();
     releaseAllEnemiesToPool();
     clearBellRingerEncounter();
     clearGhostTrainEncounter();
@@ -6475,6 +6633,8 @@
     state.nextWaveTimer = 0;
     state.shake = 0;
     state.enemies = [];
+    zombieActiveNetworkIds.clear();
+    zombieSpatialDirty = true;
     state.bellRinger = null;
     state.ghostTrain = null;
     state.oilBaron = null;
@@ -11504,6 +11664,14 @@
         releaseMarshalHallowedVisual(effectChild.userData.marshalHallowedVisual);
       } else if (effectChild.userData && effectChild.userData.rifleTrapInstancedBatch) {
         detachRifleTrapInstancedBatch(effectChild.userData.rifleTrapInstancedBatch);
+      } else if (effectChild.userData && effectChild.userData.acidInstancedBatch) {
+        detachAcidInstancedBatch(effectChild.userData.acidInstancedBatch);
+      } else if (effectChild.userData && effectChild.userData.acidPuddleVisual) {
+        releaseAcidPuddleVisual(effectChild.userData.acidPuddleVisual);
+      } else if (effectChild.userData && effectChild.userData.acidProjectileInUse) {
+        releaseAcidProjectileVisual(effectChild);
+      } else if (effectChild.userData && effectChild.userData.deathDebrisInstancedBatch) {
+        detachDeathDebrisInstancedBatch(effectChild.userData.deathDebrisInstancedBatch);
       } else if (effectChild.userData && effectChild.userData.rifleTrapVisual) {
         releaseRifleTrapVisual(effectChild.userData.rifleTrapVisual);
       } else if (effectChild.userData && effectChild.userData.particleVisual) {
@@ -12794,14 +12962,36 @@
     var sources = getDeathDebrisWarmupSources();
     if (!sources.length) return;
     var count = Math.min(DEATH_DEBRIS_VISUAL_PREWARM, MAX_DEBRIS);
-    for (var i = 0; i < count; i++) {
-      var source = sources[i % sources.length];
-      if (!source) continue;
-      source.updateWorldMatrix(true, false);
-      source.getWorldPosition(deathDebrisWorldPosScratch);
-      source.getWorldQuaternion(deathDebrisWorldQuatScratch);
-      deathDebrisWorldPosScratch.set(origin.x + (i % 12) * 0.12 - 0.66, 0.45 + (i % 5) * 0.08, origin.z + 3.1 + Math.floor(i / 12) * 0.12);
-      rememberWarmupVisual(items, "debris", acquireDeathDebrisVisual(source, deathDebrisWorldPosScratch, deathDebrisWorldQuatScratch));
+    // The authored legacy meshes already warm every debris material. Building
+    // dozens of additional instanced shadow programs here competes with the
+    // staged boss warmup and can provoke a context restore on mobile GPUs.
+    // Instanced debris reuses the already-warmed standard/shadow variants when
+    // its first opaque batch is populated during play.
+    deathDebrisBatchWarmupSuppressed = true;
+    try {
+      for (var i = 0; i < count; i++) {
+        var source = sources[i % sources.length];
+        if (!source) continue;
+        source.updateWorldMatrix(true, false);
+        source.getWorldPosition(deathDebrisWorldPosScratch);
+        source.getWorldQuaternion(deathDebrisWorldQuatScratch);
+        deathDebrisWorldPosScratch.set(origin.x + (i % 12) * 0.12 - 0.66, 0.45 + (i % 5) * 0.08, origin.z + 3.1 + Math.floor(i / 12) * 0.12);
+        rememberWarmupVisual(items, "debris", acquireDeathDebrisVisual(source, deathDebrisWorldPosScratch, deathDebrisWorldQuatScratch));
+      }
+    } finally {
+      deathDebrisBatchWarmupSuppressed = false;
+    }
+    // Allocate the small CPU-side batch descriptors while the game is already
+    // warming pools. They remain detached and count=0, so no extra shader or
+    // GPU work competes with boss prewarm; the first real death avoids creating
+    // materials and instance buffers on its busiest frame.
+    if (!deathDebrisForceVisualFallback) {
+      for (var sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+        var batchSource = sources[sourceIndex];
+        if (!batchSource) continue;
+        var batchMaterial = Array.isArray(batchSource.material) ? batchSource.material[0] : batchSource.material;
+        getDeathDebrisInstancedBatch(batchSource, batchMaterial);
+      }
     }
   }
 
@@ -12839,6 +13029,8 @@
       camera.updateMatrixWorld(true);
       updateGameplayShadowCamera(follow);
       scene.updateMatrixWorld(true);
+      syncAcidInstancedBatchesForRender();
+      syncDeathDebrisBatchesForRender();
       if (shouldCompile && typeof renderer.compile === "function") renderer.compile(scene, camera);
       renderer.render(scene, camera);
       completed = true;
@@ -12863,6 +13055,7 @@
     else if (item.type === "firePatch") releaseFirePatchVisual(item.visual);
     else if (item.type === "fireGpuCompile") releaseFireGpuShaderWarmup(item.visual);
     else if (item.type === "acidPuddle") releaseAcidPuddleVisual(item.visual);
+    else if (item.type === "acidProjectile") releaseAcidProjectileVisual(item.visual);
     else if (item.type === "xpOrb") releaseXpOrbVisual(item.visual);
     else if (item.type === "debris") releaseDeathDebrisVisual(item.visual);
     else if (item.type === "paleDeputy") releasePaleDeputyEntity(item.visual);
@@ -16169,6 +16362,39 @@
     return best;
   }
 
+  function getGhostTrainTunnelSegmentHalfLength(segmentIndex) {
+    return segmentIndex === 0 ? 3.75 : 3.55;
+  }
+
+  function getGhostTrainTunnelEntryTravel(encounter) {
+    var tailIndex = clamp(
+      Math.floor(Number(encounter && encounter.activeTailIndex) || 0),
+      0,
+      GHOST_TRAIN_WAGON_COUNT
+    );
+    return GHOST_TRAIN_TUNNEL_ENTRY_PORTAL_LEAD +
+      tailIndex * GHOST_TRAIN_SEGMENT_SPACING +
+      getGhostTrainTunnelSegmentHalfLength(tailIndex) +
+      GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH +
+      GHOST_TRAIN_TUNNEL_HIDE_MARGIN;
+  }
+
+  function isGhostTrainTunnelEntryFullyOccluded(encounter) {
+    if (!encounter || !encounter.tunnelEntryPortal || !encounter.segments) return false;
+    var portal = encounter.tunnelEntryPortal;
+    var forwardX = Math.sin(Number(portal.angle) || 0);
+    var forwardZ = Math.cos(Number(portal.angle) || 0);
+    for (var segmentIndex = 0; segmentIndex < encounter.segments.length; segmentIndex++) {
+      var segment = encounter.segments[segmentIndex];
+      if (!segment || !segment.attached) continue;
+      var signedDistance = (segment.x - portal.x) * forwardX + (segment.z - portal.z) * forwardZ;
+      var hiddenDistance = getGhostTrainTunnelSegmentHalfLength(segmentIndex) +
+        GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH + GHOST_TRAIN_TUNNEL_HIDE_MARGIN;
+      if (signedDistance < hiddenDistance - 0.001) return false;
+    }
+    return true;
+  }
+
   function emitGhostTrainTunnelPortalBurst(x, z, exitPortal, cosmeticOnly) {
     addShockwave(x, z, exitPortal ? 6.8 : 5.8, exitPortal ? 0.72 : 0.58, exitPortal ? 0xb7fff0 : 0x35e8bd);
     addLightFlash(x, 3.1, z, exitPortal ? 0xb9fff2 : 0x3dffd1, exitPortal ? 6.2 : 5.2, 14, 0.42);
@@ -16206,8 +16432,16 @@
       encounter.boss.actionTimer = encounter.actionTimer;
       return false;
     }
+    var entryStartDistance = encounter.engineDistance;
+    var entryTravel = getGhostTrainTunnelEntryTravel(encounter);
+    var entryEndDistance = entryStartDistance + entryTravel;
+    ensureGhostTrainTrackAhead(encounter, entryEndDistance + 8);
     var entrySample = {};
-    sampleGhostTrainTrack(encounter.trackPoints, encounter.engineDistance + GHOST_TRAIN_TUNNEL_PORTAL_LEAD, entrySample);
+    sampleGhostTrainTrack(
+      encounter.trackPoints,
+      entryStartDistance + GHOST_TRAIN_TUNNEL_ENTRY_PORTAL_LEAD,
+      entrySample
+    );
     var entryRailSample = {};
     sampleGhostTrainTrack(encounter.trackPoints, entrySample.d - GHOST_TRAIN_TUNNEL_RAIL_CLEARANCE, entryRailSample);
     var entryPortalDx = entrySample.x - entryRailSample.x;
@@ -16221,6 +16455,12 @@
     encounter.tunnelActionSequence = encounter.actionSequence;
     encounter.tunnelTargetPlayerId = target.id || "";
     encounter.tunnelExitPlan = exitPlan;
+    encounter.tunnelEntryStartDistance = entryStartDistance;
+    encounter.tunnelEntryEndDistance = entryEndDistance;
+    encounter.tunnelEntryTravel = entryTravel;
+    encounter.tunnelEntryRouteSequence = Math.max(0, Number(encounter.routeSequence) || 0);
+    encounter.tunnelEntryFullyOccludedBeforeTeleport = false;
+    encounter.tunnelVisibleSegmentsBeforeTeleport = null;
     encounter.tunnelEntryPortalDistance = entrySample.d;
     encounter.tunnelEntryRailClipDistance = entrySample.d - GHOST_TRAIN_TUNNEL_RAIL_CLEARANCE;
     encounter.tunnelExitPortalDistance = 0;
@@ -16246,6 +16486,9 @@
 
   function performGhostTrainTunnelTeleport(encounter) {
     if (!encounter || !encounter.tunnelActive || encounter.tunnelTeleported || encounter.replica) return false;
+    if (!isGhostTrainTunnelEntryFullyOccluded(encounter)) return false;
+    encounter.tunnelEntryFullyOccludedBeforeTeleport = true;
+    encounter.tunnelVisibleSegmentsBeforeTeleport = Math.max(0, encounter.tunnelVisibleSegmentCount || 0);
     var entries = getGhostTrainPlayerEntries();
     var target = findGhostTrainPlayerEntry(entries, encounter.tunnelTargetPlayerId);
     if (!target) {
@@ -16301,19 +16544,11 @@
     return true;
   }
 
-  function prepareGhostTrainTunnelTransit(encounter) {
-    if (!encounter || !encounter.tunnelActive || encounter.replica) return;
-    var elapsed = Math.max(0, GHOST_TRAIN_TUNNEL_DURATION - Math.max(0, encounter.actionTimer || 0));
-    if (!encounter.tunnelTeleported && elapsed >= GHOST_TRAIN_TUNNEL_ENTRY_DURATION) {
-      performGhostTrainTunnelTeleport(encounter);
-    }
-    if (encounter.tunnelTeleported && encounter.attackApproachActive) updateGhostTrainAttackApproachTarget(encounter);
-  }
-
   function updateGhostTrainTunnelSegmentVisibility(encounter) {
     if (!encounter || !encounter.segments) return;
     var visibleCount = 0;
-    if (!encounter.tunnelActive) {
+    var replicaHoldHidden = !!(encounter.replica && encounter.tunnelReplicaHoldHidden);
+    if (!encounter.tunnelActive && !replicaHoldHidden) {
       ghostTrainTunnelDissolveUniforms.enabled.value = 0;
       ghostTrainTunnelDissolveUniforms.time.value = state.time;
       for (var restoreIndex = 0; restoreIndex < encounter.segments.length; restoreIndex++) {
@@ -16327,6 +16562,18 @@
       encounter.tunnelDissolveActive = false;
       encounter.tunnelPartialSegmentCount = 0;
       encounter.tunnelVisibleSegmentCount = visibleCount;
+      return;
+    }
+    if (!encounter.tunnelActive && replicaHoldHidden) {
+      ghostTrainTunnelDissolveUniforms.enabled.value = 0;
+      ghostTrainTunnelDissolveUniforms.time.value = state.time;
+      for (var heldIndex = 0; heldIndex < encounter.segments.length; heldIndex++) {
+        var heldSegment = encounter.segments[heldIndex];
+        if (heldSegment && heldSegment.attached && heldSegment.group) heldSegment.group.visible = false;
+      }
+      encounter.tunnelDissolveActive = false;
+      encounter.tunnelPartialSegmentCount = 0;
+      encounter.tunnelVisibleSegmentCount = 0;
       return;
     }
     var activePortal = encounter.tunnelTeleported ? encounter.tunnelExitPortal : encounter.tunnelEntryPortal;
@@ -16356,8 +16603,8 @@
       var signedDistance = activePortal
         ? ((segment.x - activePortal.x) * portalForwardX + (segment.z - activePortal.z) * portalForwardZ) * dissolveDirection
         : -segmentHalfLength;
-      var visible = signedDistance < segmentHalfLength + GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH;
-      var partial = activePortal && Math.abs(signedDistance) < segmentHalfLength + GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH;
+      var visible = !replicaHoldHidden && signedDistance < segmentHalfLength + GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH;
+      var partial = !replicaHoldHidden && activePortal && Math.abs(signedDistance) < segmentHalfLength + GHOST_TRAIN_TUNNEL_DISSOLVE_WIDTH;
       segment.group.visible = visible;
       segment.tunnelDissolveDistance = signedDistance;
       if (partial) partialSegmentCount += 1;
@@ -16407,10 +16654,33 @@
     );
   }
 
+  function holdGhostTrainTunnelReplicaHidden(encounter, awaitingRoute, minimumFrames) {
+    if (!encounter || !encounter.replica) return;
+    encounter.tunnelReplicaHoldHidden = true;
+    encounter.tunnelReplicaAwaitingRoute = !!awaitingRoute;
+    if (!awaitingRoute) {
+      encounter.tunnelReplicaHiddenFrames = Math.max(
+        Math.max(0, Math.floor(Number(encounter.tunnelReplicaHiddenFrames) || 0)),
+        Math.max(1, Math.floor(Number(minimumFrames) || 1))
+      );
+    }
+    for (var segmentIndex = 0; segmentIndex < encounter.segments.length; segmentIndex++) {
+      var segment = encounter.segments[segmentIndex];
+      if (segment && segment.attached && segment.group) segment.group.visible = false;
+    }
+    encounter.tunnelVisibleSegmentCount = 0;
+    encounter.tunnelPartialSegmentCount = 0;
+  }
+
   function syncGhostTrainTunnelReplica(encounter, data, previousRouteSequence) {
     if (!encounter) return;
     if (!isGhostTrainTunnelSnapshot(data)) {
-      if (encounter.tunnelActive) finishGhostTrainTunnelTransit(encounter);
+      if (encounter.tunnelActive) {
+        if (encounter.replica && encounter.tunnelReplicaHoldHidden) {
+          holdGhostTrainTunnelReplicaHidden(encounter, false, 1);
+        }
+        finishGhostTrainTunnelTransit(encounter);
+      }
       return;
     }
     var incomingActionSequence = Math.max(0, Number(data.actionSeq) || 0);
@@ -16419,33 +16689,61 @@
     var beganReplicaTunnel = false;
     var wasTunnelTeleported = !!encounter.tunnelTeleported;
     var incomingRouteSequence = Math.max(0, Number(data.routeSeq) || 0);
-    var routeChanged = incomingRouteSequence !== Math.max(0, previousRouteSequence || 0);
-    var hasFreshRoute = Array.isArray(data.track) && data.track.length >= 2;
     if (!encounter.tunnelActive || encounter.tunnelActionSequence !== incomingActionSequence) {
       beganReplicaTunnel = true;
       encounter.tunnelActive = true;
       encounter.tunnelTeleported = false;
       encounter.tunnelReplicaPortalWorldLocked = false;
+      encounter.tunnelReplicaEntryRouteSequence = incomingRouteSequence;
+      encounter.tunnelEntryRouteSequence = incomingRouteSequence;
+      encounter.tunnelReplicaAwaitingRoute = false;
+      encounter.tunnelReplicaHoldHidden = false;
+      encounter.tunnelReplicaHiddenFrames = 0;
       encounter.tunnelActionSequence = incomingActionSequence;
       encounter.tunnelSequence = Math.max(0, encounter.tunnelSequence || 0) + 1;
       encounter.tunnelTargetPlayerId = "";
       encounter.tunnelVisualLinger = GHOST_TRAIN_TUNNEL_VISUAL_LINGER;
       encounter.tunnelEntryRailClipDistance = null;
+      encounter.tunnelEntryTravel = getGhostTrainTunnelEntryTravel(encounter);
+      encounter.tunnelEntryStartDistance = Number.isFinite(encounter.replicaNetworkEngineDistance)
+        ? encounter.replicaNetworkEngineDistance - encounter.tunnelEntryTravel * clamp(
+          (elapsed - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY) /
+            Math.max(0.001, GHOST_TRAIN_TUNNEL_ENTRY_DURATION - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY),
+          0,
+          1
+        )
+        : 0;
+      encounter.tunnelEntryEndDistance = encounter.tunnelEntryStartDistance + encounter.tunnelEntryTravel;
       if (elapsed < GHOST_TRAIN_TUNNEL_ENTRY_DURATION) {
-        var entryPortalDistanceFromEngine = GHOST_TRAIN_TUNNEL_PORTAL_LEAD -
-          getGhostTrainSpeed(encounter) * GHOST_TRAIN_TUNNEL_ENTRY_MOTION * elapsed;
+        var entryPortalDistanceFromEngine = GHOST_TRAIN_TUNNEL_ENTRY_PORTAL_LEAD -
+          encounter.tunnelEntryTravel * clamp(
+            (elapsed - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY) /
+              Math.max(0.001, GHOST_TRAIN_TUNNEL_ENTRY_DURATION - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY),
+            0,
+            1
+          );
         var entryPortalSample = encounter.tunnelReplicaPortalSample || (encounter.tunnelReplicaPortalSample = {});
         var entryRoutePoints = getGhostTrainRoutePoints(encounter);
-        if (hasFreshRoute && entryRoutePoints && entryRoutePoints.length >= 2 && Number.isFinite(encounter.replicaNetworkEngineDistance)) {
+        if (entryRoutePoints && entryRoutePoints.length >= 2 && Number.isFinite(encounter.replicaNetworkEngineDistance)) {
           sampleGhostTrainTrack(
             entryRoutePoints,
             encounter.replicaNetworkEngineDistance + entryPortalDistanceFromEngine,
             entryPortalSample
           );
+          var entryRailSample = encounter.tunnelReplicaRailSample || (encounter.tunnelReplicaRailSample = {});
+          sampleGhostTrainTrack(
+            entryRoutePoints,
+            entryPortalSample.d - GHOST_TRAIN_TUNNEL_RAIL_CLEARANCE,
+            entryRailSample
+          );
+          var entryPortalDx = entryPortalSample.x - entryRailSample.x;
+          var entryPortalDz = entryPortalSample.z - entryRailSample.z;
           encounter.tunnelEntryPortal = {
             x: entryPortalSample.x,
             z: entryPortalSample.z,
-            angle: entryPortalSample.angle,
+            angle: Math.hypot(entryPortalDx, entryPortalDz) > 0.001
+              ? Math.atan2(entryPortalDx, entryPortalDz)
+              : entryPortalSample.angle,
           };
           encounter.tunnelEntryPortalDistance = entryPortalSample.d;
         } else {
@@ -16463,35 +16761,48 @@
         encounter.tunnelExitRailClipDistance = null;
       }
     }
-    if (
-      elapsed >= GHOST_TRAIN_TUNNEL_ENTRY_DURATION ||
-      (!beganReplicaTunnel && routeChanged)
-    ) {
+    var routeRebased = !beganReplicaTunnel && !encounter.tunnelTeleported &&
+      incomingRouteSequence !== Math.max(0, Number(encounter.tunnelReplicaEntryRouteSequence) || 0);
+    var lateJoinAfterEntry = beganReplicaTunnel && elapsed >= GHOST_TRAIN_TUNNEL_ENTRY_DURATION;
+    if (!beganReplicaTunnel && !encounter.tunnelTeleported && elapsed >= GHOST_TRAIN_TUNNEL_ENTRY_DURATION && !routeRebased) {
+      // The entry timer alone never authorizes a route switch. With a dropped
+      // latest-only packet, hide the fully dissolved old train until a packet
+      // carrying the rebased route arrives.
+      holdGhostTrainTunnelReplicaHidden(encounter, true, 0);
+    }
+    if (lateJoinAfterEntry || routeRebased || encounter.tunnelTeleported) {
       var enteringExitPortal = !wasTunnelTeleported || !encounter.tunnelExitPortal;
-      if (routeChanged) encounter.tunnelExitRailClipDistance = null;
+      if (routeRebased) encounter.tunnelExitRailClipDistance = null;
       if (enteringExitPortal) {
         encounter.tunnelExitRailClipDistance = null;
-        var exitProgress = clamp(
-          (elapsed - GHOST_TRAIN_TUNNEL_ENTRY_DURATION) /
-            Math.max(0.001, GHOST_TRAIN_TUNNEL_DURATION - GHOST_TRAIN_TUNNEL_ENTRY_DURATION),
-          0,
-          1
-        );
         var exitElapsed = Math.max(0, elapsed - GHOST_TRAIN_TUNNEL_ENTRY_DURATION);
-        var portalDistanceFromEngine = GHOST_TRAIN_TUNNEL_PORTAL_LEAD -
-          getGhostTrainSpeed(encounter) * GHOST_TRAIN_TUNNEL_EXIT_MOTION * exitElapsed;
+        var exitTravel = Math.min(
+          GHOST_TRAIN_TUNNEL_EXIT_TRAVEL,
+          getGhostTrainSpeed(encounter) * GHOST_TRAIN_TUNNEL_EXIT_MOTION * exitElapsed
+        );
+        var portalDistanceFromEngine = GHOST_TRAIN_TUNNEL_PORTAL_LEAD - exitTravel;
         var exitPortalSample = encounter.tunnelReplicaPortalSample || (encounter.tunnelReplicaPortalSample = {});
         var exitRoutePoints = getGhostTrainRoutePoints(encounter);
-        if (hasFreshRoute && exitRoutePoints && exitRoutePoints.length >= 2 && Number.isFinite(encounter.replicaNetworkEngineDistance)) {
+        if (exitRoutePoints && exitRoutePoints.length >= 2 && Number.isFinite(encounter.replicaNetworkEngineDistance)) {
           sampleGhostTrainTrack(
             exitRoutePoints,
             encounter.replicaNetworkEngineDistance + portalDistanceFromEngine,
             exitPortalSample
           );
+          var exitRailSample = encounter.tunnelReplicaRailSample || (encounter.tunnelReplicaRailSample = {});
+          sampleGhostTrainTrack(
+            exitRoutePoints,
+            exitPortalSample.d + GHOST_TRAIN_TUNNEL_RAIL_CLEARANCE,
+            exitRailSample
+          );
+          var exitPortalDx = exitRailSample.x - exitPortalSample.x;
+          var exitPortalDz = exitRailSample.z - exitPortalSample.z;
           encounter.tunnelExitPortal = {
             x: exitPortalSample.x,
             z: exitPortalSample.z,
-            angle: exitPortalSample.angle,
+            angle: Math.hypot(exitPortalDx, exitPortalDz) > 0.001
+              ? Math.atan2(exitPortalDx, exitPortalDz)
+              : exitPortalSample.angle,
           };
           encounter.tunnelExitPortalDistance = exitPortalSample.d;
         } else {
@@ -16505,6 +16816,7 @@
         encounter.tunnelReplicaPortalWorldLocked = true;
       }
       encounter.tunnelTeleported = true;
+      if (lateJoinAfterEntry || routeRebased) holdGhostTrainTunnelReplicaHidden(encounter, false, 1);
     }
   }
 
@@ -18233,11 +18545,21 @@
       tunnelEntryPortalDistance: 0,
       tunnelExitPortalDistance: 0,
       tunnelExitEndDistance: 0,
+      tunnelEntryStartDistance: 0,
+      tunnelEntryEndDistance: 0,
+      tunnelEntryTravel: 0,
+      tunnelEntryRouteSequence: 0,
+      tunnelEntryFullyOccludedBeforeTeleport: false,
+      tunnelVisibleSegmentsBeforeTeleport: null,
       tunnelEntryRailClipDistance: null,
       tunnelExitRailClipDistance: null,
       tunnelVisualLinger: 0,
       tunnelAttackLockTimer: 0,
       tunnelVisibleSegmentCount: GHOST_TRAIN_SEGMENT_COUNT,
+      tunnelReplicaEntryRouteSequence: 0,
+      tunnelReplicaAwaitingRoute: false,
+      tunnelReplicaHoldHidden: false,
+      tunnelReplicaHiddenFrames: 0,
       cannonVisualBatch: visualBundle.cannonVisualBatch,
       rearGunModel: visualBundle.rearGunModel,
       rearGunTracerBatch: visualBundle.rearGunTracerBatch,
@@ -20417,7 +20739,6 @@
       0,
       (Number(encounter.tunnelAttackLockTimer) || 0) - Math.max(0, dt || 0)
     );
-    prepareGhostTrainTunnelTransit(encounter);
     var speed = getGhostTrainSpeed(encounter);
     var materializeCooldownRemaining = getGhostTrainMaterializeCooldownRemaining(encounter);
     encounter.boss.speed = speed;
@@ -20434,7 +20755,7 @@
         if (existingRailOpportunity) beginGhostTrainExistingRailAttackApproach(encounter, existingRailOpportunity);
         else if (encounter.actionTimer <= GHOST_TRAIN_ATTACK_APPROACH_LEAD_TIME) beginGhostTrainAttackApproach(encounter);
       }
-      if (encounter.attackApproachActive) {
+      if (encounter.attackApproachActive && !encounter.tunnelActive) {
         encounter.attackApproachAge = Math.max(0, encounter.attackApproachAge || 0) + dt;
         if (encounter.aiEnabled && encounter.attackApproachAge >= GHOST_TRAIN_ATTACK_APPROACH_REPLAN_TIME) {
           var currentApproach = getGhostTrainAttackApproachMetrics(encounter);
@@ -20449,7 +20770,7 @@
           }
         }
       }
-      if (encounter.plannerRefreshTimer <= 0) {
+      if (!encounter.tunnelActive && encounter.plannerRefreshTimer <= 0) {
         encounter.plannerRefreshTimer = GHOST_TRAIN_SPECTRAL_TARGET_REFRESH;
         updateGhostTrainSpectralPatrol(encounter);
       }
@@ -20471,7 +20792,41 @@
       );
     }
     if (!encounter.freezeMotion) {
-      var nextEngineDistance = Math.min(lastTrackDistance, encounter.engineDistance + speed * motionMultiplier * dt);
+      var tunnelEntering = encounter.tunnelActive && !encounter.tunnelTeleported;
+      var nextEngineDistance;
+      if (tunnelEntering) {
+        var entryElapsedAfterStep = Math.max(
+          0,
+          GHOST_TRAIN_TUNNEL_DURATION - Math.max(0, encounter.actionTimer || 0) + dt
+        );
+        var entryProgressAfterStep = clamp(
+          (entryElapsedAfterStep - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY) /
+            Math.max(0.001, GHOST_TRAIN_TUNNEL_ENTRY_DURATION - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY),
+          0,
+          1
+        );
+        var entryStartDistance = Number(encounter.tunnelEntryStartDistance);
+        var entryEndDistance = Number(encounter.tunnelEntryEndDistance);
+        if (!Number.isFinite(entryStartDistance)) entryStartDistance = encounter.engineDistance;
+        if (!Number.isFinite(entryEndDistance)) entryEndDistance = entryStartDistance + getGhostTrainTunnelEntryTravel(encounter);
+        if (
+          entryProgressAfterStep >= 1 &&
+          encounter.engineDistance >= entryEndDistance - 0.001
+        ) {
+          nextEngineDistance = Math.min(
+            lastTrackDistance,
+            encounter.engineDistance + (entryEndDistance - entryStartDistance) /
+              Math.max(0.001, GHOST_TRAIN_TUNNEL_ENTRY_DURATION - GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY) * dt
+          );
+        } else {
+          nextEngineDistance = Math.min(
+            lastTrackDistance,
+            entryStartDistance + (entryEndDistance - entryStartDistance) * entryProgressAfterStep
+          );
+        }
+      } else {
+        nextEngineDistance = Math.min(lastTrackDistance, encounter.engineDistance + speed * motionMultiplier * dt);
+      }
       if (encounter.tunnelActive && encounter.tunnelTeleported && encounter.tunnelExitEndDistance > 0) {
         nextEngineDistance = Math.min(nextEngineDistance, encounter.tunnelExitEndDistance);
       }
@@ -20479,6 +20834,17 @@
     }
     updateGhostTrainAttachedTransforms(encounter, dt);
     updateGhostTrainTunnelSegmentVisibility(encounter);
+    if (
+      encounter.tunnelActive && !encounter.tunnelTeleported &&
+      GHOST_TRAIN_TUNNEL_DURATION - Math.max(0, encounter.actionTimer || 0) + dt >= GHOST_TRAIN_TUNNEL_ENTRY_DURATION &&
+      performGhostTrainTunnelTeleport(encounter)
+    ) {
+      // The old route is rebased only while every attached segment is behind
+      // the opaque entry plane. Commit the exit transforms before the same
+      // displayed frame, so no world-space jump or heading reversal is visible.
+      updateGhostTrainAttachedTransforms(encounter, 0);
+      updateGhostTrainTunnelSegmentVisibility(encounter);
+    }
     updateGhostTrainTunnelVisual(encounter, dt);
     markGhostTrainPassedTrack(encounter);
     updateGhostTrainDetachedWagons(encounter, dt, false);
@@ -20515,7 +20881,14 @@
       updateGhostTrainHud();
       return;
     }
-    encounter.actionTimer = Math.max(0, encounter.actionTimer - dt);
+    var nextGhostTrainActionTimer = Math.max(0, encounter.actionTimer - dt);
+    if (encounter.tunnelActive && !encounter.tunnelTeleported) {
+      var tunnelEntryHoldTimer = Math.max(0, GHOST_TRAIN_TUNNEL_DURATION - GHOST_TRAIN_TUNNEL_ENTRY_DURATION);
+      if (!isGhostTrainTunnelEntryFullyOccluded(encounter)) {
+        nextGhostTrainActionTimer = Math.max(nextGhostTrainActionTimer, tunnelEntryHoldTimer);
+      }
+    }
+    encounter.actionTimer = nextGhostTrainActionTimer;
     encounter.boss.actionTimer = encounter.actionTimer;
     if (encounter.tunnelActive && encounter.action === "spectral" && encounter.actionTimer <= 0) {
       finishGhostTrainTunnelTransit(encounter);
@@ -22736,7 +23109,10 @@
       forEachBellRingerPlayer(function (entry) {
         var distance = Math.hypot(entry.entity.x - boss.x, entry.entity.z - boss.z);
         if (distance > BELL_RINGER_SWEEP_RADIUS + entry.entity.radius) return;
-        damagePlayer(BELL_RINGER_SWEEP_DAMAGE + encounter.phase * BELL_RINGER_DAMAGE_PER_PHASE, entry.entity);
+        damagePlayer(getBellRingerHeavyHitDamage(
+          BELL_RINGER_SWEEP_DAMAGE + encounter.phase * BELL_RINGER_DAMAGE_PER_PHASE,
+          entry.entity
+        ), entry.entity);
         knockBellRingerPlayer(entry, boss.x, boss.z, 3.1);
       });
     }
@@ -22763,7 +23139,10 @@
         var lateralDistance = Math.abs(dx * forwardZ - dz * forwardX);
         if (forwardDistance < -entry.entity.radius || forwardDistance > BELL_RINGER_GROUND_SLAM_LENGTH + entry.entity.radius) return;
         if (lateralDistance > BELL_RINGER_GROUND_SLAM_HALF_WIDTH + entry.entity.radius) return;
-        damagePlayer(BELL_RINGER_GROUND_SLAM_DAMAGE + encounter.phase * BELL_RINGER_DAMAGE_PER_PHASE, entry.entity);
+        damagePlayer(getBellRingerHeavyHitDamage(
+          BELL_RINGER_GROUND_SLAM_DAMAGE + encounter.phase * BELL_RINGER_DAMAGE_PER_PHASE,
+          entry.entity
+        ), entry.entity);
         knockBellRingerPlayerForward(entry, forwardX, forwardZ, 3.8);
       });
     }
@@ -23373,7 +23752,10 @@
       forEachBellRingerPlayer(function (entry, playerIndex) {
         var distance = Math.hypot(entry.entity.x - drop.x, entry.entity.z - drop.z);
         if (distance > BELL_RINGER_BELL_DROP_RADIUS + entry.entity.radius) return;
-        damagePlayer(BELL_RINGER_BELL_DROP_DAMAGE + encounter.phase * BELL_RINGER_DAMAGE_PER_PHASE, entry.entity);
+        damagePlayer(getBellRingerHeavyHitDamage(
+          BELL_RINGER_BELL_DROP_DAMAGE + encounter.phase * BELL_RINGER_DAMAGE_PER_PHASE,
+          entry.entity
+        ), entry.entity);
         if (distance < 0.08) {
           var knockAngle = playerIndex * 2.399 + (encounter.bellDropSequence || 0) * 0.71;
           knockBellRingerPlayerForward(entry, Math.cos(knockAngle), Math.sin(knockAngle), 3.4);
@@ -24873,9 +25255,25 @@
     }
     encounter.actionTimer = Math.max(0, encounter.actionTimer - dt);
     boss.actionTimer = encounter.actionTimer;
-    if (encounter.tunnelActive && encounter.actionTimer <= 0) finishGhostTrainTunnelTransit(encounter);
+    if (
+      encounter.tunnelActive && !encounter.tunnelTeleported &&
+      encounter.actionDuration - encounter.actionTimer >= GHOST_TRAIN_TUNNEL_ENTRY_DURATION
+    ) {
+      holdGhostTrainTunnelReplicaHidden(encounter, true, 0);
+    }
+    if (
+      encounter.tunnelActive && encounter.actionTimer <= 0 &&
+      !encounter.tunnelReplicaAwaitingRoute
+    ) finishGhostTrainTunnelTransit(encounter);
     updateGhostTrainAttachedTransforms(encounter, dt);
     updateGhostTrainTunnelSegmentVisibility(encounter);
+    if (
+      encounter.tunnelReplicaHoldHidden && !encounter.tunnelReplicaAwaitingRoute &&
+      encounter.tunnelReplicaHiddenFrames > 0
+    ) {
+      encounter.tunnelReplicaHiddenFrames -= 1;
+      if (encounter.tunnelReplicaHiddenFrames <= 0) encounter.tunnelReplicaHoldHidden = false;
+    }
     updateGhostTrainTunnelVisual(encounter, dt);
     updateGhostTrainDetachedWagons(encounter, dt, true);
     var materialVisual = encounter.materialized;
@@ -36572,6 +36970,28 @@
           sequence: Math.max(0, encounter.tunnelSequence || 0),
           duration: GHOST_TRAIN_TUNNEL_DURATION,
           entryDuration: GHOST_TRAIN_TUNNEL_ENTRY_DURATION,
+          entryOpenDelay: GHOST_TRAIN_TUNNEL_ENTRY_OPEN_DELAY,
+          entryPortalLead: GHOST_TRAIN_TUNNEL_ENTRY_PORTAL_LEAD,
+          exitPortalLead: GHOST_TRAIN_TUNNEL_PORTAL_LEAD,
+          entryStartDistance: Number.isFinite(Number(encounter.tunnelEntryStartDistance))
+            ? Number(Number(encounter.tunnelEntryStartDistance).toFixed(3))
+            : null,
+          entryEndDistance: Number.isFinite(Number(encounter.tunnelEntryEndDistance))
+            ? Number(Number(encounter.tunnelEntryEndDistance).toFixed(3))
+            : null,
+          entryTravel: Number.isFinite(Number(encounter.tunnelEntryTravel))
+            ? Number(Number(encounter.tunnelEntryTravel).toFixed(3))
+            : null,
+          entryRouteSequence: Math.max(0, Number(encounter.tunnelEntryRouteSequence) || 0),
+          currentRouteSequence: Math.max(0, Number(encounter.routeSequence) || 0),
+          fullyOccluded: isGhostTrainTunnelEntryFullyOccluded(encounter),
+          fullyOccludedBeforeTeleport: !!encounter.tunnelEntryFullyOccludedBeforeTeleport,
+          visibleSegmentsBeforeTeleport: encounter.tunnelVisibleSegmentsBeforeTeleport == null
+            ? null
+            : Math.max(0, Number(encounter.tunnelVisibleSegmentsBeforeTeleport) || 0),
+          replicaHoldHidden: !!encounter.tunnelReplicaHoldHidden,
+          replicaAwaitingRoute: !!encounter.tunnelReplicaAwaitingRoute,
+          replicaHiddenFrames: Math.max(0, Number(encounter.tunnelReplicaHiddenFrames) || 0),
           attackLocked: isGhostTrainTunnelAttackLocked(encounter),
           postExitAttackLock: GHOST_TRAIN_TUNNEL_POST_EXIT_ATTACK_LOCK,
           attackLockTimeLeft: Number(Math.max(0, Number(encounter.tunnelAttackLockTimer) || 0).toFixed(3)),
@@ -36917,6 +37337,7 @@
           index: segment.index,
           kind: segment.kind,
           attached: !!segment.attached,
+          visible: !!(segment.group && segment.group.visible),
           detaching: !!segment.detaching,
           hp: Number(Math.max(0, segment.hp || 0).toFixed(3)),
           maxHp: Number(Math.max(0, segment.maxHp || 0).toFixed(3)),
@@ -37847,6 +38268,8 @@
 
   function releaseZombieToPool(zombie) {
     if (!zombie) return;
+    zombieSpatialDirty = true;
+    if (zombie.networkId) zombieActiveNetworkIds.delete(zombie.networkId);
     releaseGravePreacherReservations(zombie);
     if (zombie.group && zombie.group.parent) zombie.group.parent.remove(zombie.group);
     if (!zombie.pooled || !zombiePools[zombie.type]) return;
@@ -37891,10 +38314,23 @@
       releaseZombieToPool(state.enemies[i]);
     }
     state.enemies = [];
+    zombieActiveNetworkIds.clear();
     clearHazardSpatialIndex(guestEnemyVisualSpatialIndex);
     zombieSpatialDirty = true;
     zombieInstancingActive = false;
     clearZombieInstanceBatches();
+  }
+
+  function refreshZombieInstancingActive(enemyCount) {
+    var count = Math.max(0, Math.floor(Number(enemyCount) || 0));
+    // Instanced and individual zombies use the same source meshes, materials,
+    // transforms and triangles. Keep batching active until only a small group
+    // remains so crossing one exact population value cannot multiply draw
+    // calls in the middle of a late wave.
+    zombieInstancingActive = zombieInstancingActive
+      ? count >= ZOMBIE_INSTANCING_RELEASE_THRESHOLD
+      : count >= ZOMBIE_INSTANCING_THRESHOLD;
+    return zombieInstancingActive;
   }
 
   function getZombiePoolStats() {
@@ -38358,6 +38794,7 @@
     return {
       active: zombieInstancingActive,
       threshold: ZOMBIE_INSTANCING_THRESHOLD,
+      releaseThreshold: ZOMBIE_INSTANCING_RELEASE_THRESHOLD,
       batches: zombieInstanceBatchList.length,
       chunks: chunks,
       drawCalls: drawCalls,
@@ -38534,7 +38971,7 @@
     updateGhostTrainEncounter(dt);
     updateOilBaronEncounter(dt);
     updateEnemies(dt);
-    updateRifleTraps(0);
+    updateRifleTrapTriggersAfterEnemyMovement();
     updatePaleDeputies(dt);
     updateAcidProjectiles(dt);
     updateAcidPuddles(dt);
@@ -42986,12 +43423,19 @@
     }
     zombieSpatialGrid.clear();
     zombieSpatialGridKeys.length = 0;
+    zombieActiveNetworkIds.clear();
     zombieSpatialStats.cellCount = 0;
     zombieSpatialStats.maxBucketSize = 0;
     zombieSpatialStats.occupants = state.enemies.length;
+    zombieSpatialStats.maxRadius = 0;
+    zombieSpatialStats.minCellX = Infinity;
+    zombieSpatialStats.maxCellX = -Infinity;
+    zombieSpatialStats.minCellZ = Infinity;
+    zombieSpatialStats.maxCellZ = -Infinity;
 
     for (var e = 0; e < state.enemies.length; e++) {
       var enemy = state.enemies[e];
+      if (!enemy) continue;
       var cellX = Math.floor(enemy.x / ZOMBIE_SPATIAL_CELL_SIZE);
       var cellZ = Math.floor(enemy.z / ZOMBIE_SPATIAL_CELL_SIZE);
       enemy.gridCellX = cellX;
@@ -43005,9 +43449,21 @@
         zombieSpatialGridKeys.push(key);
       }
       bucket.push(enemy);
+      zombieSpatialStats.maxRadius = Math.max(zombieSpatialStats.maxRadius, Math.max(0, Number(enemy.radius) || 0));
+      zombieSpatialStats.minCellX = Math.min(zombieSpatialStats.minCellX, cellX);
+      zombieSpatialStats.maxCellX = Math.max(zombieSpatialStats.maxCellX, cellX);
+      zombieSpatialStats.minCellZ = Math.min(zombieSpatialStats.minCellZ, cellZ);
+      zombieSpatialStats.maxCellZ = Math.max(zombieSpatialStats.maxCellZ, cellZ);
+      if (enemy.active !== false && enemy.networkId) zombieActiveNetworkIds.add(enemy.networkId);
       if (bucket.length > zombieSpatialStats.maxBucketSize) zombieSpatialStats.maxBucketSize = bucket.length;
     }
     zombieSpatialStats.cellCount = zombieSpatialGridKeys.length;
+    if (!zombieSpatialGridKeys.length) {
+      zombieSpatialStats.minCellX = 0;
+      zombieSpatialStats.maxCellX = -1;
+      zombieSpatialStats.minCellZ = 0;
+      zombieSpatialStats.maxCellZ = -1;
+    }
     zombieSpatialDirty = false;
   }
 
@@ -43049,9 +43505,10 @@
           var odz = enemy.z - other.z;
           var minSep = enemy.radius + other.radius + 0.36;
           if (Math.abs(odx) >= minSep || Math.abs(odz) >= minSep) continue;
-          var od = Math.hypot(odx, odz);
-          if (od < minSep) {
-            if (od <= 0.001) {
+          var odSquared = odx * odx + odz * odz;
+          if (odSquared < minSep * minSep) {
+            var od = Math.sqrt(odSquared);
+            if (odSquared <= 0.000001) {
                var angle = (cellX * 73856093 + cellZ * 19349663 + bucketOffset * 83492791) % 6283 / 1000;
               odx = Math.cos(angle);
               odz = Math.sin(angle);
@@ -43471,13 +43928,14 @@
   function updateEnemies(dt) {
     var defaultPlayer = state.player;
     var visibleGround = getCurrentVisibleGroundRect(enemyVisibleGroundScratch);
+    var multiplayerHostMatch = isMultiplayerHostMatch();
     var multiplayerViewerCount = prepareEnemyMultiplayerViewerRects();
-    if (isMultiplayerHostMatch()) refreshMultiplayerZombiePressureAssignments(false);
+    if (multiplayerHostMatch) refreshMultiplayerZombiePressureAssignments(false);
     var relocationBatchStartedAt = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     var relocationCountBeforeUpdate = multiplayerZombiePressureState.totalRelocations;
-    var teleportSideCounts = isMultiplayerHostMatch() ? null : prepareZombieTeleportSideCounts();
+    var teleportSideCounts = multiplayerHostMatch ? null : prepareZombieTeleportSideCounts();
     ensureZombieSpatialGridCurrent();
-    zombieInstancingActive = state.enemies.length >= ZOMBIE_INSTANCING_THRESHOLD;
+    refreshZombieInstancingActive(state.enemies.length);
     zombieSpatialStats.separationChecks = 0;
     zombieSpatialStats.separationBudgetHits = 0;
     zombieSpatialStats.fullRateUpdates = 0;
@@ -43488,7 +43946,7 @@
     for (var i = state.enemies.length - 1; i >= 0; i--) {
       var e = state.enemies[i];
       if (e.active === false) continue;
-      var nearestMultiplayerPlayer = isMultiplayerHostMatch() ? findNearestAliveMultiplayerPlayer(e.x, e.z) : null;
+      var nearestMultiplayerPlayer = multiplayerHostMatch ? findNearestAliveMultiplayerPlayer(e.x, e.z) : null;
       var p = nearestMultiplayerPlayer ? nearestMultiplayerPlayer.entity : defaultPlayer;
       if (!p) continue;
       var dx = p.x - e.x;
@@ -43513,7 +43971,7 @@
       );
       var stepDt = dt;
       var farSimulationStep = false;
-      if (isMultiplayerHostMatch() && !simulationVisibleBeforeStep) {
+      if (multiplayerHostMatch && !simulationVisibleBeforeStep) {
         var farOffscreen = dist > MULTIPLAYER_FAR_ENEMY_DISTANCE;
         var offscreenInterval = farOffscreen ? MULTIPLAYER_FAR_ENEMY_TICK_INTERVAL : MULTIPLAYER_OFFSCREEN_ENGAGED_TICK_INTERVAL;
         e.farSimulationAccumulator = Math.min(0.12, (e.farSimulationAccumulator || 0) + dt);
@@ -43542,7 +44000,7 @@
       e.resurrectRiseTimer = Math.max(0, (e.resurrectRiseTimer || 0) - stepDt);
       e.marshalStunTimer = Math.max(0, (e.marshalStunTimer || 0) - stepDt);
       e.marshalFearTimer = Math.max(0, (e.marshalFearTimer || 0) - stepDt);
-      if (isMultiplayerHostMatch()) {
+      if (multiplayerHostMatch) {
         updateMarshalOwnerEffectTimers(e, stepDt);
       } else {
         e.marshalMarkTimer = Math.max(0, (e.marshalMarkTimer || 0) - stepDt);
@@ -43553,8 +44011,8 @@
       e.spitPulse = Math.max(0, (e.spitPulse || 0) - stepDt * 2.7);
       var baseEnemySpeed = refreshZombieSpeed(e);
       var enemySpeed = baseEnemySpeed * (e.fireSlowTimer > 0 && e.type !== "fastZombie" ? 0.62 : 1);
-      var marshalMarked = isMultiplayerHostMatch() ? isMarshalEnemyMarkedByAnyOwner(e) : isMarshalEnemyMarked(e);
-      var marshalBounty = isMultiplayerHostMatch() ? isMarshalEnemyBountyByAnyOwner(e) : isMarshalEnemyBounty(e);
+      var marshalMarked = multiplayerHostMatch ? isMarshalEnemyMarkedByAnyOwner(e) : isMarshalEnemyMarked(e);
+      var marshalBounty = multiplayerHostMatch ? isMarshalEnemyBountyByAnyOwner(e) : isMarshalEnemyBounty(e);
       if (isEnemySlowedByMarshalRockSalt(e)) enemySpeed *= 0.75;
       if (isEnemyInHallowedGround(e)) enemySpeed *= 0.7;
       var marshalMarkVisual = e.group.userData.marshalMark;
@@ -43567,7 +44025,7 @@
       }
 
       var enemyAbilityLocked = (e.preacherPrayerTimer || 0) > 0;
-      if (!enemyAbilityLocked && (isMultiplayerHostMatch()
+      if (!enemyAbilityLocked && (multiplayerHostMatch
         ? maybeRedistributeDistantMultiplayerZombie(e, nearestAliveDistance, multiplayerViewerCount)
         : maybeTeleportDistantZombie(e, p, dist, visibleGround, teleportSideCounts))) {
         continue;
@@ -43757,6 +44215,521 @@
     }
   }
 
+  function configureSharedEffectInstancedMesh(mesh, name, castShadow, receiveShadow, renderOrder) {
+    mesh.name = name;
+    mesh.count = 0;
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.castShadow = !!castShadow;
+    mesh.receiveShadow = !!receiveShadow;
+    mesh.renderOrder = renderOrder || 0;
+    mesh.userData.disposeGeometry = false;
+    mesh.userData.disposeMaterial = false;
+    if (mesh.instanceMatrix && typeof mesh.instanceMatrix.setUsage === "function" && THREE.DynamicDrawUsage != null) {
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    }
+    return mesh;
+  }
+
+  function createEffectInstancedOpacityMaterial(source, cacheKey) {
+    var material = source.clone();
+    var previousOnBeforeCompile = source.onBeforeCompile;
+    material.opacity = 1;
+    material.userData.effectInstancedOpacityShaderInjected = false;
+    material.onBeforeCompile = function (shader, activeRenderer) {
+      if (typeof previousOnBeforeCompile === "function") previousOnBeforeCompile.call(material, shader, activeRenderer);
+      if (
+        shader.vertexShader.indexOf("#include <begin_vertex>") === -1 ||
+        shader.fragmentShader.indexOf("#include <color_fragment>") === -1
+      ) {
+        throw new Error("effect-instanced-opacity-shader-hooks-unavailable");
+      }
+      shader.vertexShader = [
+        "attribute float effectOpacity;",
+        "varying float vEffectOpacity;",
+        shader.vertexShader,
+      ].join("\n");
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\nvEffectOpacity = effectOpacity;"
+      );
+      shader.fragmentShader = "varying float vEffectOpacity;\n" + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <color_fragment>",
+        "#include <color_fragment>\ndiffuseColor.a *= clamp(vEffectOpacity, 0.0, 1.0);"
+      );
+      material.userData.effectInstancedOpacityShaderInjected = true;
+    };
+    material.customProgramCacheKey = function () {
+      return "effect-instanced-opacity-v1:" + String(cacheKey || material.type || "material");
+    };
+    material.needsUpdate = true;
+    return material;
+  }
+
+  function createAcidPuddleOpacityLayer(key, geometry, sourceMaterial, capacity, name, renderOrder) {
+    var layerGeometry = geometry.clone();
+    var opacityAttribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    if (typeof opacityAttribute.setUsage === "function" && THREE.DynamicDrawUsage != null) {
+      opacityAttribute.setUsage(THREE.DynamicDrawUsage);
+    }
+    layerGeometry.setAttribute("effectOpacity", opacityAttribute);
+    // All four flat puddle layers use the same shader defines. Keeping one
+    // program key avoids four redundant links during the global boss prewarm.
+    var layerMaterial = createEffectInstancedOpacityMaterial(sourceMaterial, "acid-puddle");
+    var mesh = configureSharedEffectInstancedMesh(
+      new THREE.InstancedMesh(layerGeometry, layerMaterial, capacity),
+      name,
+      false,
+      false,
+      renderOrder
+    );
+    return {
+      key: key,
+      mesh: mesh,
+      geometry: layerGeometry,
+      material: layerMaterial,
+      opacityAttribute: opacityAttribute,
+      count: 0,
+    };
+  }
+
+  function createAcidFixedLayer(key, geometry, material, capacity, name, castShadow, receiveShadow, renderOrder) {
+    var mesh = configureSharedEffectInstancedMesh(
+      new THREE.InstancedMesh(geometry, material, capacity),
+      name,
+      castShadow,
+      receiveShadow,
+      renderOrder
+    );
+    return { key: key, mesh: mesh, count: 0 };
+  }
+
+  function createAcidInstancedBatch() {
+    var group = new THREE.Group();
+    group.name = "batched acid visuals";
+    group.visible = false;
+    var circleGeometry = getSharedGeometry("acid-puddle-circle", function () {
+      return new THREE.CircleGeometry(1, 28);
+    });
+    var ringGeometry = getSharedGeometry("acid-puddle-ripple-ring", function () {
+      return new THREE.RingGeometry(0.78, 1, 36);
+    });
+    var bubbleGeometry = getSharedGeometry("acid-puddle-bubble-sphere", function () {
+      return new THREE.SphereGeometry(1, 9, 6);
+    });
+    var lobeGeometry = getSharedGeometry("slime-lobe-sphere", function () {
+      return new THREE.SphereGeometry(1, 14, 10);
+    });
+    var ringSourceMaterial = mats.acidPuddleFoam.clone();
+    ringSourceMaterial.opacity = 0.46;
+    var puddleLayers = {
+      surface: createAcidPuddleOpacityLayer("surface", circleGeometry, mats.acidPuddle, MAX_ACID_PUDDLES, "batched acid puddle surfaces", -1),
+      dark: createAcidPuddleOpacityLayer("dark", circleGeometry, mats.acidPuddleDark, MAX_ACID_PUDDLES, "batched acid puddle dark patches", 0),
+      ring: createAcidPuddleOpacityLayer("ring", ringGeometry, ringSourceMaterial, MAX_ACID_PUDDLES, "batched acid puddle rings", 2),
+      foam: createAcidPuddleOpacityLayer("foam", circleGeometry, mats.acidPuddleFoam, MAX_ACID_PUDDLES, "batched acid puddle foam", 1),
+      acidBubbles: createAcidFixedLayer("acidBubbles", bubbleGeometry, mats.acid, MAX_ACID_PUDDLES * 4, "batched acid puddle bubbles", false, false, 0),
+      highlightBubbles: createAcidFixedLayer("highlightBubbles", bubbleGeometry, mats.slimeHighlight, MAX_ACID_PUDDLES * 3, "batched highlighted acid puddle bubbles", false, false, 0),
+    };
+    ringSourceMaterial.dispose();
+    var projectileMaterials = [
+      mats.acidSpitCore,
+      mats.acidSpitShadow,
+      mats.acidSpitCore,
+      mats.acidSpitHot,
+      mats.acidSpitShadow,
+      mats.acidSpitHot,
+      mats.acidSpitHot,
+    ];
+    var projectileLayers = [];
+    for (var projectileLayerIndex = 0; projectileLayerIndex < projectileMaterials.length; projectileLayerIndex++) {
+      var projectileLayer = createAcidFixedLayer(
+        "lobe" + projectileLayerIndex,
+        lobeGeometry,
+        projectileMaterials[projectileLayerIndex],
+        MAX_ACID_PROJECTILES,
+        "batched acid projectile lobe " + (projectileLayerIndex + 1),
+        true,
+        false,
+        0
+      );
+      projectileLayer.mesh.layers.set(ACID_PROJECTILE_SHADOW_LAYER);
+      projectileLayers.push(projectileLayer);
+    }
+    var puddleLayerList = [
+      puddleLayers.surface,
+      puddleLayers.dark,
+      puddleLayers.acidBubbles,
+      puddleLayers.highlightBubbles,
+      puddleLayers.foam,
+      puddleLayers.ring,
+    ];
+    var batch = {
+      group: group,
+      projectileLayers: projectileLayers,
+      puddleLayers: puddleLayers,
+      puddleLayerList: puddleLayerList,
+      meshes: [],
+      opacityLayers: [puddleLayers.surface, puddleLayers.dark, puddleLayers.ring, puddleLayers.foam],
+      shaderValidated: false,
+      syncs: 0,
+      attaches: 0,
+      visibleProjectiles: 0,
+      visiblePuddles: 0,
+      projectileInstances: 0,
+      puddleInstances: 0,
+      batchDrawCalls: 0,
+      mainDrawCalls: 0,
+      shadowDrawCalls: 0,
+      drawCalls: 0,
+      estimatedRenderPasses: 0,
+    };
+    for (var projectileMeshIndex = 0; projectileMeshIndex < projectileLayers.length; projectileMeshIndex++) {
+      batch.meshes.push(projectileLayers[projectileMeshIndex].mesh);
+      group.add(projectileLayers[projectileMeshIndex].mesh);
+    }
+    for (var puddleMeshIndex = 0; puddleMeshIndex < puddleLayerList.length; puddleMeshIndex++) {
+      batch.meshes.push(puddleLayerList[puddleMeshIndex].mesh);
+      group.add(puddleLayerList[puddleMeshIndex].mesh);
+    }
+    group.userData.acidInstancedBatch = batch;
+    return batch;
+  }
+
+  function validateAcidInstancedBatch(batch) {
+    if (!batch || !renderer || !camera || typeof renderer.compile !== "function") return false;
+    var layer = batch.puddleLayers.surface;
+    var validationScene = new THREE.Scene();
+    validationScene.fog = scene && scene.fog ? scene.fog : null;
+    var validationMesh = new THREE.InstancedMesh(layer.geometry, layer.material, 1);
+    validationMesh.frustumCulled = false;
+    validationMesh.setMatrixAt(0, new THREE.Matrix4());
+    validationMesh.count = 1;
+    validationScene.add(validationMesh);
+    layer.opacityAttribute.setX(0, 1);
+    layer.opacityAttribute.needsUpdate = true;
+    layer.material.userData.effectInstancedOpacityShaderInjected = false;
+    try {
+      renderer.compile(validationScene, camera);
+      var materialProperties = renderer.properties && typeof renderer.properties.get === "function"
+        ? renderer.properties.get(layer.material)
+        : null;
+      var programs = materialProperties && materialProperties.programs;
+      var linkedProgramFound = false;
+      var linkedProgramFailed = false;
+      if (programs && typeof programs.forEach === "function") {
+        programs.forEach(function (program) {
+          if (!program) return;
+          linkedProgramFound = true;
+          if (program.diagnostics && program.diagnostics.runnable === false) linkedProgramFailed = true;
+        });
+      }
+      batch.shaderValidated = !!(
+        layer.material.userData.effectInstancedOpacityShaderInjected &&
+        linkedProgramFound && !linkedProgramFailed
+      );
+      if (!batch.shaderValidated && !acidInstancingFallbackReason) {
+        acidInstancingFallbackReason = linkedProgramFailed
+          ? "acid-shader-link-failed"
+          : "acid-shader-program-unavailable";
+      }
+    } catch (err) {
+      acidInstancingFallbackReason = String(err && err.message || err || "acid-shader-validation-failed").slice(0, 160);
+      batch.shaderValidated = false;
+    }
+    validationScene.remove(validationMesh);
+    if (typeof validationMesh.dispose === "function") validationMesh.dispose();
+    layer.opacityAttribute.setX(0, 0);
+    layer.opacityAttribute.needsUpdate = true;
+    return batch.shaderValidated;
+  }
+
+  function disposeAcidInstancedBatch(batch) {
+    if (!batch) return;
+    if (batch.group.parent) batch.group.parent.remove(batch.group);
+    for (var meshIndex = 0; meshIndex < batch.meshes.length; meshIndex++) {
+      if (batch.meshes[meshIndex] && typeof batch.meshes[meshIndex].dispose === "function") batch.meshes[meshIndex].dispose();
+    }
+    for (var layerIndex = 0; layerIndex < batch.opacityLayers.length; layerIndex++) {
+      var layer = batch.opacityLayers[layerIndex];
+      if (layer.geometry && typeof layer.geometry.dispose === "function") layer.geometry.dispose();
+      if (layer.material && typeof layer.material.dispose === "function") layer.material.dispose();
+    }
+  }
+
+  function attachAcidInstancedBatch(batch) {
+    if (!batch) return;
+    if (batch.group.parent !== effectRoot) {
+      effectRoot.add(batch.group);
+      batch.attaches += 1;
+    }
+  }
+
+  function detachAcidInstancedBatch(batch) {
+    if (!batch) return;
+    if (batch.group.parent) batch.group.parent.remove(batch.group);
+    batch.group.visible = false;
+  }
+
+  function ensureAcidInstancedBatch() {
+    if (acidInstancedBatch) return acidInstancedBatch;
+    if (acidInstancingMode === "fallback") return null;
+    if (acidForceVisualFallback) {
+      acidInstancingMode = "fallback";
+      acidInstancingFallbackReason = "forced-by-query";
+      return null;
+    }
+    if (!renderer || !THREE.InstancedMesh || !THREE.InstancedBufferAttribute) {
+      acidInstancingMode = "fallback";
+      acidInstancingFallbackReason = "instancing-api-unavailable";
+      return null;
+    }
+    var batch = null;
+    try {
+      batch = createAcidInstancedBatch();
+      if (!validateAcidInstancedBatch(batch)) {
+        if (!acidInstancingFallbackReason) acidInstancingFallbackReason = "acid-shader-validation-failed";
+        disposeAcidInstancedBatch(batch);
+        acidInstancingMode = "fallback";
+        return null;
+      }
+      acidInstancedBatch = batch;
+      acidInstancingMode = "instanced";
+      return batch;
+    } catch (err) {
+      if (batch) disposeAcidInstancedBatch(batch);
+      acidInstancingMode = "fallback";
+      acidInstancingFallbackReason = String(err && err.message || err || "acid-batch-create-failed").slice(0, 160);
+      return null;
+    }
+  }
+
+  function writeEffectBatchMatrix(instancedMesh, index, sourceObject) {
+    effectBatchMatrixScratch.multiplyMatrices(effectBatchRootInverseScratch, sourceObject.matrixWorld);
+    instancedMesh.setMatrixAt(index, effectBatchMatrixScratch);
+  }
+
+  function finishEffectBatchMesh(mesh, count) {
+    mesh.count = count;
+    mesh.visible = count > 0;
+    if (count > 0 && mesh.instanceMatrix) mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  function getMatrixElementMaxDifference(first, second) {
+    var maximum = 0;
+    for (var elementIndex = 0; elementIndex < 16; elementIndex++) {
+      maximum = Math.max(maximum, Math.abs(first.elements[elementIndex] - second.elements[elementIndex]));
+    }
+    return maximum;
+  }
+
+  function effectMaterialsMatchForBatch(first, second, compareOpacity) {
+    if (!first || !second) return false;
+    function colorHex(value) { return value && typeof value.getHex === "function" ? value.getHex() : null; }
+    function numericMatch(firstValue, secondValue) {
+      var firstNumber = Number(firstValue);
+      var secondNumber = Number(secondValue);
+      if (!isFinite(firstNumber) && !isFinite(secondNumber)) return true;
+      return Math.abs(firstNumber - secondNumber) <= 0.00001;
+    }
+    if (colorHex(first.color) !== colorHex(second.color)) return false;
+    if (colorHex(first.emissive) !== colorHex(second.emissive)) return false;
+    if (first.transparent !== second.transparent || first.blending !== second.blending) return false;
+    if (first.depthWrite !== second.depthWrite || first.depthTest !== second.depthTest || first.side !== second.side) return false;
+    if (!numericMatch(first.roughness, second.roughness) || !numericMatch(first.metalness, second.metalness)) return false;
+    if (!numericMatch(first.emissiveIntensity, second.emissiveIntensity)) return false;
+    if (first.vertexColors !== second.vertexColors || first.flatShading !== second.flatShading) return false;
+    if (first.map !== second.map || first.normalMap !== second.normalMap) return false;
+    if (first.roughnessMap !== second.roughnessMap || first.metalnessMap !== second.metalnessMap) return false;
+    if (first.emissiveMap !== second.emissiveMap || first.alphaMap !== second.alphaMap) return false;
+    if (compareOpacity && Math.abs(Number(first.opacity) - Number(second.opacity)) > 0.00001) return false;
+    return true;
+  }
+
+  function getAcidInstancedParityDiagnostics(batch) {
+    var result = {
+      matrixMismatches: 0,
+      opacityMismatches: 0,
+      materialMismatches: 0,
+      countMismatches: 0,
+      shadowMismatches: 0,
+      maxMatrixError: 0,
+      maxOpacityError: 0,
+    };
+    if (!batch || acidInstancingMode !== "instanced") return result;
+    effectRoot.updateMatrixWorld(true);
+    var inverseRoot = new THREE.Matrix4().copy(effectRoot.matrixWorld).invert();
+    var expectedMatrix = new THREE.Matrix4();
+    var actualMatrix = new THREE.Matrix4();
+    function compareMatrix(mesh, instanceIndex, object) {
+      object.updateMatrixWorld(true);
+      expectedMatrix.multiplyMatrices(inverseRoot, object.matrixWorld);
+      mesh.getMatrixAt(instanceIndex, actualMatrix);
+      var error = getMatrixElementMaxDifference(expectedMatrix, actualMatrix);
+      result.maxMatrixError = Math.max(result.maxMatrixError, error);
+      if (error > 0.00001) result.matrixMismatches += 1;
+    }
+
+    var projectileCount = 0;
+    for (var projectileIndex = 0; projectileIndex < acidProjectileVisualRegistry.length; projectileIndex++) {
+      var projectile = acidProjectileVisualRegistry[projectileIndex];
+      if (!projectile || !projectile.userData.acidProjectileInUse || !projectile.visible) continue;
+      projectile.updateMatrixWorld(true);
+      var parts = projectile.userData.slimeParts || [];
+      for (var lobeIndex = 0; lobeIndex < batch.projectileLayers.length; lobeIndex++) {
+        if (!parts[lobeIndex]) continue;
+        compareMatrix(batch.projectileLayers[lobeIndex].mesh, projectileCount, parts[lobeIndex]);
+        if (batch.projectileLayers[lobeIndex].mesh.material !== parts[lobeIndex].material) result.materialMismatches += 1;
+        if (parts[lobeIndex].castShadow) result.shadowMismatches += 1;
+      }
+      projectileCount += 1;
+    }
+    for (var projectileLayerIndex = 0; projectileLayerIndex < batch.projectileLayers.length; projectileLayerIndex++) {
+      var projectileMesh = batch.projectileLayers[projectileLayerIndex].mesh;
+      if (projectileMesh.count !== projectileCount) result.countMismatches += 1;
+      if (!projectileMesh.castShadow || projectileMesh.receiveShadow) result.shadowMismatches += 1;
+    }
+
+    var puddleCount = 0;
+    var acidBubbleCount = 0;
+    var highlightBubbleCount = 0;
+    for (var puddleIndex = 0; puddleIndex < acidPuddleVisualRegistry.length; puddleIndex++) {
+      var visual = acidPuddleVisualRegistry[puddleIndex];
+      if (!visual || !visual.inUse || !visual.group.visible) continue;
+      visual.group.updateMatrixWorld(true);
+      var opacityPairs = [
+        [batch.puddleLayers.surface, visual.surface],
+        [batch.puddleLayers.dark, visual.darkPatch],
+        [batch.puddleLayers.ring, visual.ring],
+        [batch.puddleLayers.foam, visual.foam],
+      ];
+      for (var pairIndex = 0; pairIndex < opacityPairs.length; pairIndex++) {
+        var pair = opacityPairs[pairIndex];
+        compareMatrix(pair[0].mesh, puddleCount, pair[1]);
+        var expectedOpacity = Number(pair[1].material.opacity) || 0;
+        var actualOpacity = pair[0].opacityAttribute.getX(puddleCount);
+        var opacityError = Math.abs(expectedOpacity - actualOpacity);
+        result.maxOpacityError = Math.max(result.maxOpacityError, opacityError);
+        if (opacityError > 0.00001) result.opacityMismatches += 1;
+      }
+      for (var bubbleIndex = 0; bubbleIndex < visual.bubbles.length; bubbleIndex++) {
+        var bubble = visual.bubbles[bubbleIndex];
+        if (!bubble || bubble.visible === false) continue;
+        if (bubbleIndex % 2) {
+          compareMatrix(batch.puddleLayers.highlightBubbles.mesh, highlightBubbleCount++, bubble);
+          if (batch.puddleLayers.highlightBubbles.mesh.material !== bubble.material) result.materialMismatches += 1;
+        } else {
+          compareMatrix(batch.puddleLayers.acidBubbles.mesh, acidBubbleCount++, bubble);
+          if (batch.puddleLayers.acidBubbles.mesh.material !== bubble.material) result.materialMismatches += 1;
+        }
+      }
+      puddleCount += 1;
+    }
+    var puddleLayers = batch.puddleLayerList;
+    for (var puddleLayerIndex = 0; puddleLayerIndex < puddleLayers.length; puddleLayerIndex++) {
+      if (puddleLayers[puddleLayerIndex].mesh.castShadow || puddleLayers[puddleLayerIndex].mesh.receiveShadow) {
+        result.shadowMismatches += 1;
+      }
+    }
+    if (batch.puddleLayers.surface.mesh.count !== puddleCount) result.countMismatches += 1;
+    if (batch.puddleLayers.dark.mesh.count !== puddleCount) result.countMismatches += 1;
+    if (batch.puddleLayers.ring.mesh.count !== puddleCount) result.countMismatches += 1;
+    if (batch.puddleLayers.foam.mesh.count !== puddleCount) result.countMismatches += 1;
+    if (batch.puddleLayers.acidBubbles.mesh.count !== acidBubbleCount) result.countMismatches += 1;
+    if (batch.puddleLayers.highlightBubbles.mesh.count !== highlightBubbleCount) result.countMismatches += 1;
+    if (!effectMaterialsMatchForBatch(batch.puddleLayers.surface.mesh.material, mats.acidPuddle, false)) result.materialMismatches += 1;
+    if (!effectMaterialsMatchForBatch(batch.puddleLayers.dark.mesh.material, mats.acidPuddleDark, false)) result.materialMismatches += 1;
+    if (!effectMaterialsMatchForBatch(batch.puddleLayers.ring.mesh.material, mats.acidPuddleFoam, false)) result.materialMismatches += 1;
+    if (!effectMaterialsMatchForBatch(batch.puddleLayers.foam.mesh.material, mats.acidPuddleFoam, false)) result.materialMismatches += 1;
+    return result;
+  }
+
+  function syncAcidInstancedBatchesForRender() {
+    var batch = acidInstancedBatch;
+    if (!batch || acidInstancingMode !== "instanced") return;
+    effectRoot.updateMatrixWorld(true);
+    effectBatchRootInverseScratch.copy(effectRoot.matrixWorld).invert();
+    var projectileCount = 0;
+    for (var projectileIndex = 0; projectileIndex < acidProjectileVisualRegistry.length; projectileIndex++) {
+      var projectileGroup = acidProjectileVisualRegistry[projectileIndex];
+      if (!projectileGroup || !projectileGroup.userData.acidProjectileInUse || !projectileGroup.visible) continue;
+      projectileGroup.updateMatrixWorld(true);
+      var projectileParts = projectileGroup.userData.slimeParts || [];
+      for (var lobeIndex = 0; lobeIndex < batch.projectileLayers.length; lobeIndex++) {
+        var projectilePart = projectileParts[lobeIndex];
+        if (!projectilePart) continue;
+        writeEffectBatchMatrix(batch.projectileLayers[lobeIndex].mesh, projectileCount, projectilePart);
+      }
+      projectileCount += 1;
+    }
+    for (var projectileLayerIndex = 0; projectileLayerIndex < batch.projectileLayers.length; projectileLayerIndex++) {
+      var projectileLayer = batch.projectileLayers[projectileLayerIndex];
+      projectileLayer.count = projectileCount;
+      finishEffectBatchMesh(projectileLayer.mesh, projectileCount);
+    }
+
+    var puddleCount = 0;
+    var acidBubbleCount = 0;
+    var highlightBubbleCount = 0;
+    for (var puddleIndex = 0; puddleIndex < acidPuddleVisualRegistry.length; puddleIndex++) {
+      var puddleVisual = acidPuddleVisualRegistry[puddleIndex];
+      if (!puddleVisual || !puddleVisual.inUse || !puddleVisual.group.visible) continue;
+      puddleVisual.group.updateMatrixWorld(true);
+      writeEffectBatchMatrix(batch.puddleLayers.surface.mesh, puddleCount, puddleVisual.surface);
+      writeEffectBatchMatrix(batch.puddleLayers.dark.mesh, puddleCount, puddleVisual.darkPatch);
+      writeEffectBatchMatrix(batch.puddleLayers.ring.mesh, puddleCount, puddleVisual.ring);
+      writeEffectBatchMatrix(batch.puddleLayers.foam.mesh, puddleCount, puddleVisual.foam);
+      batch.puddleLayers.surface.opacityAttribute.setX(puddleCount, puddleVisual.surface.material.opacity);
+      batch.puddleLayers.dark.opacityAttribute.setX(puddleCount, puddleVisual.darkPatch.material.opacity);
+      batch.puddleLayers.ring.opacityAttribute.setX(puddleCount, puddleVisual.ring.material.opacity);
+      batch.puddleLayers.foam.opacityAttribute.setX(puddleCount, puddleVisual.foam.material.opacity);
+      for (var bubbleIndex = 0; bubbleIndex < puddleVisual.bubbles.length; bubbleIndex++) {
+        var bubble = puddleVisual.bubbles[bubbleIndex];
+        if (!bubble || bubble.visible === false) continue;
+        if (bubbleIndex % 2) {
+          writeEffectBatchMatrix(batch.puddleLayers.highlightBubbles.mesh, highlightBubbleCount++, bubble);
+        } else {
+          writeEffectBatchMatrix(batch.puddleLayers.acidBubbles.mesh, acidBubbleCount++, bubble);
+        }
+      }
+      puddleCount += 1;
+    }
+    var opacityLayers = batch.opacityLayers;
+    for (var opacityLayerIndex = 0; opacityLayerIndex < opacityLayers.length; opacityLayerIndex++) {
+      opacityLayers[opacityLayerIndex].opacityAttribute.needsUpdate = puddleCount > 0;
+    }
+    batch.puddleLayers.surface.count = puddleCount;
+    batch.puddleLayers.dark.count = puddleCount;
+    batch.puddleLayers.ring.count = puddleCount;
+    batch.puddleLayers.foam.count = puddleCount;
+    batch.puddleLayers.acidBubbles.count = acidBubbleCount;
+    batch.puddleLayers.highlightBubbles.count = highlightBubbleCount;
+    finishEffectBatchMesh(batch.puddleLayers.surface.mesh, puddleCount);
+    finishEffectBatchMesh(batch.puddleLayers.dark.mesh, puddleCount);
+    finishEffectBatchMesh(batch.puddleLayers.ring.mesh, puddleCount);
+    finishEffectBatchMesh(batch.puddleLayers.foam.mesh, puddleCount);
+    finishEffectBatchMesh(batch.puddleLayers.acidBubbles.mesh, acidBubbleCount);
+    finishEffectBatchMesh(batch.puddleLayers.highlightBubbles.mesh, highlightBubbleCount);
+
+    batch.visibleProjectiles = projectileCount;
+    batch.visiblePuddles = puddleCount;
+    batch.projectileInstances = projectileCount * batch.projectileLayers.length;
+    batch.puddleInstances = puddleCount * 4 + acidBubbleCount + highlightBubbleCount;
+    batch.batchDrawCalls = (projectileCount > 0 ? batch.projectileLayers.length : 0) + (puddleCount > 0 ? batch.puddleLayerList.length : 0);
+    batch.mainDrawCalls = projectileCount * batch.projectileLayers.length + (puddleCount > 0 ? 10 : 0);
+    batch.shadowDrawCalls = projectileCount > 0 ? batch.projectileLayers.length : 0;
+    batch.drawCalls = batch.mainDrawCalls + batch.shadowDrawCalls;
+    batch.estimatedRenderPasses = batch.drawCalls;
+    batch.syncs += 1;
+    var anyVisible = projectileCount > 0 || puddleCount > 0;
+    if (anyVisible) {
+      attachAcidInstancedBatch(batch);
+      batch.group.visible = true;
+    } else {
+      detachAcidInstancedBatch(batch);
+    }
+  }
+
   function createAcidProjectileMesh(x, y, z, angle) {
     var group = new THREE.Group();
     group.position.set(x, y, z);
@@ -43770,29 +44743,44 @@
     parts.push(addSlimeLobe(group, 0.16, 0.09, 0.19, mats.acidSpitHot, 0.18, -0.06, -0.08, 5.1));
     parts.push(addSlimeLobe(group, 0.09, 0.07, 0.15, mats.acidSpitHot, -0.2, 0.09, 0.09, 5.9));
     group.userData.slimeParts = parts;
+    group.userData.acidProjectileInstanced = !!ensureAcidInstancedBatch();
+    if (group.userData.acidProjectileInstanced) {
+      for (var partIndex = 0; partIndex < parts.length; partIndex++) parts[partIndex].castShadow = false;
+    }
+    group.userData.acidProjectileInUse = false;
     group.visible = false;
+    acidProjectileVisualRegistry.push(group);
     acidProjectileVisualCreated += 1;
     return group;
   }
 
   function acquireAcidProjectileVisual(x, y, z, angle) {
     var group = acidProjectileVisualPool.length ? acidProjectileVisualPool.pop() : createAcidProjectileMesh(x, y, z, angle);
+    group.userData.acidProjectileInUse = true;
     group.visible = true;
     group.position.set(x, y, z);
     group.rotation.set(0, angle, 0);
-    if (group.parent !== effectRoot) effectRoot.add(group);
+    if (group.parent !== effectRoot) {
+      effectRoot.add(group);
+    }
     acidProjectileVisualInUse += 1;
     return group;
   }
 
   function releaseAcidProjectileVisual(group) {
-    if (!group) return;
+    if (!group || !group.userData.acidProjectileInUse) return;
+    group.userData.acidProjectileInUse = false;
     if (group.parent) group.parent.remove(group);
     group.visible = false;
     group.position.set(0, -1000, 0);
     group.rotation.set(0, 0, 0);
     acidProjectileVisualInUse = Math.max(0, acidProjectileVisualInUse - 1);
     if (acidProjectileVisualPool.indexOf(group) === -1) acidProjectileVisualPool.push(group);
+  }
+
+  function isAcidProjectileVisualAttached(group) {
+    if (!group || !group.userData.acidProjectileInUse) return false;
+    return group.parent === effectRoot;
   }
 
   function addSlimeLobe(parent, sx, sy, sz, mat, x, y, z, phase) {
@@ -43919,33 +44907,51 @@
     group.position.set(0, 0, 0);
     group.visible = false;
 
-    var surface = addPuddleCircle(group, mats.acidPuddle.clone(), ACID_PUDDLE_RADIUS, ACID_PUDDLE_RADIUS * 0.82, 0.09, -1, 0);
-    var darkPatch = addPuddleCircle(group, mats.acidPuddleDark.clone(), ACID_PUDDLE_RADIUS * 0.55, ACID_PUDDLE_RADIUS * 0.34, 0.095, 0, 0);
-    var ring = addPuddleRing(group, ACID_PUDDLE_RADIUS * 0.68, 0.105);
-    var foam = addPuddleCircle(group, mats.acidPuddleFoam.clone(), ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, 0.11, 1, 0);
+    var surfaceY = ACID_PUDDLE_BASE_SURFACE_Y;
+    var surface = addPuddleCircle(group, mats.acidPuddle.clone(), ACID_PUDDLE_RADIUS, ACID_PUDDLE_RADIUS * 0.82, surfaceY, -1, 0);
+    var darkPatch = addPuddleCircle(group, mats.acidPuddleDark.clone(), ACID_PUDDLE_RADIUS * 0.55, ACID_PUDDLE_RADIUS * 0.34, surfaceY + 0.005, 0, 0);
+    var ring = addPuddleRing(group, ACID_PUDDLE_RADIUS * 0.68, surfaceY + 0.015);
+    var foam = addPuddleCircle(group, mats.acidPuddleFoam.clone(), ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, surfaceY + 0.02, 1, 0);
 
     var bubbles = [];
     for (var i = 0; i < 7; i++) {
       bubbles.push(addPuddleBubble(group, 0, 0, 0.1, i));
     }
 
-    var visual = { group: group, surface: surface, darkPatch: darkPatch, ring: ring, foam: foam, bubbles: bubbles };
+    var visual = {
+      group: group,
+      surface: surface,
+      darkPatch: darkPatch,
+      ring: ring,
+      foam: foam,
+      bubbles: bubbles,
+      surfaceY: surfaceY,
+      instanced: !!ensureAcidInstancedBatch(),
+      inUse: false,
+    };
     group.userData.acidPuddleVisual = visual;
+    acidPuddleVisualRegistry.push(visual);
     acidPuddleVisualCreated += 1;
     return visual;
   }
 
   function configureAcidPuddleVisual(visual, x, z) {
+    var surfaceY = getAcidPuddleSurfaceY();
+    visual.surfaceY = surfaceY;
     resetFirePatchCircle(visual.surface, ACID_PUDDLE_RADIUS * rand(0.92, 1.08), ACID_PUDDLE_RADIUS * rand(0.72, 0.96), rand(0, Math.PI * 2));
+    visual.surface.position.y = surfaceY;
+    rememberBase(visual.surface);
     resetFirePatchCircle(visual.darkPatch, ACID_PUDDLE_RADIUS * rand(0.48, 0.62), ACID_PUDDLE_RADIUS * rand(0.26, 0.42), rand(0, Math.PI * 2));
-    visual.darkPatch.position.set(rand(-0.22, 0.22), 0.095, rand(-0.16, 0.16));
+    visual.darkPatch.position.set(rand(-0.22, 0.22), surfaceY + 0.005, rand(-0.16, 0.16));
     rememberBase(visual.darkPatch);
     resetFirePatchCircle(visual.ring, ACID_PUDDLE_RADIUS * 0.68, ACID_PUDDLE_RADIUS * 0.68 * 0.82, 0);
+    visual.ring.position.y = surfaceY + 0.015;
+    rememberBase(visual.ring);
     resetFirePatchCircle(visual.foam, ACID_PUDDLE_RADIUS * 0.34, ACID_PUDDLE_RADIUS * 0.11, rand(0, Math.PI * 2));
-    visual.foam.position.set(rand(-0.42, 0.42), 0.11, rand(-0.32, 0.32));
+    visual.foam.position.set(rand(-0.42, 0.42), surfaceY + 0.02, rand(-0.32, 0.32));
     rememberBase(visual.foam);
     for (var i = 0; i < visual.bubbles.length; i++) {
-      configureAcidPuddleBubble(visual.bubbles[i], i);
+      configureAcidPuddleBubble(visual.bubbles[i], i, surfaceY);
     }
     visual.group.position.set(x, 0, z);
     visual.group.visible = true;
@@ -43953,18 +44959,30 @@
 
   function acquireAcidPuddleVisual(x, z) {
     var visual = acidPuddleVisualPool.length ? acidPuddleVisualPool.pop() : createAcidPuddleVisual();
+    visual.inUse = true;
     acidPuddleVisualInUse += 1;
     configureAcidPuddleVisual(visual, x, z);
-    if (visual.group.parent !== effectRoot) effectRoot.add(visual.group);
+    if (visual.instanced) {
+      if (visual.group.parent) visual.group.parent.remove(visual.group);
+    } else if (visual.group.parent !== effectRoot) {
+      effectRoot.add(visual.group);
+    }
     return visual;
   }
 
   function releaseAcidPuddleVisual(visual) {
-    if (!visual) return;
+    if (!visual || !visual.inUse) return;
+    visual.inUse = false;
     if (visual.group.parent) visual.group.parent.remove(visual.group);
     visual.group.visible = false;
     acidPuddleVisualInUse = Math.max(0, acidPuddleVisualInUse - 1);
-    acidPuddleVisualPool.push(visual);
+    if (acidPuddleVisualPool.indexOf(visual) === -1) acidPuddleVisualPool.push(visual);
+  }
+
+  function isAcidPuddleVisualAttached(visual) {
+    if (!visual || !visual.inUse) return false;
+    if (visual.instanced) return !!(acidInstancedBatch && acidInstancingMode === "instanced");
+    return visual.group.parent === effectRoot;
   }
 
   function addPuddleCircle(parent, mat, sx, sz, y, renderOrder, angle) {
@@ -44022,12 +45040,12 @@
     return mesh;
   }
 
-  function configureAcidPuddleBubble(mesh, index) {
+  function configureAcidPuddleBubble(mesh, index, surfaceY) {
     var angle = rand(0, Math.PI * 2);
     var distance = rand(0.25, ACID_PUDDLE_RADIUS * 0.78);
     var size = rand(0.055, 0.13);
     mesh.userData.bubblePhase = rand(0, Math.PI * 2);
-    mesh.position.set(Math.cos(angle) * distance, 0.13, Math.sin(angle) * distance);
+    mesh.position.set(Math.cos(angle) * distance, (Number(surfaceY) || ACID_PUDDLE_BASE_SURFACE_Y) + 0.04, Math.sin(angle) * distance);
     mesh.scale.set(size, size * 0.32, size);
     mesh.visible = true;
     rememberBase(mesh);
@@ -44082,7 +45100,7 @@
           var bubble = bubbles[b];
           var phase = bubble.userData.bubblePhase || 0;
           var bubblePulse = 0.7 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.75;
-          bubble.position.y = 0.12 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.09;
+          bubble.position.y = (Number(puddle.visual && puddle.visual.surfaceY) || ACID_PUDDLE_BASE_SURFACE_Y) + 0.03 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.09;
           scaleFromBase(bubble, bubblePulse, 0.28 + bubblePulse * 0.18, bubblePulse);
         }
       }
@@ -44129,6 +45147,20 @@
     }
     releaseAcidPuddleVisual(puddle.visual);
     state.acidPuddles.splice(index, 1);
+  }
+
+  function releaseAllLocalAcidVisualsToPool() {
+    for (var projectileIndex = state.acidProjectiles.length - 1; projectileIndex >= 0; projectileIndex--) {
+      var projectile = state.acidProjectiles[projectileIndex];
+      if (projectile && projectile.mesh) releaseAcidProjectileVisual(projectile.mesh);
+    }
+    for (var puddleIndex = state.acidPuddles.length - 1; puddleIndex >= 0; puddleIndex--) {
+      var puddle = state.acidPuddles[puddleIndex];
+      if (puddle && puddle.visual) releaseAcidPuddleVisual(puddle.visual);
+    }
+    state.acidProjectiles = [];
+    state.acidPuddles = [];
+    if (acidInstancedBatch) syncAcidInstancedBatchesForRender();
   }
 
   function createFirePatchVisualSlot(poolKey) {
@@ -44897,17 +45929,66 @@
   }
 
   function getAcidPuddleVisualPoolStats() {
+    var batch = acidInstancedBatch;
+    var instanced = acidInstancingMode === "instanced" && !!batch;
+    var visibleProjectiles = instanced ? batch.visibleProjectiles : acidProjectileVisualInUse;
+    var visiblePuddles = instanced ? batch.visiblePuddles : acidPuddleVisualInUse;
+    var parity = instanced ? getAcidInstancedParityDiagnostics(batch) : null;
     return {
       available: acidPuddleVisualPool.length,
       created: acidPuddleVisualCreated,
       inUse: acidPuddleVisualInUse,
       prewarm: ACID_PUDDLE_VISUAL_PREWARM,
+      mode: acidInstancingMode,
+      instanced: instanced,
+      fallbackReason: acidInstancingFallbackReason,
+      shaderValidated: !!(batch && batch.shaderValidated),
+      drawCalls: instanced ? batch.drawCalls : visibleProjectiles * 14 + visiblePuddles * 15,
+      mainDrawCalls: instanced ? batch.mainDrawCalls : visibleProjectiles * 7 + visiblePuddles * 15,
+      shadowDrawCalls: instanced ? batch.shadowDrawCalls : visibleProjectiles * 7,
+      batchDrawCalls: instanced ? batch.batchDrawCalls : 0,
+      estimatedRenderPasses: instanced ? batch.estimatedRenderPasses : visibleProjectiles * 14 + visiblePuddles * 15,
+      submittedInstances: instanced ? batch.projectileInstances + batch.puddleInstances : visibleProjectiles * 7 + visiblePuddles * 11,
+      batchMeshes: batch ? batch.meshes.length : 0,
+      syncs: batch ? batch.syncs : 0,
+      attaches: batch ? batch.attaches : 0,
+      parity: parity,
+      puddles: {
+        visible: visiblePuddles,
+        drawCalls: instanced ? (visiblePuddles > 0 ? 10 : 0) : visiblePuddles * 15,
+        batchMeshes: instanced ? (visiblePuddles > 0 ? 6 : 0) : 0,
+        submittedInstances: instanced ? batch.puddleInstances : visiblePuddles * 11,
+        surfaceInstances: instanced ? batch.puddleLayers.surface.count : visiblePuddles,
+        darkInstances: instanced ? batch.puddleLayers.dark.count : visiblePuddles,
+        ringInstances: instanced ? batch.puddleLayers.ring.count : visiblePuddles,
+        foamInstances: instanced ? batch.puddleLayers.foam.count : visiblePuddles,
+        acidBubbleInstances: instanced ? batch.puddleLayers.acidBubbles.count : visiblePuddles * 4,
+        highlightBubbleInstances: instanced ? batch.puddleLayers.highlightBubbles.count : visiblePuddles * 3,
+      },
       projectiles: {
         available: acidProjectileVisualPool.length,
         created: acidProjectileVisualCreated,
         inUse: acidProjectileVisualInUse,
         prewarm: ACID_PROJECTILE_VISUAL_PREWARM,
         maxActive: MAX_ACID_PROJECTILES,
+        visible: visibleProjectiles,
+        colorMode: instanced ? "legacy-depth-sorted" : "legacy",
+        shadowMode: instanced ? "instanced" : "legacy",
+        drawCalls: visibleProjectiles * 7,
+        shadowDrawCalls: instanced ? (visibleProjectiles > 0 ? 7 : 0) : visibleProjectiles * 7,
+        shadowBatchMeshes: instanced ? (visibleProjectiles > 0 ? 7 : 0) : 0,
+        shadowLayer: ACID_PROJECTILE_SHADOW_LAYER,
+        colorCameraExcluded: !!(
+          instanced && batch.projectileLayers.length && camera && camera.layers &&
+          !camera.layers.test(batch.projectileLayers[0].mesh.layers)
+        ),
+        shadowCameraIncluded: !!(
+          instanced && batch.projectileLayers.length && gameplaySun && gameplaySun.shadow &&
+          gameplaySun.shadow.camera && gameplaySun.shadow.camera.layers &&
+          gameplaySun.shadow.camera.layers.test(batch.projectileLayers[0].mesh.layers)
+        ),
+        submittedInstances: instanced ? batch.projectileInstances : visibleProjectiles * 7,
+        layers: instanced ? batch.projectileLayers.length : 0,
       },
     };
   }
@@ -45032,12 +46113,47 @@
   }
 
   function getDeathDebrisVisualPoolStats() {
+    var activeBatches = 0;
+    var opaqueInstances = 0;
+    var matrixWrites = 0;
+    for (var batchIndex = 0; batchIndex < deathDebrisInstancedBatchList.length; batchIndex++) {
+      var batch = deathDebrisInstancedBatchList[batchIndex];
+      if (batch.visuals.length) activeBatches += 1;
+      opaqueInstances += batch.visuals.length;
+      matrixWrites += batch.matrixWrites;
+    }
+    var legacyInstances = Math.max(0, deathDebrisVisualInUse - opaqueInstances);
     return {
       available: deathDebrisVisualPool.length,
       created: deathDebrisVisualCreated,
       inUse: deathDebrisVisualInUse,
       prewarm: DEATH_DEBRIS_VISUAL_PREWARM,
       maxActive: MAX_DEBRIS,
+      mode: deathDebrisForceVisualFallback ? "legacy-forced" : "hybrid-instanced-opaque",
+      instanced: !deathDebrisForceVisualFallback,
+      batches: deathDebrisInstancedBatchList.length,
+      activeBatches: activeBatches,
+      opaqueInstances: opaqueInstances,
+      legacyInstances: legacyInstances,
+      drawCalls: activeBatches + legacyInstances,
+      estimatedRenderPasses: (activeBatches + legacyInstances) * 2,
+      matrixWrites: matrixWrites,
+      fallbacks: deathDebrisBatchFallbacks,
+      fadeHandoffs: deathDebrisBatchHandoffs,
+      parity: getDeathDebrisInstancedParityDiagnostics(),
+      batchDetails: deathDebrisInstancedBatchList.slice(0, 48).map(function (batch) {
+        return {
+          key: batch.key,
+          sourceName: batch.sourceName,
+          geometryType: batch.geometryType,
+          materialName: batch.materialName,
+          color: batch.materialColor,
+          emissive: batch.materialEmissive,
+          active: batch.visuals.length,
+          castShadow: batch.mesh.castShadow,
+          receiveShadow: batch.mesh.receiveShadow,
+        };
+      }),
     };
   }
 
@@ -45398,6 +46514,213 @@
     state.xpOrbs = [];
   }
 
+  function getDeathDebrisBatchKey(source, sourceMaterial) {
+    if (!source || !source.geometry || !sourceMaterial) return "";
+    function colorKey(value) { return value && typeof value.getHexString === "function" ? value.getHexString() : ""; }
+    function textureKey(value) { return value && value.uuid ? value.uuid : ""; }
+    return [
+      String(source.geometry.uuid || "geometry"),
+      String(sourceMaterial.uuid || "material"),
+      colorKey(sourceMaterial.color),
+      colorKey(sourceMaterial.emissive),
+      Number(sourceMaterial.emissiveIntensity) || 0,
+      Number(sourceMaterial.roughness) || 0,
+      Number(sourceMaterial.metalness) || 0,
+      sourceMaterial.side,
+      sourceMaterial.blending,
+      sourceMaterial.depthWrite ? 1 : 0,
+      sourceMaterial.depthTest ? 1 : 0,
+      sourceMaterial.vertexColors ? 1 : 0,
+      sourceMaterial.flatShading ? 1 : 0,
+      textureKey(sourceMaterial.map),
+      textureKey(sourceMaterial.normalMap),
+      textureKey(sourceMaterial.roughnessMap),
+      textureKey(sourceMaterial.metalnessMap),
+      textureKey(sourceMaterial.emissiveMap),
+      textureKey(sourceMaterial.alphaMap),
+    ].join("|");
+  }
+
+  function canInstanceDeathDebrisSource(source, sourceMaterial) {
+    if (deathDebrisForceVisualFallback || deathDebrisBatchWarmupSuppressed) return false;
+    if (!source || !source.isMesh || source.isSkinnedMesh || !source.geometry || !sourceMaterial) return false;
+    if (!THREE.InstancedMesh || Array.isArray(source.material) || !sourceMaterial.isMeshStandardMaterial) return false;
+    // Shared block pieces are the high-volume debris path and have a proven
+    // instanced normal transform. Curved/custom geometries keep the authored
+    // Mesh path until their shader variants are validated independently.
+    if (source.geometry.type !== "BoxGeometry") return false;
+    var morphAttributes = source.geometry.morphAttributes || {};
+    var morphKeys = Object.keys(morphAttributes);
+    for (var morphIndex = 0; morphIndex < morphKeys.length; morphIndex++) {
+      if (morphAttributes[morphKeys[morphIndex]] && morphAttributes[morphKeys[morphIndex]].length) return false;
+    }
+    var sx = Number(source.scale.x);
+    var sy = Number(source.scale.y);
+    var sz = Number(source.scale.z);
+    if (!isFinite(sx) || !isFinite(sy) || !isFinite(sz) || sx <= 0 || sy <= 0 || sz <= 0) return false;
+    var largest = Math.max(sx, sy, sz, 1);
+    return Math.abs(sx - sy) <= largest * 0.0001 && Math.abs(sy - sz) <= largest * 0.0001;
+  }
+
+  function createDeathDebrisInstancedBatch(key, source, sourceMaterial) {
+    var material = mats.zombieBlood.clone();
+    material.copy(sourceMaterial);
+    material.transparent = true;
+    material.opacity = 1;
+    var mesh = configureSharedEffectInstancedMesh(
+      new THREE.InstancedMesh(source.geometry, material, MAX_DEBRIS),
+      "batched death debris " + (deathDebrisInstancedBatchList.length + 1),
+      true,
+      true,
+      0
+    );
+    var batch = {
+      key: key,
+      mesh: mesh,
+      material: material,
+      geometry: source.geometry,
+      sourceName: String(source.name || ""),
+      geometryType: String(source.geometry.type || ""),
+      materialName: String(sourceMaterial.name || ""),
+      materialColor: sourceMaterial.color ? sourceMaterial.color.getHexString() : "",
+      materialEmissive: sourceMaterial.emissive ? sourceMaterial.emissive.getHexString() : "",
+      visuals: [],
+      matrixWrites: 0,
+      attaches: 0,
+    };
+    mesh.userData.deathDebrisInstancedBatch = batch;
+    deathDebrisInstancedBatches[key] = batch;
+    deathDebrisInstancedBatchList.push(batch);
+    return batch;
+  }
+
+  function getDeathDebrisInstancedBatch(source, sourceMaterial) {
+    if (!canInstanceDeathDebrisSource(source, sourceMaterial)) return null;
+    var key = getDeathDebrisBatchKey(source, sourceMaterial);
+    if (!key) return null;
+    if (deathDebrisInstancedBatches[key]) return deathDebrisInstancedBatches[key];
+    try {
+      return createDeathDebrisInstancedBatch(key, source, sourceMaterial);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function attachDeathDebrisInstancedBatch(batch) {
+    if (!batch) return;
+    if (batch.mesh.parent !== effectRoot) {
+      effectRoot.add(batch.mesh);
+      batch.attaches += 1;
+    }
+    batch.mesh.visible = batch.visuals.length > 0;
+  }
+
+  function detachDeathDebrisInstancedBatch(batch) {
+    if (!batch) return;
+    if (batch.mesh.parent) batch.mesh.parent.remove(batch.mesh);
+    batch.mesh.visible = false;
+    batch.mesh.count = 0;
+  }
+
+  function addDeathDebrisVisualToBatch(visual, batch) {
+    if (!visual || !batch || batch.visuals.length >= MAX_DEBRIS) return false;
+    visual.renderMode = "instanced-opaque";
+    visual.batch = batch;
+    visual.batchIndex = batch.visuals.length;
+    batch.visuals.push(visual);
+    batch.mesh.count = batch.visuals.length;
+    attachDeathDebrisInstancedBatch(batch);
+    return true;
+  }
+
+  function removeDeathDebrisVisualFromBatch(visual) {
+    var batch = visual && visual.batch;
+    if (!batch) return;
+    var index = visual.batchIndex;
+    var lastIndex = batch.visuals.length - 1;
+    if (index >= 0 && index <= lastIndex) {
+      var moved = batch.visuals[lastIndex];
+      batch.visuals.pop();
+      if (index < lastIndex && moved) {
+        batch.visuals[index] = moved;
+        moved.batchIndex = index;
+      }
+    }
+    visual.batch = null;
+    visual.batchIndex = -1;
+    batch.mesh.count = batch.visuals.length;
+    if (!batch.visuals.length) detachDeathDebrisInstancedBatch(batch);
+  }
+
+  function handoffDeathDebrisVisualToLegacyFade(visual) {
+    if (!visual || visual.renderMode !== "instanced-opaque") return;
+    removeDeathDebrisVisualFromBatch(visual);
+    visual.renderMode = "legacy-fade";
+    if (visual.mesh.parent !== effectRoot) effectRoot.add(visual.mesh);
+    visual.mesh.visible = true;
+    deathDebrisBatchHandoffs += 1;
+  }
+
+  function syncDeathDebrisBatchesForRender() {
+    if (!deathDebrisInstancedBatchList.length) return;
+    effectRoot.updateMatrixWorld(true);
+    effectBatchRootInverseScratch.copy(effectRoot.matrixWorld).invert();
+    for (var batchIndex = 0; batchIndex < deathDebrisInstancedBatchList.length; batchIndex++) {
+      var batch = deathDebrisInstancedBatchList[batchIndex];
+      var count = batch.visuals.length;
+      if (!count) {
+        detachDeathDebrisInstancedBatch(batch);
+        continue;
+      }
+      attachDeathDebrisInstancedBatch(batch);
+      for (var visualIndex = 0; visualIndex < count; visualIndex++) {
+        var visual = batch.visuals[visualIndex];
+        if (!visual || !visual.inUse || visual.renderMode !== "instanced-opaque") continue;
+        visual.mesh.updateMatrixWorld(true);
+        writeEffectBatchMatrix(batch.mesh, visualIndex, visual.mesh);
+      }
+      batch.mesh.count = count;
+      batch.mesh.visible = true;
+      batch.mesh.instanceMatrix.needsUpdate = true;
+      batch.matrixWrites += count;
+    }
+  }
+
+  function getDeathDebrisInstancedParityDiagnostics() {
+    var result = {
+      matrixMismatches: 0,
+      materialMismatches: 0,
+      countMismatches: 0,
+      shadowMismatches: 0,
+      maxMatrixError: 0,
+    };
+    if (!deathDebrisInstancedBatchList.length) return result;
+    effectRoot.updateMatrixWorld(true);
+    var inverseRoot = new THREE.Matrix4().copy(effectRoot.matrixWorld).invert();
+    var expectedMatrix = new THREE.Matrix4();
+    var actualMatrix = new THREE.Matrix4();
+    for (var batchIndex = 0; batchIndex < deathDebrisInstancedBatchList.length; batchIndex++) {
+      var batch = deathDebrisInstancedBatchList[batchIndex];
+      if (batch.mesh.count !== batch.visuals.length) result.countMismatches += 1;
+      if (!batch.mesh.castShadow || !batch.mesh.receiveShadow) result.shadowMismatches += 1;
+      for (var visualIndex = 0; visualIndex < batch.visuals.length; visualIndex++) {
+        var visual = batch.visuals[visualIndex];
+        if (!visual || !visual.inUse || visual.renderMode !== "instanced-opaque" || visual.batchIndex !== visualIndex) {
+          result.countMismatches += 1;
+          continue;
+        }
+        visual.mesh.updateMatrixWorld(true);
+        expectedMatrix.multiplyMatrices(inverseRoot, visual.mesh.matrixWorld);
+        batch.mesh.getMatrixAt(visualIndex, actualMatrix);
+        var matrixError = getMatrixElementMaxDifference(expectedMatrix, actualMatrix);
+        result.maxMatrixError = Math.max(result.maxMatrixError, matrixError);
+        if (matrixError > 0.00001) result.matrixMismatches += 1;
+        if (!effectMaterialsMatchForBatch(batch.material, visual.mesh.material, true)) result.materialMismatches += 1;
+      }
+    }
+    return result;
+  }
+
   function createDeathDebrisVisual() {
     var mat = mats.zombieBlood.clone();
     mat.transparent = true;
@@ -45412,6 +46735,9 @@
     var visual = {
       mesh: mesh,
       inUse: false,
+      renderMode: "legacy",
+      batch: null,
+      batchIndex: -1,
     };
     mesh.userData.deathDebrisVisual = visual;
     deathDebrisVisualCreated += 1;
@@ -45433,7 +46759,16 @@
     mesh.position.copy(worldPos);
     mesh.quaternion.copy(worldQuat);
     mesh.scale.copy(source.scale);
-    if (mesh.parent !== effectRoot) effectRoot.add(mesh);
+    visual.renderMode = "legacy";
+    visual.batch = null;
+    visual.batchIndex = -1;
+    var batch = getDeathDebrisInstancedBatch(source, sourceMat);
+    if (batch && addDeathDebrisVisualToBatch(visual, batch)) {
+      if (mesh.parent) mesh.parent.remove(mesh);
+    } else {
+      if (mesh.parent !== effectRoot) effectRoot.add(mesh);
+      if (!deathDebrisBatchWarmupSuppressed && !deathDebrisForceVisualFallback) deathDebrisBatchFallbacks += 1;
+    }
     return visual;
   }
 
@@ -45445,6 +46780,7 @@
   function releaseDeathDebrisVisual(visual) {
     if (!visual) return;
     var mesh = visual.mesh;
+    if (visual.batch) removeDeathDebrisVisualFromBatch(visual);
     if (mesh && mesh.parent) mesh.parent.remove(mesh);
     if (mesh) {
       mesh.visible = false;
@@ -45456,6 +46792,9 @@
     }
     if (!visual.inUse) return;
     visual.inUse = false;
+    visual.renderMode = "legacy";
+    visual.batch = null;
+    visual.batchIndex = -1;
     deathDebrisVisualInUse = Math.max(0, deathDebrisVisualInUse - 1);
     deathDebrisVisualPool.push(visual);
   }
@@ -46996,12 +48335,22 @@
     var sorted = (candidates || []).filter(function (patch) {
       return patch && patch.life > 0 && !!patch.networkReplica === !!networkReplica;
     });
+    for (var distanceIndex = 0; distanceIndex < sorted.length; distanceIndex++) {
+      var distancePatch = sorted[distanceIndex];
+      var distanceX = distancePatch.x - target.x;
+      var distanceZ = distancePatch.z - target.z;
+      var distanceSquared = distanceX * distanceX + distanceZ * distanceZ;
+      distancePatch.fireDetailDistanceSquared = distanceSquared;
+      distancePatch.fireDetailSelectionScore = detailedFirePatches.has(distancePatch)
+        ? distanceSquared * FIRE_DETAIL_RETAIN_DISTANCE_SCORE
+        : distanceSquared;
+    }
     sorted.sort(function (first, second) {
-      var firstDx = first.x - target.x;
-      var firstDz = first.z - target.z;
-      var secondDx = second.x - target.x;
-      var secondDz = second.z - target.z;
-      return firstDx * firstDx + firstDz * firstDz - (secondDx * secondDx + secondDz * secondDz);
+      var scoreDifference = first.fireDetailSelectionScore - second.fireDetailSelectionScore;
+      if (scoreDifference) return scoreDifference;
+      var firstOrder = Math.max(0, Number(first.networkId) || Number(first.hazardSpatialOrder) || 0);
+      var secondOrder = Math.max(0, Number(second.networkId) || Number(second.hazardSpatialOrder) || 0);
+      return firstOrder - secondOrder;
     });
     var targets = new Set(sorted.slice(0, MAX_DETAILED_FIRE_PATCH_VISUALS));
     detailedFirePatches.forEach(function (patch) {
@@ -47899,7 +49248,7 @@
     var miner = enemy.type === "armoredMiner";
     var preacher = enemy.type === "gravePreacher";
     var stride = Math.sin(enemy.walkPhase);
-    var counterStride = Math.sin(enemy.walkPhase + Math.PI);
+    var counterStride = -stride;
     var lurch = Math.sin(enemy.walkPhase * (fast ? 0.8 : runner ? 0.7 : 0.5) + enemy.radius) * (fast ? 0.12 : runner ? 0.1 : 0.08) * intensity;
     var spit = 0;
     if (enemy.type === "spitter") {
@@ -48980,13 +50329,16 @@
       visual: null,
       mesh: null,
     };
+    state.rifleTraps.push(trap);
+    insertHazardSpatialEntry(rifleTrapSpatialIndex, trap, Math.max(trap.lure ? 12 : 0, trap.triggerRadius, trap.blastRadius));
+    // Retire the oldest trap before acquiring the replacement visual. At the
+    // 240-trap cap this immediately reuses the released instanced slot instead
+    // of allocating a five-draw authored fallback for the 241st trap.
+    trimEffects(state.rifleTraps, MAX_RIFLE_TRAPS, removeRifleTrap);
     setRifleTrapVisualPresence(
       trap,
       !pointOutsideVisibleGround(x, z, trap.triggerRadius + TRAP_VISUAL_CULL_PAD, getCurrentVisibleGroundRect(trapVisibleGroundScratch))
     );
-    state.rifleTraps.push(trap);
-    insertHazardSpatialEntry(rifleTrapSpatialIndex, trap, Math.max(trap.lure ? 12 : 0, trap.triggerRadius, trap.blastRadius));
-    trimEffects(state.rifleTraps, MAX_RIFLE_TRAPS, removeRifleTrap);
     return trap;
   }
 
@@ -49496,11 +50848,26 @@
     clearHazardSpatialIndex(rifleTrapSpatialIndex);
   }
 
-  function prepareRifleTrapSpatialCandidates(visibleGround) {
-    ensureHazardSpatialIndex(rifleTrapSpatialIndex, state.rifleTraps, function (trap) {
-      return Math.max(trap.lure ? 12 : 0, trap.triggerRadius || 0, trap.blastRadius || 0);
-    });
-    rifleTrapCandidateSet.clear();
+  function addBossRifleTrapSpatialCandidates(targetSet) {
+    var bellBoss = getActiveBossDamageTarget();
+    if (!bellBoss) return;
+    // Keep the legacy broadphase semantics here. It intentionally admits safe
+    // false positives which findEnemyNearTrap rejects with the exact radius.
+    var bossTraps = queryHazardSpatialCircle(
+      rifleTrapSpatialIndex,
+      bellBoss.x,
+      bellBoss.z,
+      bellBoss.radius || 0,
+      rifleTrapSpatialScratch
+    );
+    for (var bossTrapIndex = 0; bossTrapIndex < bossTraps.length; bossTrapIndex++) {
+      targetSet.add(bossTraps[bossTrapIndex]);
+    }
+  }
+
+  function collectRifleTrapCandidatesEnemyCentric(targetSet, recordStats) {
+    targetSet.clear();
+    var candidateChecks = 0;
     for (var enemyIndex = 0; enemyIndex < state.enemies.length; enemyIndex++) {
       var enemy = state.enemies[enemyIndex];
       if (!enemy || enemy.active === false) continue;
@@ -49511,20 +50878,110 @@
         enemy.radius || 0,
         rifleTrapSpatialScratch
       );
+      candidateChecks += nearbyTraps.length;
       for (var trapIndex = 0; trapIndex < nearbyTraps.length; trapIndex++) {
         var trap = nearbyTraps[trapIndex];
         if (!trap) continue;
         var interactionRadius = Math.max(trap.triggerRadius || 0, trap.lure ? 12 : 0) + (enemy.radius || 0);
         var dx = trap.x - enemy.x;
         var dz = trap.z - enemy.z;
-        if (dx * dx + dz * dz <= interactionRadius * interactionRadius) rifleTrapCandidateSet.add(trap);
+        if (dx * dx + dz * dz <= interactionRadius * interactionRadius) targetSet.add(trap);
       }
     }
-    var bellBoss = getActiveBossDamageTarget();
-    if (bellBoss) {
-      var bossTraps = queryHazardSpatialCircle(rifleTrapSpatialIndex, bellBoss.x, bellBoss.z, bellBoss.radius || 0, rifleTrapSpatialScratch);
-      for (var bossTrapIndex = 0; bossTrapIndex < bossTraps.length; bossTrapIndex++) rifleTrapCandidateSet.add(bossTraps[bossTrapIndex]);
+    addBossRifleTrapSpatialCandidates(targetSet);
+    if (recordStats !== false) {
+      rifleTrapCandidateStats.enemyCentricBuilds += 1;
+      rifleTrapCandidateStats.fullEnemyScans += 1;
+      rifleTrapCandidateStats.lastMode = "enemy";
+      rifleTrapCandidateStats.lastGridCellProbes = state.enemies.length;
+      rifleTrapCandidateStats.lastCandidateChecks = candidateChecks;
     }
+    return targetSet;
+  }
+
+  function collectRifleTrapCandidatesTrapCentric(targetSet, recordStats) {
+    targetSet.clear();
+    var gridCellProbes = 0;
+    var candidateChecks = 0;
+    var maxEnemyRadius = Math.max(0, Number(zombieSpatialStats.maxRadius) || 0);
+    for (var trapIndex = 0; trapIndex < state.rifleTraps.length; trapIndex++) {
+      var trap = state.rifleTraps[trapIndex];
+      if (!trap) continue;
+      var interactionRadius = Math.max(trap.triggerRadius || 0, trap.lure ? 12 : 0);
+      var expansion = interactionRadius + maxEnemyRadius;
+      var minCellX = Math.floor((trap.x - expansion) / ZOMBIE_SPATIAL_CELL_SIZE);
+      var maxCellX = Math.floor((trap.x + expansion) / ZOMBIE_SPATIAL_CELL_SIZE);
+      var minCellZ = Math.floor((trap.z - expansion) / ZOMBIE_SPATIAL_CELL_SIZE);
+      var maxCellZ = Math.floor((trap.z + expansion) / ZOMBIE_SPATIAL_CELL_SIZE);
+      trapCandidateSearch:
+      for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
+          gridCellProbes += 1;
+          var bucket = zombieSpatialGrid.get(getZombieCellKey(cellX, cellZ));
+          if (!bucket) continue;
+          candidateChecks += bucket.length;
+          for (var enemyIndex = 0; enemyIndex < bucket.length; enemyIndex++) {
+            var enemy = bucket[enemyIndex];
+            if (!enemy || enemy.active === false) continue;
+            var exactRadius = interactionRadius + (enemy.radius || 0);
+            var dx = trap.x - enemy.x;
+            var dz = trap.z - enemy.z;
+            if (dx * dx + dz * dz > exactRadius * exactRadius) continue;
+            targetSet.add(trap);
+            break trapCandidateSearch;
+          }
+        }
+      }
+    }
+    addBossRifleTrapSpatialCandidates(targetSet);
+    if (recordStats !== false) {
+      rifleTrapCandidateStats.trapCentricBuilds += 1;
+      rifleTrapCandidateStats.lastMode = "trap";
+      rifleTrapCandidateStats.lastGridCellProbes = gridCellProbes;
+      rifleTrapCandidateStats.lastCandidateChecks = candidateChecks;
+    }
+    return targetSet;
+  }
+
+  function estimateRifleTrapCandidateGridWork() {
+    var maxEnemyRadius = Math.max(0, Number(zombieSpatialStats.maxRadius) || 0);
+    var trapCentric = 0;
+    for (var trapIndex = 0; trapIndex < state.rifleTraps.length; trapIndex++) {
+      var trap = state.rifleTraps[trapIndex];
+      if (!trap) continue;
+      var trapExpansion = Math.max(trap.triggerRadius || 0, trap.lure ? 12 : 0) + maxEnemyRadius;
+      var trapCellsPerAxis = Math.ceil(trapExpansion * 2 / ZOMBIE_SPATIAL_CELL_SIZE) + 2;
+      trapCentric += trapCellsPerAxis * trapCellsPerAxis;
+    }
+    var enemyExpansion = Math.max(0, Number(rifleTrapSpatialIndex.maxRadius) || 0) + maxEnemyRadius;
+    var enemyCellsPerAxis = Math.ceil(enemyExpansion * 2 / HAZARD_SPATIAL_CELL_SIZE) + 2;
+    return {
+      trap: trapCentric + state.rifleTraps.length * RIFLE_TRAP_GRID_QUERY_OVERHEAD_ESTIMATE,
+      enemy: state.enemies.length * (
+        enemyCellsPerAxis * enemyCellsPerAxis + RIFLE_TRAP_GRID_QUERY_OVERHEAD_ESTIMATE
+      ),
+    };
+  }
+
+  function collectRifleTrapSpatialCandidates(targetSet) {
+    if (state.enemies.length) ensureZombieSpatialGridCurrent();
+    var estimated = estimateRifleTrapCandidateGridWork();
+    rifleTrapCandidateStats.builds += 1;
+    if (estimated.trap <= estimated.enemy) {
+      collectRifleTrapCandidatesTrapCentric(targetSet, true);
+    } else {
+      collectRifleTrapCandidatesEnemyCentric(targetSet, true);
+    }
+    rifleTrapCandidateStats.lastCandidateCount = targetSet.size;
+    return targetSet;
+  }
+
+  function prepareRifleTrapSpatialCandidates(visibleGround, refreshVisibility) {
+    ensureHazardSpatialIndex(rifleTrapSpatialIndex, state.rifleTraps, function (trap) {
+      return Math.max(trap.lure ? 12 : 0, trap.triggerRadius || 0, trap.blastRadius || 0);
+    });
+    collectRifleTrapSpatialCandidates(rifleTrapCandidateSet);
+    if (refreshVisibility === false) return;
     rifleTrapVisibleSet.clear();
     var visibleTraps = queryHazardSpatialRect(rifleTrapSpatialIndex, visibleGround, TRAP_VISUAL_CULL_PAD, []);
     for (var i = 0; i < visibleTraps.length; i++) {
@@ -49537,7 +50994,14 @@
   function updateRifleTraps(dt) {
     if (state.rifleTraps.length && state.enemies.length) ensureZombieSpatialGridCurrent();
     var visibleGround = state.rifleTraps.length ? getCurrentVisibleGroundRect(trapVisibleGroundScratch) : null;
-    if (state.rifleTraps.length) prepareRifleTrapSpatialCandidates(visibleGround);
+    if (state.rifleTraps.length) {
+      rifleTrapVisibleTargetX = visibleGround.targetX;
+      rifleTrapVisibleTargetZ = visibleGround.targetZ;
+      prepareRifleTrapSpatialCandidates(visibleGround);
+    } else {
+      rifleTrapVisibleTargetX = NaN;
+      rifleTrapVisibleTargetZ = NaN;
+    }
     for (var i = state.rifleTraps.length - 1; i >= 0; i--) {
       var trap = state.rifleTraps[i];
       trap.age += dt;
@@ -49553,6 +51017,33 @@
         continue;
       }
       if (trap.life <= 0) removeRifleTrap(i);
+    }
+  }
+
+  function updateRifleTrapTriggersAfterEnemyMovement() {
+    if (!state.rifleTraps.length) return;
+    if (state.enemies.length) ensureZombieSpatialGridCurrent();
+    var visibleGround = getCurrentVisibleGroundRect(trapVisibleGroundScratch);
+    var viewerMoved = (
+      visibleGround.targetX !== rifleTrapVisibleTargetX ||
+      visibleGround.targetZ !== rifleTrapVisibleTargetZ
+    );
+    prepareRifleTrapSpatialCandidates(visibleGround, viewerMoved);
+    if (viewerMoved) {
+      rifleTrapVisibleTargetX = visibleGround.targetX;
+      rifleTrapVisibleTargetZ = visibleGround.targetZ;
+      for (var visualIndex = state.rifleTraps.length - 1; visualIndex >= 0; visualIndex--) {
+        var visualTrap = state.rifleTraps[visualIndex];
+        var shouldBeVisible = rifleTrapVisibleSet.has(visualTrap);
+        if (shouldBeVisible !== !!visualTrap.visual) setRifleTrapVisualPresence(visualTrap, shouldBeVisible);
+      }
+    }
+    for (var i = state.rifleTraps.length - 1; i >= 0; i--) {
+      var trap = state.rifleTraps[i];
+      if (
+        rifleTrapCandidateSet.has(trap) && trap.armTime <= 0 &&
+        findEnemyNearTrap(trap)
+      ) triggerRifleTrap(i);
     }
   }
 
@@ -50070,13 +51561,16 @@
   }
 
   function updateEnemyHealthBar(enemy) {
-    var fill = enemy.group.userData.healthFill;
+    var healthData = enemy.group.userData;
+    var fill = healthData.healthFill;
     if (!fill) return;
     var ratio = clamp(enemy.hp / enemy.maxHp, 0, 1);
-    fill.scale.x = (enemy.group.userData.healthBaseScaleX || 1) * ratio;
-    var fillOffset = -(enemy.group.userData.healthBaseWidth * (1 - ratio)) / 2;
-    if (enemy.group.userData.healthWorldAligned) {
-      var back = enemy.group.userData.healthBack;
+    if (!healthData.healthWorldAligned && healthData.healthBarRatio === ratio) return;
+    healthData.healthBarRatio = ratio;
+    fill.scale.x = (healthData.healthBaseScaleX || 1) * ratio;
+    var fillOffset = -(healthData.healthBaseWidth * (1 - ratio)) / 2;
+    if (healthData.healthWorldAligned) {
+      var back = healthData.healthBack;
       var parentYaw = Number(enemy.group.rotation && enemy.group.rotation.y) || 0;
       var cosYaw = Math.cos(parentYaw);
       var sinYaw = Math.sin(parentYaw);
@@ -50208,8 +51702,9 @@
       piece.x += piece.vx * dt;
       piece.y += piece.vy * dt;
       piece.z += piece.vz * dt;
-      if (piece.y < 0.12) {
-        piece.y = 0.12;
+      var debrisRestY = getDeathDebrisRestY(piece.x, piece.z);
+      if (piece.y < debrisRestY) {
+        piece.y = debrisRestY;
         piece.vy *= -0.22;
         piece.vx *= 0.72;
         piece.vz *= 0.72;
@@ -50220,6 +51715,9 @@
       piece.mesh.rotation.z += piece.rz * dt;
       var debrisFade = clamp(piece.life / piece.startLife, 0, 1);
       piece.mesh.material.opacity = piece.startOpacity * Math.min(1, debrisFade * 1.4);
+      if (piece.visual && piece.visual.renderMode === "instanced-opaque" && piece.mesh.material.opacity < 0.999999) {
+        handoffDeathDebrisVisualToLegacyFade(piece.visual);
+      }
       if (piece.life <= 0) {
         removeDebris(b);
       }
@@ -56100,13 +57598,15 @@
 
   function findNearestAliveMultiplayerPlayer(x, z) {
     var best = null;
-    var bestDistance = Infinity;
+    var bestDistanceSquared = Infinity;
     for (var i = 0; i < multiplayerState.playerOrder.length; i++) {
       var player = multiplayerState.players[multiplayerState.playerOrder[i]];
       if (!player || !player.alive || player.surrendered || player.connected === false || !player.entity) continue;
-      var distance = Math.hypot(player.entity.x - x, player.entity.z - z);
-      if (distance < bestDistance) {
-        bestDistance = distance;
+      var dx = player.entity.x - x;
+      var dz = player.entity.z - z;
+      var distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared < bestDistanceSquared) {
+        bestDistanceSquared = distanceSquared;
         best = player;
       }
     }
@@ -56122,12 +57622,15 @@
     var local = getLocalMultiplayerPlayer();
     var best = null;
     var bestDistance = maxDistance || Infinity;
+    var bestDistanceSquared = bestDistance < 0 ? -1 : bestDistance * bestDistance;
     for (var i = 0; i < multiplayerState.playerOrder.length; i++) {
       var player = multiplayerState.players[multiplayerState.playerOrder[i]];
       if (!player || (local && player.id === local.id) || !player.alive || player.surrendered || !player.entity) continue;
-      var distance = Math.hypot(player.entity.x - x, player.entity.z - z);
-      if (distance < bestDistance) {
-        bestDistance = distance;
+      var dx = player.entity.x - x;
+      var dz = player.entity.z - z;
+      var distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared < bestDistanceSquared) {
+        bestDistanceSquared = distanceSquared;
         best = player.entity;
       }
     }
@@ -57505,12 +59008,124 @@
     return x + r >= rect.minX && x - r <= rect.maxX && z + r >= rect.minZ && z - r <= rect.maxZ;
   }
 
-  function selectMultiplayerRelevantEnemies(viewerRect) {
+  function selectMultiplayerRelevantEnemiesLinear(viewerRect, recordStats) {
     if (!viewerRect) return state.enemies;
     var scope = expandMultiplayerViewerRect(viewerRect, MULTIPLAYER_ENEMY_RELEVANCE_PAD);
-    return state.enemies.filter(function (enemy) {
+    var selected = state.enemies.filter(function (enemy) {
       return enemy && enemy.active !== false && pointInsideMultiplayerScope(enemy.x, enemy.z, enemy.radius, scope);
     });
+    if (recordStats !== false) {
+      multiplayerEnemyRelevanceStats.linearSelections += 1;
+      multiplayerEnemyRelevanceStats.lastCandidateChecks = state.enemies.length;
+      multiplayerEnemyRelevanceStats.candidateChecks += state.enemies.length;
+      multiplayerEnemyRelevanceStats.lastSelected = selected.length;
+      multiplayerEnemyRelevanceStats.lastMode = "linear";
+    }
+    return selected;
+  }
+
+  function getZombieSpatialRectCoverage(minCellX, maxCellX, minCellZ, maxCellZ) {
+    var boundsWidth = zombieSpatialStats.maxCellX - zombieSpatialStats.minCellX + 1;
+    var boundsDepth = zombieSpatialStats.maxCellZ - zombieSpatialStats.minCellZ + 1;
+    if (boundsWidth <= 0 || boundsDepth <= 0) return 1;
+    var overlapMinX = Math.max(minCellX, zombieSpatialStats.minCellX);
+    var overlapMaxX = Math.min(maxCellX, zombieSpatialStats.maxCellX);
+    var overlapMinZ = Math.max(minCellZ, zombieSpatialStats.minCellZ);
+    var overlapMaxZ = Math.min(maxCellZ, zombieSpatialStats.maxCellZ);
+    if (overlapMinX > overlapMaxX || overlapMinZ > overlapMaxZ) return 0;
+    var overlapArea = (overlapMaxX - overlapMinX + 1) * (overlapMaxZ - overlapMinZ + 1);
+    return overlapArea / (boundsWidth * boundsDepth);
+  }
+
+  function selectMultiplayerRelevantEnemiesSpatial(viewerRect, allowHybridFallback, recordStats) {
+    if (!viewerRect) return state.enemies;
+    ensureZombieSpatialGridCurrent();
+    if (
+      !zombieSpatialGridKeys.length ||
+      !Number.isFinite(zombieSpatialStats.maxRadius) ||
+      !Number.isFinite(zombieSpatialStats.minCellX) ||
+      !Number.isFinite(zombieSpatialStats.maxCellX) ||
+      !Number.isFinite(zombieSpatialStats.minCellZ) ||
+      !Number.isFinite(zombieSpatialStats.maxCellZ) ||
+      zombieSpatialStats.maxCellX < zombieSpatialStats.minCellX ||
+      zombieSpatialStats.maxCellZ < zombieSpatialStats.minCellZ
+    ) return selectMultiplayerRelevantEnemiesLinear(viewerRect, recordStats);
+
+    if (allowHybridFallback && state.enemies.length < MULTIPLAYER_ENEMY_SPATIAL_SELECTION_MIN_COUNT) {
+      multiplayerEnemyRelevanceStats.hybridFallbacks += 1;
+      return selectMultiplayerRelevantEnemiesLinear(viewerRect, recordStats);
+    }
+
+    var scope = expandMultiplayerViewerRect(viewerRect, MULTIPLAYER_ENEMY_RELEVANCE_PAD);
+    var maxRadius = Math.max(0, Number(zombieSpatialStats.maxRadius) || 0);
+    var minCellX = Math.floor((scope.minX - maxRadius) / ZOMBIE_SPATIAL_CELL_SIZE);
+    var maxCellX = Math.floor((scope.maxX + maxRadius) / ZOMBIE_SPATIAL_CELL_SIZE);
+    var minCellZ = Math.floor((scope.minZ - maxRadius) / ZOMBIE_SPATIAL_CELL_SIZE);
+    var maxCellZ = Math.floor((scope.maxZ + maxRadius) / ZOMBIE_SPATIAL_CELL_SIZE);
+    var queryCellProbes = (maxCellX - minCellX + 1) * (maxCellZ - minCellZ + 1);
+    if (
+      allowHybridFallback &&
+      queryCellProbes * MULTIPLAYER_ENEMY_SPATIAL_CELL_PROBE_WEIGHT >= state.enemies.length
+    ) {
+      multiplayerEnemyRelevanceStats.hybridFallbacks += 1;
+      return selectMultiplayerRelevantEnemiesLinear(viewerRect, recordStats);
+    }
+    var boundsCoverage = getZombieSpatialRectCoverage(minCellX, maxCellX, minCellZ, maxCellZ);
+    if (allowHybridFallback && boundsCoverage >= MULTIPLAYER_ENEMY_SPATIAL_BOUNDS_COVERAGE_LIMIT) {
+      multiplayerEnemyRelevanceStats.hybridFallbacks += 1;
+      return selectMultiplayerRelevantEnemiesLinear(viewerRect, recordStats);
+    }
+
+    var candidates = [];
+    var candidateChecks = 0;
+    for (var cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (var cellX = minCellX; cellX <= maxCellX; cellX++) {
+        var bucket = zombieSpatialGrid.get(getZombieCellKey(cellX, cellZ));
+        if (!bucket) continue;
+        candidateChecks += bucket.length;
+        for (var bucketIndex = 0; bucketIndex < bucket.length; bucketIndex++) candidates.push(bucket[bucketIndex]);
+      }
+    }
+    if (
+      allowHybridFallback &&
+      candidateChecks >= state.enemies.length * MULTIPLAYER_ENEMY_SPATIAL_CANDIDATE_LIMIT
+    ) {
+      multiplayerEnemyRelevanceStats.hybridFallbacks += 1;
+      return selectMultiplayerRelevantEnemiesLinear(viewerRect, recordStats);
+    }
+
+    var selected = [];
+    for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+      var enemy = candidates[candidateIndex];
+      if (!enemy || enemy.active === false) continue;
+      if (pointInsideMultiplayerScope(enemy.x, enemy.z, enemy.radius, scope)) selected.push(enemy);
+    }
+    selected.sort(function (first, second) {
+      return (Number(first.spatialOrder) || 0) - (Number(second.spatialOrder) || 0);
+    });
+    if (recordStats !== false) {
+      multiplayerEnemyRelevanceStats.spatialSelections += 1;
+      multiplayerEnemyRelevanceStats.lastCandidateChecks = candidateChecks;
+      multiplayerEnemyRelevanceStats.candidateChecks += candidateChecks;
+      multiplayerEnemyRelevanceStats.lastSelected = selected.length;
+      multiplayerEnemyRelevanceStats.lastMode = "spatial";
+    }
+    return selected;
+  }
+
+  function selectMultiplayerRelevantEnemies(viewerRect) {
+    if (
+      multiplayerEnemyRelevanceSelectorMode === "linear" ||
+      multiplayerEnemyRelevanceSelectorMode === "hybrid" &&
+        state.enemies.length < MULTIPLAYER_ENEMY_SPATIAL_SELECTION_MIN_COUNT
+    ) {
+      return selectMultiplayerRelevantEnemiesLinear(viewerRect, true);
+    }
+    return selectMultiplayerRelevantEnemiesSpatial(
+      viewerRect,
+      multiplayerEnemyRelevanceSelectorMode !== "spatial",
+      true
+    );
   }
 
   function selectMultiplayerRelevantBullets(viewerRect, viewerPlayerId) {
@@ -58300,12 +59915,11 @@
       current[key] = stored;
       queueMultiplayerEnemyReplicationOp(replication, next.id, 1, stored, mask);
     }
-    var activeIds = replication.activeIdScratch || (replication.activeIdScratch = new Set());
-    activeIds.clear();
-    for (var activeIndex = 0; activeIndex < state.enemies.length; activeIndex++) {
-      var enemy = state.enemies[activeIndex];
-      if (enemy && enemy.active !== false && enemy.networkId) activeIds.add(enemy.networkId);
-    }
+    // The zombie grid is already rebuilt once after authoritative movement.
+    // Reuse its active-id cache instead of rescanning the complete horde for
+    // every viewer. kind=2 (left scope) versus kind=3 (dead) stays identical.
+    ensureZombieSpatialGridCurrent();
+    var activeIds = zombieActiveNetworkIds;
     for (var observedKey in previousObserved) {
       if (current[observedKey]) continue;
       var id = Math.max(0, Math.floor(Number(observedKey) || 0));
@@ -60651,6 +62265,7 @@
       }).filter(Boolean),
       enemies: relevantEnemies.map(function (enemy) {
         if (!enemy.networkId) enemy.networkId = multiplayerState.networkEnemyId++;
+        if (enemy.active !== false) zombieActiveNetworkIds.add(enemy.networkId);
         return {
           id: enemy.networkId,
           type: enemy.type,
@@ -62043,7 +63658,7 @@
   function updateMultiplayerGuestWorldInterpolation(dt) {
     var now = performance.now();
     var visibleGround = getCurrentVisibleGroundRect();
-    zombieInstancingActive = state.enemies.length >= ZOMBIE_INSTANCING_THRESHOLD;
+    refreshZombieInstancingActive(state.enemies.length);
     // `state.enemies` already owns the same guest replicas. Iterating it in
     // place avoids allocating an Object.keys array with hundreds or thousands
     // of string ids every render frame on late waves.
@@ -62590,6 +64205,28 @@
         delete multiplayerState.guestAcidPuddleMap[key];
       });
     }
+    // Sparse hazard upserts intentionally do not reconcile missing IDs until
+    // the next full frame. Still enforce the host's hard visual/gameplay cap:
+    // a delayed remove followed by newer upserts must never grow the guest
+    // replica map beyond the fixed instancing capacity.
+    var replicaKeys = Object.keys(multiplayerState.guestAcidPuddleMap);
+    if (replicaKeys.length > MAX_ACID_PUDDLES) {
+      replicaKeys.sort(function (firstKey, secondKey) {
+        var firstSeen = seen[firstKey] ? 1 : 0;
+        var secondSeen = seen[secondKey] ? 1 : 0;
+        if (firstSeen !== secondSeen) return firstSeen - secondSeen;
+        var firstPuddle = multiplayerState.guestAcidPuddleMap[firstKey];
+        var secondPuddle = multiplayerState.guestAcidPuddleMap[secondKey];
+        return (Number(firstPuddle && firstPuddle.networkId) || 0) - (Number(secondPuddle && secondPuddle.networkId) || 0);
+      });
+      var excess = replicaKeys.length - MAX_ACID_PUDDLES;
+      for (var excessIndex = 0; excessIndex < excess; excessIndex++) {
+        var staleKey = replicaKeys[excessIndex];
+        var stalePuddle = multiplayerState.guestAcidPuddleMap[staleKey];
+        if (stalePuddle && stalePuddle.visual) releaseAcidPuddleVisual(stalePuddle.visual);
+        delete multiplayerState.guestAcidPuddleMap[staleKey];
+      }
+    }
   }
 
   function applyMultiplayerHallowedGroundSnapshot(entries) {
@@ -62779,7 +64416,7 @@
       var bubble = bubbles[b];
       var phase = bubble.userData.bubblePhase || 0;
       var bubblePulse = 0.7 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.75;
-      bubble.position.y = 0.12 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.09;
+      bubble.position.y = (Number(puddle.visual && puddle.visual.surfaceY) || ACID_PUDDLE_BASE_SURFACE_Y) + 0.03 + Math.max(0, Math.sin(state.time * 5.8 + phase)) * 0.09;
       scaleFromBase(bubble, bubblePulse, 0.28 + bubblePulse * 0.18, bubblePulse);
     }
   }
@@ -66161,6 +67798,10 @@
     try {
       if (renderScene === scene) {
         var oilEncounter = state.oilBaron;
+        // Upload the already-computed proxy transforms once per rendered frame.
+        // Gameplay updates, network interpolation and RNG remain untouched.
+        syncAcidInstancedBatchesForRender();
+        syncDeathDebrisBatchesForRender();
         syncLightFlashRenderBudget();
         syncActiveOilBaronOriginalVisualBatchesForRender();
         syncActiveOilBaronDoubleVisualBatchesForRender();
@@ -69559,6 +71200,18 @@
       spawnAcidPuddle(Number(x) || 0, Number(z) || 0);
       return state.acidPuddles.length;
     },
+    spawnAcidProjectileAt: function (x, z, targetX, targetZ) {
+      var sourceX = Number(x) || 0;
+      var sourceZ = Number(z) || 0;
+      var fakeSpitter = { x: sourceX, z: sourceZ, radius: 0.72, acidShots: 0 };
+      launchAcidSpit(fakeSpitter, Number(targetX) || sourceX, Number(targetZ) || sourceZ + 8);
+      var spit = state.acidProjectiles[state.acidProjectiles.length - 1];
+      return spit ? { id: spit.networkId || 0, x: spit.x, z: spit.z, targetX: spit.targetX, targetZ: spit.targetZ } : null;
+    },
+    clearDeathDebris: function () {
+      for (var debrisIndex = state.debris.length - 1; debrisIndex >= 0; debrisIndex--) removeDebris(debrisIndex);
+      return state.debris.length;
+    },
     previewUpgradeCards: function (ids) {
       var list = Array.isArray(ids) ? ids.slice(0, 10) : [];
       var specs = list.map(getStandardUpgradeById).filter(Boolean);
@@ -69603,6 +71256,9 @@
     getRoadSurfaceDiagnostics: function () {
       return getRoadSurfaceDiagnostics();
     },
+    getGroundEffectDepthDiagnostics: function () {
+      return getGroundEffectDepthDiagnostics();
+    },
     getRuinColliderDiagnostics: function () {
       return getRuinColliderDiagnostics();
     },
@@ -69639,6 +71295,17 @@
         guestSpatialGrid: getHazardSpatialIndexStats(guestFirePatchSpatialIndex),
       };
     },
+    getFirePatchVisualAssignments: function () {
+      return state.firePatches.map(function (patch) {
+        return {
+          id: Math.max(0, Number(patch.networkId) || Number(patch.hazardSpatialOrder) || 0),
+          x: Number((Number(patch.x) || 0).toFixed(3)),
+          z: Number((Number(patch.z) || 0).toFixed(3)),
+          detailed: !!patch.visual,
+          fallback: !!patch.fallbackVisual,
+        };
+      });
+    },
     getAcidPuddleOptimizationStats: function () {
       return {
         visuals: getAcidPuddleVisualPoolStats(),
@@ -69649,12 +71316,77 @@
         backgroundReady: acidProjectileVisualCreated >= MAX_ACID_PROJECTILES && acidPuddleVisualCreated >= MAX_ACID_PUDDLES,
       };
     },
+    getDeathDebrisOptimizationStats: function () {
+      return getDeathDebrisVisualPoolStats();
+    },
     getRifleTrapOptimizationStats: function () {
       return {
         visuals: getRifleTrapVisualPoolStats(),
         activeTraps: state.rifleTraps.length,
         maxTraps: MAX_RIFLE_TRAPS,
         spatialGrid: getHazardSpatialIndexStats(rifleTrapSpatialIndex),
+        candidates: Object.assign({}, rifleTrapCandidateStats),
+      };
+    },
+    compareRifleTrapCandidateCollectors: function () {
+      ensureHazardSpatialIndex(rifleTrapSpatialIndex, state.rifleTraps, function (trap) {
+        return Math.max(trap.lure ? 12 : 0, trap.triggerRadius || 0, trap.blastRadius || 0);
+      });
+      ensureZombieSpatialGridCurrent();
+      var legacy = collectRifleTrapCandidatesEnemyCentric(new Set(), false);
+      var spatial = collectRifleTrapCandidatesTrapCentric(new Set(), false);
+      function sortedIds(entries) {
+        return Array.from(entries).map(function (trap) {
+          return Math.max(0, Number(trap.hazardSpatialOrder) || Number(trap.networkId) || 0);
+        }).sort(function (first, second) { return first - second; });
+      }
+      var legacyIds = sortedIds(legacy);
+      var spatialIds = sortedIds(spatial);
+      var legacySet = new Set(legacyIds);
+      var spatialSet = new Set(spatialIds);
+      return {
+        matches: legacyIds.length === spatialIds.length && legacyIds.every(function (id, index) {
+          return id === spatialIds[index];
+        }),
+        legacyIds: legacyIds,
+        spatialIds: spatialIds,
+        missingFromSpatial: legacyIds.filter(function (id) { return !spatialSet.has(id); }),
+        extraInSpatial: spatialIds.filter(function (id) { return !legacySet.has(id); }),
+      };
+    },
+    profileRifleTrapCandidateCollectors: function (iterations) {
+      ensureHazardSpatialIndex(rifleTrapSpatialIndex, state.rifleTraps, function (trap) {
+        return Math.max(trap.lure ? 12 : 0, trap.triggerRadius || 0, trap.blastRadius || 0);
+      });
+      ensureZombieSpatialGridCurrent();
+      var rounds = clamp(Math.floor(Number(iterations) || 1), 1, 500);
+      var legacySet = new Set();
+      var spatialSet = new Set();
+      collectRifleTrapCandidatesEnemyCentric(legacySet, false);
+      collectRifleTrapCandidatesTrapCentric(spatialSet, false);
+      var legacyMs = 0;
+      var spatialMs = 0;
+      for (var round = 0; round < rounds; round++) {
+        var legacyStartedAt = performance.now();
+        collectRifleTrapCandidatesEnemyCentric(legacySet, false);
+        legacyMs += performance.now() - legacyStartedAt;
+        var spatialStartedAt = performance.now();
+        collectRifleTrapCandidatesTrapCentric(spatialSet, false);
+        spatialMs += performance.now() - spatialStartedAt;
+      }
+      return {
+        iterations: rounds,
+        enemies: state.enemies.length,
+        traps: state.rifleTraps.length,
+        legacyMs: Number(legacyMs.toFixed(3)),
+        spatialMs: Number(spatialMs.toFixed(3)),
+        legacyPerBuildMs: Number((legacyMs / rounds).toFixed(4)),
+        spatialPerBuildMs: Number((spatialMs / rounds).toFixed(4)),
+        candidateCount: legacySet.size,
+        matches: legacySet.size === spatialSet.size && Array.from(legacySet).every(function (trap) {
+          return spatialSet.has(trap);
+        }),
+        estimated: estimateRifleTrapCandidateGridWork(),
       };
     },
     getParticleOptimizationStats: function () {
@@ -70284,6 +72016,18 @@
       zombieSpatialDirty = true;
       return { id: enemy.networkId, x: enemy.x, z: enemy.z, hp: enemy.hp, radius: enemy.radius };
     },
+    setEnemyPosition: function (enemyId, x, z) {
+      var id = Math.max(0, Math.floor(Number(enemyId) || 0));
+      var enemy = state.enemies.find(function (entry) {
+        return entry && entry.networkId === id;
+      });
+      if (!enemy) return false;
+      enemy.x = clamp(Number(x) || 0, -ARENA_W / 2 + enemy.radius, ARENA_W / 2 - enemy.radius);
+      enemy.z = clamp(Number(z) || 0, -ARENA_D / 2 + enemy.radius, ARENA_D / 2 - enemy.radius);
+      enemy.group.position.set(enemy.x, 0, enemy.z);
+      zombieSpatialDirty = true;
+      return true;
+    },
     stepBullets: function (dt) {
       var step = clamp(Number(dt) || FIXED_DT, 0, 0.5);
       state.time += step;
@@ -70434,6 +72178,85 @@
         firstNetworkId: firstNetworkId,
         lastNetworkId: multiplayerState.networkEnemyId - 1,
         mode: dense ? "visible" : "map",
+      };
+    },
+    compareEnemyRelevanceSelectors: function (viewerPlayerId) {
+      var viewerRect = getMultiplayerViewerRect(viewerPlayerId);
+      var linear = selectMultiplayerRelevantEnemiesLinear(viewerRect, false);
+      var spatial = selectMultiplayerRelevantEnemiesSpatial(viewerRect, false, false);
+      function ids(entries) {
+        return entries.map(function (enemy) {
+          return Math.max(0, Number(enemy.networkId) || Number(enemy.spatialOrder) + 1 || 0);
+        });
+      }
+      var linearIds = ids(linear);
+      var spatialIds = ids(spatial);
+      ensureZombieSpatialGridCurrent();
+      var linearActiveIds = new Set();
+      for (var enemyIndex = 0; enemyIndex < state.enemies.length; enemyIndex++) {
+        var enemy = state.enemies[enemyIndex];
+        if (enemy && enemy.active !== false && enemy.networkId) linearActiveIds.add(enemy.networkId);
+      }
+      var activeIdCacheMatches = linearActiveIds.size === zombieActiveNetworkIds.size;
+      if (activeIdCacheMatches) {
+        linearActiveIds.forEach(function (id) {
+          if (!zombieActiveNetworkIds.has(id)) activeIdCacheMatches = false;
+        });
+      }
+      if (!activeIdCacheMatches) multiplayerEnemyRelevanceStats.activeIdCacheMismatches += 1;
+      return {
+        matches: linearIds.length === spatialIds.length && linearIds.every(function (id, index) {
+          return id === spatialIds[index];
+        }),
+        linearIds: linearIds,
+        spatialIds: spatialIds,
+        activeIdCacheMatches: activeIdCacheMatches,
+      };
+    },
+    profileEnemyRelevanceSelectors: function (viewerPlayerIds, iterations) {
+      var ids = Array.isArray(viewerPlayerIds) ? viewerPlayerIds.slice(0, 4) : [viewerPlayerIds];
+      var rects = ids.map(getMultiplayerViewerRect).filter(Boolean);
+      var rounds = clamp(Math.floor(Number(iterations) || 1), 1, 500);
+      var linearMs = 0;
+      var hybridMs = 0;
+      var linearSelected = 0;
+      var hybridSelected = 0;
+      for (var warmup = 0; warmup < 3; warmup++) {
+        rects.forEach(function (rect) {
+          selectMultiplayerRelevantEnemiesLinear(rect, false);
+          if (state.enemies.length < MULTIPLAYER_ENEMY_SPATIAL_SELECTION_MIN_COUNT) {
+            selectMultiplayerRelevantEnemiesLinear(rect, false);
+          } else {
+            selectMultiplayerRelevantEnemiesSpatial(rect, true, false);
+          }
+        });
+      }
+      for (var round = 0; round < rounds; round++) {
+        var linearStartedAt = performance.now();
+        for (var linearIndex = 0; linearIndex < rects.length; linearIndex++) {
+          linearSelected += selectMultiplayerRelevantEnemiesLinear(rects[linearIndex], false).length;
+        }
+        linearMs += performance.now() - linearStartedAt;
+        var hybridStartedAt = performance.now();
+        for (var hybridIndex = 0; hybridIndex < rects.length; hybridIndex++) {
+          hybridSelected += (
+            state.enemies.length < MULTIPLAYER_ENEMY_SPATIAL_SELECTION_MIN_COUNT
+              ? selectMultiplayerRelevantEnemiesLinear(rects[hybridIndex], false)
+              : selectMultiplayerRelevantEnemiesSpatial(rects[hybridIndex], true, false)
+          ).length;
+        }
+        hybridMs += performance.now() - hybridStartedAt;
+      }
+      return {
+        iterations: rounds,
+        viewers: rects.length,
+        enemies: state.enemies.length,
+        linearMs: Number(linearMs.toFixed(3)),
+        hybridMs: Number(hybridMs.toFixed(3)),
+        linearPerViewerMs: Number((linearMs / Math.max(1, rounds * rects.length)).toFixed(4)),
+        hybridPerViewerMs: Number((hybridMs / Math.max(1, rounds * rects.length)).toFixed(4)),
+        selectedMatches: linearSelected === hybridSelected,
+        selectedPerRound: Math.round(linearSelected / Math.max(1, rounds)),
       };
     },
     getEnemyNetworkDiagnostics: function (viewerPlayerId) {
@@ -70813,7 +72636,7 @@
             x: Number(spit.x.toFixed(3)),
             z: Number(spit.z.toFixed(3)),
             life: Number(spit.life.toFixed(3)),
-            visualAttached: !!(spit.mesh && spit.mesh.parent === effectRoot),
+            visualAttached: isAcidProjectileVisualAttached(spit.mesh),
           };
         }),
         acidPuddles: Object.keys(multiplayerState.guestAcidPuddleMap).map(function (key) {
@@ -70823,7 +72646,7 @@
             x: Number(puddle.x.toFixed(3)),
             z: Number(puddle.z.toFixed(3)),
             life: Number(puddle.life.toFixed(3)),
-            visualAttached: !!(puddle.mesh && puddle.mesh.parent === effectRoot),
+            visualAttached: isAcidPuddleVisualAttached(puddle.visual),
           };
         }),
         hallowedGrounds: Object.keys(multiplayerState.guestHallowedGroundMap).map(function (key) {
@@ -70932,6 +72755,10 @@
         snapshotHz: Math.round(1 / (multiplayerState.snapshotInterval || MULTIPLAYER_SNAPSHOT_INTERVAL)),
         inputHz: Math.round(1 / MULTIPLAYER_INPUT_INTERVAL),
         enemyRelevancePad: MULTIPLAYER_ENEMY_RELEVANCE_PAD,
+        enemyRelevance: Object.assign({
+          configuredMode: multiplayerEnemyRelevanceSelectorMode,
+          activeIdCacheSize: zombieActiveNetworkIds.size,
+        }, multiplayerEnemyRelevanceStats),
         projectileRelevancePad: MULTIPLAYER_PROJECTILE_RELEVANCE_PAD,
         stats: Object.assign({}, multiplayerState.networkStats),
       };
