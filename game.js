@@ -27,6 +27,12 @@
   var FIXED_DT = 1 / 60;
   var MAX_ADVANCE_STEPS = 240;
   var MULTIPLAYER_PROTOCOL_VERSION = 31;
+  // Serializing the semantic enemy array is useful when comparing codecs, but
+  // it is not part of the wire protocol or recovery path. Keep the profiler
+  // available explicitly without paying for a second horde-sized JSON string
+  // for every viewer at 15 Hz in production.
+  var MULTIPLAYER_LEGACY_ENEMY_BYTE_DIAGNOSTICS =
+    new URLSearchParams(window.location.search || "").get("networkDiagnostics") === "1";
   var MULTIPLAYER_MAX_PLAYERS = 4;
   var MULTIPLAYER_MAX_AMMO_CRATES = 5;
   var MULTIPLAYER_FULL_PARTY_MAX_AMMO_CRATES = 6;
@@ -1497,6 +1503,9 @@
   var ammoHudCache = {
     reloading: null,
     reloadProgress: "",
+    warning: "",
+    dualHands: null,
+    reloadFillTransform: "",
     statusText: "",
     currentText: "",
     maxText: "",
@@ -1509,6 +1518,7 @@
     kills: "",
     level: "",
     xpRatio: "",
+    minimapAriaLabel: "",
     interactivitySignature: "",
   };
   var nearestAmmoCrateScratch = [];
@@ -53885,10 +53895,44 @@
     setMultiplayerLobbyStatus(formatted.message, true);
   }
 
+  var multiplayerUtf8Encoder = typeof TextEncoder === "function" ? new TextEncoder() : null;
+  var multiplayerUtf8Decoder = typeof TextDecoder === "function" ? new TextDecoder() : null;
+
+  function encodeMultiplayerUtf8(value) {
+    var text = String(value == null ? "" : value);
+    if (multiplayerUtf8Encoder) return multiplayerUtf8Encoder.encode(text);
+    var binary = unescape(encodeURIComponent(text));
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function measureMultiplayerWireValue(value) {
+    var json = JSON.stringify(value);
+    var bytes = encodeMultiplayerUtf8(json);
+    return { bytes: bytes, byteLength: bytes.length };
+  }
+
+  function cacheMultiplayerWireMeasurement(wire, measurement) {
+    if (!wire || !measurement) return measurement;
+    try {
+      Object.defineProperty(wire, "_wireMeasurement", {
+        configurable: true,
+        enumerable: false,
+        value: measurement,
+      });
+    } catch (error) {}
+    return measurement;
+  }
+
+  function getCachedMultiplayerWireMeasurement(wire) {
+    return wire && wire._wireMeasurement || null;
+  }
+
   function encodeMultiplayerBase64(value) {
     var text = String(value || "");
     try {
-      var bytes = new TextEncoder().encode(text);
+      var bytes = encodeMultiplayerUtf8(text);
       var chunks = [];
       for (var i = 0; i < bytes.length; i += 0x8000) {
         chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(bytes.length, i + 0x8000))));
@@ -53904,7 +53948,7 @@
     try {
       var bytes = new Uint8Array(binary.length);
       for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new TextDecoder().decode(bytes);
+      return multiplayerUtf8Decoder ? multiplayerUtf8Decoder.decode(bytes) : decodeURIComponent(escape(binary));
     } catch (err) {
       return decodeURIComponent(escape(binary));
     }
@@ -53937,16 +53981,15 @@
     if (!plugin || typeof plugin.sendBytes !== "function") return Promise.resolve(false);
     if (!endpointId && multiplayerState.role === "host" && !Object.keys(multiplayerState.connectedEndpoints).length) return Promise.resolve(false);
     var wireMessage = prepareMultiplayerWireMessage(message, endpointId);
-    var json = JSON.stringify(wireMessage);
-    var encoded = encodeMultiplayerBase64(json);
+    var wireMeasurement = getCachedMultiplayerWireMeasurement(wireMessage) || measureMultiplayerWireValue(wireMessage);
+    var encoded = encodeMultiplayerBytesBase64(wireMeasurement.bytes);
     var options = { data: encoded };
     if (wireMessage && (wireMessage.type === "snapshot" || wireMessage.type === "input")) {
       options.latestOnly = true;
       options.latestKind = wireMessage.type;
     }
     if (wireMessage && wireMessage.type === "snapshot") {
-      var padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
-      var byteSize = Math.max(0, Math.floor(encoded.length * 3 / 4) - padding);
+      var byteSize = wireMeasurement.byteLength;
       multiplayerState.networkStats.snapshotMessages += 1;
       multiplayerState.networkStats.snapshotBytes += byteSize;
       multiplayerState.networkStats.lastSnapshotBytes = byteSize;
@@ -53975,7 +54018,7 @@
       );
       if (Array.isArray(wireMessage.combatEvents) && wireMessage.combatEvents.length) {
         multiplayerState.networkStats.eventMessages += wireMessage.combatEvents.length;
-        multiplayerState.networkStats.eventBytes += new TextEncoder().encode(JSON.stringify(wireMessage.combatEvents)).length;
+        multiplayerState.networkStats.eventBytes += getMultiplayerWireByteLength(wireMessage.combatEvents);
       }
     }
     if (endpointId) options.endpointId = endpointId;
@@ -56870,24 +56913,23 @@
   function enforceMultiplayerClientBackpressure() {
     if (!isMultiplayerHostMatch()) return 0;
     var disconnected = 0;
-    var remotes = multiplayerState.playerOrder.map(getMultiplayerPlayer).filter(function (player) {
-      return player && !player.local && player.connected !== false && player.endpointId;
-    });
-    remotes.forEach(function (player) {
+    for (var playerIndex = 0; playerIndex < multiplayerState.playerOrder.length; playerIndex++) {
+      var player = getMultiplayerPlayer(multiplayerState.playerOrder[playerIndex]);
+      if (!player || player.local || player.connected === false || !player.endpointId) continue;
       var pendingEvents = Math.max(0, (multiplayerState.combatEventSequence || 0) - (player.lastCombatEventAck || 0));
-      var enemyOps = player.enemyReplication ? Object.keys(player.enemyReplication.ops || {}).length : 0;
+      var enemyOps = player.enemyReplication ? Math.max(0, player.enemyReplication.opCount || 0) : 0;
       var combatStall = Math.max(0, state.time - Number(player.lastCombatAckProgressAt || 0));
       var snapshotStall = Math.max(0, state.time - Number(player.lastSnapshotAckProgressAt || 0));
       var eventStalled = pendingEvents > MULTIPLAYER_EVENT_BACKLOG_HARD_LIMIT && combatStall >= MULTIPLAYER_HARD_STALL_TIMEOUT ||
         pendingEvents > MULTIPLAYER_EVENT_BACKLOG_SOFT_LIMIT && combatStall >= MULTIPLAYER_STALLED_CLIENT_TIMEOUT;
       var enemyStalled = enemyOps > MULTIPLAYER_ENEMY_OP_BACKLOG_HARD_LIMIT && snapshotStall >= MULTIPLAYER_HARD_STALL_TIMEOUT;
-      if (!eventStalled && !enemyStalled) return;
+      if (!eventStalled && !enemyStalled) continue;
       disconnected += 1;
       multiplayerState.networkStats.slowClientDisconnects = Math.max(0, multiplayerState.networkStats.slowClientDisconnects || 0) + 1;
       var endpointId = player.endpointId;
       disconnectMultiplayerEndpoint(endpointId);
       handleMultiplayerEndpointDisconnected(endpointId);
-    });
+    }
     if (disconnected) pruneAcknowledgedMultiplayerCombatEvents();
     return disconnected;
   }
@@ -56927,16 +56969,16 @@
       multiplayerState.persistentWorldSnapshotTimer -= activeSnapshotInterval;
       var includePersistentWorld = multiplayerState.persistentWorldSnapshotTimer <= 0;
       if (includePersistentWorld) multiplayerState.persistentWorldSnapshotTimer += MULTIPLAYER_PERSISTENT_WORLD_SNAPSHOT_INTERVAL;
-      multiplayerState.playerOrder.map(getMultiplayerPlayer).filter(function (player) {
-        return player && !player.local && player.connected !== false && player.endpointId;
-      }).forEach(function (player) {
+      for (var remoteIndex = 0; remoteIndex < multiplayerState.playerOrder.length; remoteIndex++) {
+        var player = getMultiplayerPlayer(multiplayerState.playerOrder[remoteIndex]);
+        if (!player || player.local || player.connected === false || !player.endpointId) continue;
         var snapshot = buildMultiplayerSnapshot(includeXpOrbs, includePersistentWorld, player.id, true);
         var pendingFinish = multiplayerState.matchFinishPending;
         if (pendingFinish && !Number.isFinite(pendingFinish.snapshotSequences[player.id])) {
           pendingFinish.snapshotSequences[player.id] = snapshot.sequence;
         }
         sendMultiplayerProtocol(snapshot, player.endpointId);
-      });
+      }
     }
     tryCompletePendingMultiplayerMatch();
   }
@@ -56946,9 +56988,11 @@
     var now = performance.now();
     if (!stats || now - (stats.lastAdaptiveAt || 0) < 1000) return;
     var coalescedDelta = Math.max(0, (stats.coalescedSnapshots || 0) - (stats.adaptiveCoalescedBaseline || 0));
-    var connectedRemoteCount = multiplayerState.playerOrder.map(getMultiplayerPlayer).filter(function (player) {
-      return player && !player.local && player.connected !== false && player.endpointId;
-    }).length;
+    var connectedRemoteCount = 0;
+    for (var playerIndex = 0; playerIndex < multiplayerState.playerOrder.length; playerIndex++) {
+      var player = getMultiplayerPlayer(multiplayerState.playerOrder[playerIndex]);
+      if (player && !player.local && player.connected !== false && player.endpointId) connectedRemoteCount += 1;
+    }
     // The transport counter is global, while every remote receives its own
     // latest-only snapshot. Normalize it per peer so a healthy four-player
     // lobby is not three times more likely to be mistaken for one congested
@@ -57874,11 +57918,13 @@
   function compactMultiplayerRifleTrapWireFields(wire) {
     if (!wire || wire.type !== "snapshot") return wire;
     var stats = multiplayerState.networkStats;
+    var changed = false;
     if (Array.isArray(wire.rifleTraps)) {
       stats.rifleTrapLegacyBytes += getMultiplayerWireByteLength(wire.rifleTraps);
       wire.rt = packMultiplayerRifleTrapEntries(wire.rifleTraps);
       stats.rifleTrapWireBytes += getMultiplayerWireByteLength(wire.rt);
       delete wire.rifleTraps;
+      changed = true;
     }
     if (wire.hazardUpserts && Array.isArray(wire.hazardUpserts.rifleTraps)) {
       var upserts = Object.assign({}, wire.hazardUpserts);
@@ -57894,7 +57940,9 @@
       });
       if (Object.keys(upserts).length) wire.hazardUpserts = upserts;
       else delete wire.hazardUpserts;
+      changed = true;
     }
+    if (changed) cacheMultiplayerWireMeasurement(wire, measureMultiplayerWireValue(wire));
     return wire;
   }
 
@@ -58079,10 +58127,12 @@
       player.enemyReplication = {
         revision: 0,
         observed: Object.create(null),
+        observedCount: 0,
         observedScratch: Object.create(null),
         quantizeScratch: {},
         activeIdScratch: new Set(),
         ops: Object.create(null),
+        opCount: 0,
         priorities: Object.create(null),
         deliveryTicks: Object.create(null),
         sentFrames: [],
@@ -58158,6 +58208,7 @@
     var key = String(id);
     var existing = replication.ops[key];
     if (kind === 0 || kind >= 2 || !existing || existing.kind >= 2) {
+      if (!existing) replication.opCount = Math.max(0, replication.opCount || 0) + 1;
       replication.ops[key] = {
         id: id,
         kind: kind,
@@ -58195,19 +58246,23 @@
     for (var staleKey in current) delete current[staleKey];
     var quantizeScratch = replication.quantizeScratch || (replication.quantizeScratch = {});
     var sourceEntries = entries || [];
+    var currentObservedCount = 0;
     for (var entryIndex = 0; entryIndex < sourceEntries.length; entryIndex++) {
       var entry = sourceEntries[entryIndex];
       var next = quantizeMultiplayerEnemyEntry(entry, quantizeScratch);
       if (!next.id) continue;
       var key = String(next.id);
+      if (!current[key]) currentObservedCount += 1;
       var previous = previousObserved[key];
-      var distance = viewerEntity
-        ? Math.hypot(next.x / 16 - viewerEntity.x, next.z / 16 - viewerEntity.z)
-        : 0;
+      var distanceX = viewerEntity ? next.x / 16 - viewerEntity.x : 0;
+      var distanceZ = viewerEntity ? next.z / 16 - viewerEntity.z : 0;
+      var distanceSquared = distanceX * distanceX + distanceZ * distanceZ;
       var priority = replication.priorities[key];
       if (!priority) priority = replication.priorities[key] = { distance: 0, dangerous: false };
-      priority.distance = distance;
-      priority.dangerous = distance <= 10 || next.type === 4 && (next.windup > 0 || next.spit > 24) || next.type === 6 || next.type === 7;
+      // Sorting only compares distances, so squared values preserve delivery
+      // order and thresholds without a square root per enemy and viewer.
+      priority.distance = distanceSquared;
+      priority.dangerous = distanceSquared <= 100 || next.type === 4 && (next.windup > 0 || next.spit > 24) || next.type === 6 || next.type === 7;
       var mask = getMultiplayerEnemyUpdateMask(previous, next);
       if (mask === -1) {
         var replacement = copyMultiplayerEnemyQuantizedState(previous || {}, next);
@@ -58219,9 +58274,9 @@
       // snapshot cadence.  Distance-only tiers made edge-of-screen zombies
       // alternate between 7.5 and 5 Hz while the player could still see them.
       var fullRateVisible = pointInsideMultiplayerScope(next.x / 16, next.z / 16, 1, fullRateScope);
-      var cadence = fullRateVisible || distance <= MULTIPLAYER_ENEMY_NEAR_UPDATE_RADIUS
+      var cadence = fullRateVisible || distanceSquared <= MULTIPLAYER_ENEMY_NEAR_UPDATE_RADIUS * MULTIPLAYER_ENEMY_NEAR_UPDATE_RADIUS
         ? 1
-        : distance <= MULTIPLAYER_ENEMY_MID_UPDATE_RADIUS
+        : distanceSquared <= MULTIPLAYER_ENEMY_MID_UPDATE_RADIUS * MULTIPLAYER_ENEMY_MID_UPDATE_RADIUS
           ? MULTIPLAYER_ENEMY_MID_UPDATE_DIVISOR
           : MULTIPLAYER_ENEMY_FAR_UPDATE_DIVISOR;
       var movementDue = replication.forceKeyframe || cadence <= 1 || (replication.tick + next.id) % cadence === 0;
@@ -58257,12 +58312,11 @@
       queueMultiplayerEnemyReplicationOp(replication, id, activeIds.has(id) ? 2 : 3, null, 0);
     }
     replication.observed = current;
+    replication.observedCount = currentObservedCount;
     replication.observedScratch = previousObserved;
-    var queuedOpCount = 0;
-    for (var queuedKey in replication.ops) queuedOpCount += 1;
     multiplayerState.networkStats.enemyOpHighWater = Math.max(
       multiplayerState.networkStats.enemyOpHighWater || 0,
-      queuedOpCount
+      Math.max(0, replication.opCount || 0)
     );
     return replication;
   }
@@ -58787,7 +58841,7 @@
       vr: sectionViewRevision,
       vt: sectionViewTargetPlayerId,
       c: ops.length,
-      n: Object.keys(replication.observed).length,
+      n: Math.max(0, replication.observedCount || 0),
       d: packMultiplayerEnemyOps(ops, keyframe, sectionRevision),
     };
     if (keyframe) {
@@ -58826,7 +58880,7 @@
           vr: Math.max(1, replication.viewRevision || 1),
           vt: String(replication.viewTargetPlayerId || player && player.id || ""),
           c: liveOps.length,
-          n: Object.keys(replication.observed).length,
+          n: Math.max(0, replication.observedCount || 0),
           x: 1,
           d: packMultiplayerEnemyOps(liveOps, false, replication.revision >>> 0),
         }, {
@@ -58893,6 +58947,7 @@
             delete replication.deliveryTicks[key];
           }
           delete replication.ops[key];
+          replication.opCount = Math.max(0, (replication.opCount || 0) - 1);
         }
       });
     });
@@ -58927,9 +58982,7 @@
   }
 
   function getMultiplayerWireByteLength(value) {
-    var json = JSON.stringify(value);
-    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(json).length;
-    try { return unescape(encodeURIComponent(json)).length; } catch (error) { return json.length; }
+    return measureMultiplayerWireValue(value).byteLength;
   }
 
   function takeMultiplayerJsonArrayPrefix(entries, byteBudget) {
@@ -59045,35 +59098,64 @@
   function fitMultiplayerWireMessageToBudget(wire) {
     if (!wire || wire.type !== "snapshot") return wire;
     var stats = multiplayerState.networkStats;
-    var preBudgetBytes = getMultiplayerWireByteLength(wire);
+    var currentMeasurement = measureMultiplayerWireValue(wire);
+    var preBudgetBytes = currentMeasurement.byteLength;
     stats.lastPreBudgetBytes = preBudgetBytes;
     stats.maxPreBudgetBytes = Math.max(stats.maxPreBudgetBytes || 0, preBudgetBytes);
+    var trimmed = false;
+
+    function refreshWireMeasurement() {
+      currentMeasurement = measureMultiplayerWireValue(wire);
+      return currentMeasurement.byteLength;
+    }
+
+    function wireExceedsBudget() {
+      return currentMeasurement.byteLength > MULTIPLAYER_MAX_WIRE_BYTES;
+    }
 
     if (Array.isArray(wire.combatEvents)) {
-      wire.combatEvents = takeMultiplayerJsonArrayPrefix(wire.combatEvents, MULTIPLAYER_COMBAT_EVENT_WIRE_BUDGET);
+      var combatEventBytes = getMultiplayerWireByteLength(wire.combatEvents);
+      if (combatEventBytes > MULTIPLAYER_COMBAT_EVENT_WIRE_BUDGET) {
+        var selectedCombatEvents = takeMultiplayerJsonArrayPrefix(
+          wire.combatEvents,
+          MULTIPLAYER_COMBAT_EVENT_WIRE_BUDGET
+        );
+        if (selectedCombatEvents.length < wire.combatEvents.length) {
+          wire.combatEvents = selectedCombatEvents;
+          trimmed = true;
+        }
+      }
     }
     if (wire.hazardUpserts) {
-      wire.hazardUpserts = trimMultiplayerHazardUpserts(wire.hazardUpserts, MULTIPLAYER_HAZARD_UPSERT_WIRE_BUDGET);
-      if (!wire.hazardUpserts) delete wire.hazardUpserts;
+      var hazardUpsertBytes = getMultiplayerWireByteLength(wire.hazardUpserts);
+      if (hazardUpsertBytes > MULTIPLAYER_HAZARD_UPSERT_WIRE_BUDGET) {
+        wire.hazardUpserts = trimMultiplayerHazardUpserts(
+          wire.hazardUpserts,
+          MULTIPLAYER_HAZARD_UPSERT_WIRE_BUDGET
+        );
+        if (!wire.hazardUpserts) delete wire.hazardUpserts;
+        trimmed = true;
+      }
     }
-
-    var trimmed = preBudgetBytes !== getMultiplayerWireByteLength(wire);
+    if (trimmed) refreshWireMeasurement();
     var optionalGroups = [
       ["firePatches", "rifleTraps", "acidPuddles"],
       ["xpOrbs", "hallowedGrounds", "paleDeputies"],
       ["bullets", "acidProjectiles", "ammoCrates"]
     ];
-    for (var groupIndex = 0; groupIndex < optionalGroups.length && getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES; groupIndex++) {
+    for (var groupIndex = 0; groupIndex < optionalGroups.length && wireExceedsBudget(); groupIndex++) {
       var removedHazards = groupIndex === 0 ? {
         firePatches: Array.isArray(wire.firePatches) ? wire.firePatches : [],
         rifleTraps: Array.isArray(wire.rifleTraps) ? wire.rifleTraps : [],
         acidPuddles: Array.isArray(wire.acidPuddles) ? wire.acidPuddles : [],
       } : null;
+      var groupChanged = false;
       optionalGroups[groupIndex].forEach(function (field) {
         if (Object.prototype.hasOwnProperty.call(wire, field)) {
           delete wire[field];
           delete wire[field + "Complete"];
           trimmed = true;
+          groupChanged = true;
         }
       });
       if (removedHazards) {
@@ -59082,25 +59164,36 @@
           MULTIPLAYER_HAZARD_UPSERT_WIRE_BUDGET
         );
         if (!wire.hazardUpserts) delete wire.hazardUpserts;
+        groupChanged = true;
       }
+      if (groupChanged) refreshWireMeasurement();
     }
-    while (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES && removeOneMultiplayerHazardUpsert(wire.hazardUpserts)) {
+    while (wireExceedsBudget() && removeOneMultiplayerHazardUpsert(wire.hazardUpserts)) {
       trimmed = true;
+      refreshWireMeasurement();
     }
-    if (wire.hazardUpserts && !wire.hazardUpserts.firePatches.length && !wire.hazardUpserts.rifleTraps.length && !wire.hazardUpserts.acidPuddles.length) {
+    if (
+      wire.hazardUpserts &&
+      (!Array.isArray(wire.hazardUpserts.firePatches) || !wire.hazardUpserts.firePatches.length) &&
+      (!Array.isArray(wire.hazardUpserts.rifleTraps) || !wire.hazardUpserts.rifleTraps.length) &&
+      (!Array.isArray(wire.hazardUpserts.acidPuddles) || !wire.hazardUpserts.acidPuddles.length)
+    ) {
       delete wire.hazardUpserts;
+      trimmed = true;
+      refreshWireMeasurement();
     }
 
     // Combat events are an acknowledged prefix and are therefore safe to
     // postpone: anything removed here remains in the host backlog. Preserve
     // both halves of an enemy recovery stream before spending the final bytes
     // on that retryable tail.
-    while (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES && Array.isArray(wire.combatEvents) && wire.combatEvents.length) {
+    while (wireExceedsBudget() && Array.isArray(wire.combatEvents) && wire.combatEvents.length) {
       wire.combatEvents.pop();
       trimmed = true;
+      refreshWireMeasurement();
     }
 
-    if (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES && wire.enemyLiveDelta) {
+    if (wireExceedsBudget() && wire.enemyLiveDelta) {
       var primaryMetadata = wire.enemyDelta && wire.enemyDelta._enemyFrame;
       var mayDeferRecoveryChunk = !!(
         wire.enemyDelta && wire.enemyDelta.k && primaryMetadata && !primaryMetadata.viewTransition
@@ -59115,22 +59208,26 @@
           multiplayerState.networkStats.enemyChunkDeferrals || 0
         ) + 1;
         trimmed = true;
+        refreshWireMeasurement();
       }
     }
-    if (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES && wire.enemyLiveDelta) {
+    if (wireExceedsBudget() && wire.enemyLiveDelta) {
       if (shrinkMultiplayerEnemyDeltaToWireBudget(wire, "enemyLiveDelta")) trimmed = true;
-      if (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES) {
+      refreshWireMeasurement();
+      if (wireExceedsBudget()) {
         // A spectator handoff needs its first keyframe chunk to establish the
         // new view contract. This fallback is reached only after all optional
         // world arrays and the retryable event tail have been removed.
         delete wire.enemyLiveDelta;
         trimmed = true;
+        refreshWireMeasurement();
       }
     }
-    if (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES && shrinkMultiplayerEnemyDeltaToWireBudget(wire, "enemyDelta")) {
-      trimmed = true;
+    if (wireExceedsBudget() && wire.enemyDelta) {
+      if (shrinkMultiplayerEnemyDeltaToWireBudget(wire, "enemyDelta")) trimmed = true;
+      refreshWireMeasurement();
     }
-    if (getMultiplayerWireByteLength(wire) > MULTIPLAYER_MAX_WIRE_BYTES && wire.enemyDelta) {
+    if (wireExceedsBudget() && wire.enemyDelta) {
       // Combat events are reliable gameplay state. If the fixed keyframe chunk
       // cannot coexist with them, postpone this enemy chunk without recording a
       // sent frame; the same i is retried after the client drains its event log.
@@ -59140,10 +59237,12 @@
         multiplayerState.networkStats.enemyChunkDeferrals || 0
       ) + 1;
       trimmed = true;
+      refreshWireMeasurement();
     }
-    var finalBytes = getMultiplayerWireByteLength(wire);
+    var finalBytes = currentMeasurement.byteLength;
     if (trimmed) stats.wireBudgetTrims = Math.max(0, stats.wireBudgetTrims || 0) + 1;
     if (finalBytes > MULTIPLAYER_MAX_WIRE_BYTES) stats.wireOversizeSnapshots = Math.max(0, stats.wireOversizeSnapshots || 0) + 1;
+    cacheMultiplayerWireMeasurement(wire, currentMeasurement);
     return wire;
   }
 
@@ -59158,9 +59257,11 @@
     var enemySection = null;
     var enemyLiveSection = null;
     if (Array.isArray(message.enemies) && viewer) {
-      try {
-        multiplayerState.networkStats.enemyLegacyBytes += new TextEncoder().encode(JSON.stringify(message.enemies)).length;
-      } catch (error) {}
+      if (MULTIPLAYER_LEGACY_ENEMY_BYTE_DIAGNOSTICS) {
+        try {
+          multiplayerState.networkStats.enemyLegacyBytes += getMultiplayerWireByteLength(message.enemies);
+        } catch (error) {}
+      }
       enemySection = buildMultiplayerEnemyDeltaSection(viewer, message.enemies, message.sequence);
       wire.enemyDelta = enemySection;
       enemyLiveSection = enemySection && enemySection._enemyLiveSection || null;
@@ -65538,10 +65639,12 @@
       if (hudCache.xpRatio !== xpRatioText) {
         minimapHud.style.setProperty("--xp-progress", xpRatioText);
         minimapHud.style.setProperty("--xp-progress-angle", (xpRatio * 360).toFixed(1) + "deg");
-        minimapHud.setAttribute("aria-label", "Minimap. Level " + state.level + ". Experience " + Math.round(xpRatio * 100) + "%.");
         hudCache.xpRatio = xpRatioText;
-      } else if (hudCache.level === String(state.level)) {
-        minimapHud.setAttribute("aria-label", "Minimap. Level " + state.level + ". Experience " + Math.round(xpRatio * 100) + "%.");
+      }
+      var minimapAriaLabel = "Minimap. Level " + state.level + ". Experience " + Math.round(xpRatio * 100) + "%.";
+      if (hudCache.minimapAriaLabel !== minimapAriaLabel) {
+        minimapHud.setAttribute("aria-label", minimapAriaLabel);
+        hudCache.minimapAriaLabel = minimapAriaLabel;
       }
     }
     updateAmmoHud();
@@ -65909,9 +66012,16 @@
       ammoHudCache.reloadProgress = reloadProgressText;
     }
     var ammoWarning = getAmmoWarningLevel(ammo);
-    ammoHud.classList.toggle("is-low-ammo", ammoWarning === "low");
-    ammoHud.classList.toggle("is-critical-ammo", ammoWarning === "critical");
-    ammoHud.classList.toggle("is-dual-hands-ammo", !!ammo.dualHands);
+    if (ammoHudCache.warning !== ammoWarning) {
+      ammoHud.classList.toggle("is-low-ammo", ammoWarning === "low");
+      ammoHud.classList.toggle("is-critical-ammo", ammoWarning === "critical");
+      ammoHudCache.warning = ammoWarning;
+    }
+    var dualHandsActive = !!ammo.dualHands;
+    if (ammoHudCache.dualHands !== dualHandsActive) {
+      ammoHud.classList.toggle("is-dual-hands-ammo", dualHandsActive);
+      ammoHudCache.dualHands = dualHandsActive;
+    }
     if (ammoStatus) {
       var remainingStatus = getAmmoRemainingStatusText(ammo, ammoWarning);
       var statusText = ammo.dualHands
@@ -65960,7 +66070,13 @@
       ammoHudCache.ariaLabel = ariaLabel;
     }
     syncAmmoRack(weapon, ammo);
-    if (ammoReloadFill) ammoReloadFill.style.transform = ammo.reloading ? "scaleX(" + reloadProgressText + ")" : "scaleX(0)";
+    if (ammoReloadFill) {
+      var reloadFillTransform = ammo.reloading ? "scaleX(" + reloadProgressText + ")" : "scaleX(0)";
+      if (ammoHudCache.reloadFillTransform !== reloadFillTransform) {
+        ammoReloadFill.style.transform = reloadFillTransform;
+        ammoHudCache.reloadFillTransform = reloadFillTransform;
+      }
+    }
     var weaponIconId = getWeaponHudIconId(weapon.id);
     if (ammoWeaponIcon && currentAmmoIcon !== weaponIconId) {
       ammoWeaponIcon.innerHTML = WEAPON_ICONS[weaponIconId] || WEAPON_ICONS[weapon.id] || WEAPON_ICONS.revolver;
@@ -70858,8 +70974,8 @@
           0,
           (multiplayerState.combatEventSequence || 0) - (player.lastCombatEventAck || 0)
         ),
-        enemyOps: replication ? Object.keys(replication.ops || {}).length : 0,
-        observedEnemies: replication ? Object.keys(replication.observed || {}).length : 0,
+        enemyOps: replication ? Math.max(0, replication.opCount || 0) : 0,
+        observedEnemies: replication ? Math.max(0, replication.observedCount || 0) : 0,
         sentEnemyFrames: replication ? (replication.sentFrames || []).length : 0,
         keyframeActive: !!(replication && replication.keyframeTransfer),
         pendingHazardFrames: (player.pendingHazardFrames || []).length,
