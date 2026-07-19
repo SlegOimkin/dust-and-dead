@@ -4,10 +4,64 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Dust & Dead - Cowboy Zombie Shooter</title>
-    <link rel="stylesheet" href="styles.css">
+    <script>
+      try {
+        if (new URLSearchParams(window.location.search).get("localMultiplayer") === "1") {
+          document.documentElement.classList.add("local-multiplayer-boot");
+        }
+      } catch (error) {}
+    </script>
+    <link rel="stylesheet" href="styles.css?v=grenade-network-smooth-v15-20260718">
   </head>
   <body>
     <main id="game-root" class="is-intro" aria-label="Dust and Dead game">
+      <div id="multiplayer-player-nameplates" class="multiplayer-player-nameplates" aria-hidden="true" hidden></div>
+
+      <div id="multiplayer-spectator" class="multiplayer-spectator" role="group" aria-label="Spectator controls" aria-hidden="true" hidden>
+        <button id="multiplayer-spectator-prev" class="multiplayer-spectator__arrow multiplayer-spectator__arrow--prev" type="button" aria-label="Watch previous player" aria-describedby="multiplayer-spectator-status" title="Previous player">
+          <span aria-hidden="true">&#8249;</span>
+        </button>
+        <output id="multiplayer-spectator-status" class="multiplayer-spectator__status" role="status" aria-live="polite" aria-atomic="true">
+          <span>Spectating</span>
+          <strong id="multiplayer-spectator-name">Waiting for a player</strong>
+        </output>
+        <button id="multiplayer-spectator-next" class="multiplayer-spectator__arrow multiplayer-spectator__arrow--next" type="button" aria-label="Watch next player" aria-describedby="multiplayer-spectator-status" title="Next player">
+          <span aria-hidden="true">&#8250;</span>
+        </button>
+      </div>
+
+      <section id="boss-hud" class="boss-hud is-shielded" aria-labelledby="boss-name" aria-describedby="boss-status" hidden>
+        <div class="boss-hud__heading">
+          <h2 id="boss-name" class="boss-hud__name">The Last Parish Bell-Ringer</h2>
+          <div id="boss-church-pips" class="boss-church-pips" role="list" aria-label="Active bell towers">
+            <span class="is-active" data-church="0" role="listitem" aria-label="Bell tower one active"></span>
+            <span class="is-active" data-church="1" role="listitem" aria-label="Bell tower two active"></span>
+            <span class="is-active" data-church="2" role="listitem" aria-label="Bell tower three active"></span>
+          </div>
+        </div>
+        <div class="boss-hud__frame">
+          <div class="boss-health-track" role="progressbar" aria-label="Boss health" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+            <div id="boss-health-lag" class="boss-health-lag"></div>
+            <div id="boss-health-fill" class="boss-health-fill"></div>
+            <div id="boss-shield-sheen" class="boss-shield-sheen"></div>
+            <span class="boss-health-notch" data-threshold="50" aria-hidden="true"></span>
+            <span class="boss-health-notch" data-threshold="67" aria-hidden="true"></span>
+            <span class="boss-health-notch" data-threshold="83" aria-hidden="true"></span>
+          </div>
+        </div>
+        <div id="boss-status" class="boss-hud__status" role="status" aria-live="polite">Immune &middot; Silence the three bells</div>
+      </section>
+
+      <div id="bell-warning" class="bell-warning" role="alert" aria-labelledby="bell-warning-title" aria-describedby="bell-warning-subtitle" hidden>
+        <span class="bell-warning__sigil" aria-hidden="true">
+          <span class="bell-warning__bell"></span>
+        </span>
+        <span class="bell-warning__copy">
+          <strong id="bell-warning-title">Death Knell</strong>
+          <span id="bell-warning-subtitle">Stand still for the toll</span>
+        </span>
+      </div>
+
       <div id="hud" class="hud" aria-live="polite">
         <div class="hud-row">
           <span class="hud-label">HP</span>
@@ -32,6 +86,14 @@
         </div>
       </div>
 
+      <aside id="multiplayer-event-history" class="multiplayer-event-history" aria-label="Match history" aria-hidden="true" hidden>
+        <div class="multiplayer-event-history__header" aria-hidden="true">
+          <span></span>
+          Match history
+        </div>
+        <ol id="multiplayer-event-history-list" class="multiplayer-event-history__list" role="log" aria-live="polite" aria-relevant="additions" aria-atomic="false"></ol>
+      </aside>
+
       <div id="minimap" class="minimap" aria-label="Minimap">
         <div class="minimap-level-badge">Level <b id="level-value">1</b></div>
         <div class="minimap-xp-frame" aria-hidden="true">
@@ -41,10 +103,77 @@
               <span id="minimap-ammo-count">0</span>
             </div>
             <canvas id="minimap-canvas" class="minimap-canvas" width="176" height="128" aria-hidden="true"></canvas>
-            <div id="xp-fill" class="minimap-xp-fill" aria-hidden="true"></div>
+            <div class="minimap-xp-fill" aria-hidden="true"></div>
           </div>
         </div>
       </div>
+
+      <button id="pause-menu-btn" class="pause-menu-btn" type="button" aria-label="Open menu" aria-controls="pause-menu" aria-expanded="false" title="Menu">&#9776;</button>
+
+      <button id="multiplayer-scoreboard-toggle" class="multiplayer-scoreboard-toggle" type="button" aria-label="Open player scores" aria-controls="multiplayer-scoreboard" aria-expanded="false" hidden>
+        <span class="multiplayer-scoreboard-toggle__icon" aria-hidden="true">#</span>
+        <span class="multiplayer-scoreboard-toggle__label">Scores</span>
+      </button>
+
+      <aside id="multiplayer-scoreboard" class="multiplayer-scoreboard" aria-labelledby="multiplayer-scoreboard-title" aria-hidden="true" hidden>
+        <div class="multiplayer-scoreboard__header">
+          <div>
+            <span class="multiplayer-eyebrow">Local PvP</span>
+            <h2 id="multiplayer-scoreboard-title">Player Scores</h2>
+          </div>
+          <span id="multiplayer-match-status" class="multiplayer-scoreboard__status" role="status" aria-live="polite">Match starting</span>
+        </div>
+        <div class="multiplayer-scoreboard__table-wrap">
+          <table>
+            <caption class="visually-hidden">Current local multiplayer player standings</caption>
+            <thead>
+              <tr>
+                <th scope="col"><span class="visually-hidden">Place</span>#</th>
+                <th scope="col">Player</th>
+                <th scope="col">Score</th>
+                <th scope="col">State</th>
+              </tr>
+            </thead>
+            <tbody id="multiplayer-scoreboard-body">
+              <tr class="multiplayer-scoreboard__empty" data-placeholder="true">
+                <td colspan="4">Waiting for player scores...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="multiplayer-scoreboard__rule">The last survivor wins once they lead every other player on points.</p>
+      </aside>
+
+      <button id="multiplayer-upgrade-toggle" class="multiplayer-upgrade-toggle" type="button" aria-label="Open pending upgrades" aria-controls="multiplayer-upgrade-drawer" aria-expanded="false" hidden>
+        <span class="multiplayer-upgrade-toggle__icon" aria-hidden="true">&#10022;</span>
+        <span class="multiplayer-upgrade-toggle__label">Upgrades</span>
+        <span id="multiplayer-upgrade-pending-count" class="multiplayer-upgrade-toggle__badge" data-count="0" aria-label="0 pending upgrades" aria-live="polite" aria-atomic="true">0</span>
+      </button>
+
+      <aside id="multiplayer-upgrade-drawer" class="multiplayer-upgrade-drawer" role="dialog" aria-modal="false" aria-labelledby="multiplayer-upgrade-title" aria-describedby="multiplayer-upgrade-subtitle" aria-hidden="true" tabindex="-1" hidden>
+        <header class="multiplayer-upgrade-drawer__header">
+          <div>
+            <span class="multiplayer-eyebrow">Personal Progression</span>
+            <h2 id="multiplayer-upgrade-title">Choose an Upgrade</h2>
+            <p id="multiplayer-upgrade-subtitle">Your choice affects only this cowboy. The match keeps moving.</p>
+          </div>
+          <button id="multiplayer-upgrade-close-btn" class="multiplayer-upgrade-drawer__close" type="button" aria-label="Close upgrades" title="Close upgrades">&times;</button>
+        </header>
+
+        <div class="multiplayer-upgrade-drawer__body">
+          <div id="multiplayer-upgrade-options" class="multiplayer-upgrade-options class-options level-up-options" role="list" aria-label="Available upgrades" aria-live="polite"></div>
+          <div id="multiplayer-upgrade-empty" class="multiplayer-upgrade-empty" role="status">
+            <span class="multiplayer-upgrade-empty__icon" aria-hidden="true">&#10022;</span>
+            <strong>No upgrades waiting</strong>
+            <span>Keep fighting. Your next choice will appear here without pausing the match.</span>
+          </div>
+        </div>
+
+        <p class="multiplayer-upgrade-drawer__note">
+          <span aria-hidden="true"></span>
+          Live match &mdash; enemies and players continue moving
+        </p>
+      </aside>
 
       <section id="intro-screen" class="intro-screen is-visible" role="button" tabindex="0" aria-label="Press any button to open the menu">
         <div class="intro-screen__inner">
@@ -58,7 +187,10 @@
         <h1>Dust &amp; Dead</h1>
         <p class="menu-panel__lead">Ride into a blocky frontier where a lone cowboy, roaming dead, and upgrade-heavy gunplay collide in the dust.</p>
         <div class="menu-panel__actions">
-          <button id="start-btn" type="button">Start Hunt</button>
+          <div class="menu-panel__play-actions">
+            <button id="start-btn" type="button">Start Hunt</button>
+            <button id="local-multiplayer-btn" type="button">Local Multiplayer</button>
+          </div>
           <button id="menu-music-btn" class="menu-music-btn" type="button" aria-label="Mute menu music" aria-pressed="true" title="Mute menu music">&#9835;</button>
         </div>
         <div class="controls menu-controls">
@@ -72,10 +204,194 @@
         <button id="restart-btn" type="button">Ride Again</button>
       </section>
 
+      <section id="local-multiplayer-lobby" class="panel multiplayer-lobby" role="dialog" aria-modal="true" aria-labelledby="multiplayer-lobby-title">
+        <header class="multiplayer-lobby__header">
+          <div>
+            <span class="multiplayer-eyebrow">Offline Nearby Play</span>
+            <h2 id="multiplayer-lobby-title">Local PvP</h2>
+            <p>Host a match or find players close to you. No internet connection is required.</p>
+          </div>
+          <span class="multiplayer-nearby-badge" aria-label="Nearby Connections mode">
+            <span aria-hidden="true"></span>
+            Nearby
+          </span>
+        </header>
+
+        <div class="multiplayer-lobby__grid">
+          <section class="multiplayer-lobby__card" aria-labelledby="multiplayer-connect-title">
+            <div class="multiplayer-lobby__section-title">
+              <h3 id="multiplayer-connect-title">Find a Match</h3>
+              <span id="multiplayer-discovery-count" aria-live="polite">0 found</span>
+            </div>
+
+            <label class="multiplayer-name-field" for="multiplayer-player-name">
+              <span>Player name</span>
+              <input id="multiplayer-player-name" name="multiplayer-player-name" type="text" value="Cowboy" maxlength="18" autocomplete="nickname" enterkeyhint="done" spellcheck="false">
+            </label>
+
+            <div class="multiplayer-connect-actions" role="group" aria-label="Nearby match connection options">
+              <button id="multiplayer-host-btn" type="button">Host Match</button>
+              <button id="multiplayer-discover-btn" class="multiplayer-button--secondary" type="button" aria-controls="multiplayer-session-list" aria-pressed="false">Find Nearby</button>
+            </div>
+
+            <div class="multiplayer-session-list-wrap">
+              <span class="visually-hidden" id="multiplayer-session-list-help">Choose a nearby match, then use Join Selected.</span>
+              <ul id="multiplayer-session-list" class="multiplayer-session-list" aria-label="Nearby matches" aria-describedby="multiplayer-session-list-help" aria-live="polite">
+                <li class="multiplayer-list-empty" data-placeholder="true">Tap Find Nearby to discover a match.</li>
+              </ul>
+            </div>
+
+            <button id="multiplayer-join-btn" class="multiplayer-button--wide" type="button" disabled>Join Selected</button>
+          </section>
+
+          <section class="multiplayer-lobby__card multiplayer-lobby__room" aria-labelledby="multiplayer-room-title">
+            <div class="multiplayer-lobby__section-title">
+              <h3 id="multiplayer-room-title">Players</h3>
+              <span id="multiplayer-player-count" aria-live="polite">0 / 4</span>
+            </div>
+
+            <ul id="multiplayer-player-list" class="multiplayer-player-list" aria-label="Players in the lobby" aria-live="polite">
+              <li class="multiplayer-list-empty" data-placeholder="true">Host or join a match to enter the lobby.</li>
+            </ul>
+
+            <div class="multiplayer-connection-code" aria-label="Match connection code">
+              <span>Match code</span>
+              <output id="multiplayer-connection-code" aria-live="polite">----</output>
+            </div>
+
+            <p id="multiplayer-lobby-status" class="multiplayer-lobby__status" role="status" aria-live="polite">
+              <span class="multiplayer-lobby__status-dot" aria-hidden="true"></span>
+              Choose Host Match or Find Nearby to begin.
+            </p>
+
+            <div class="multiplayer-room-actions">
+              <button id="multiplayer-ready-btn" class="multiplayer-button--secondary" type="button" aria-pressed="false" disabled>Ready</button>
+              <button id="multiplayer-start-btn" type="button" disabled>Start Match</button>
+            </div>
+          </section>
+        </div>
+
+        <footer class="multiplayer-lobby__footer">
+          <button id="multiplayer-lobby-back-btn" class="multiplayer-button--quiet" type="button">Back</button>
+          <span>Nearby Connections keeps this match between nearby devices.</span>
+        </footer>
+      </section>
+
+      <section id="multiplayer-death-panel" class="panel multiplayer-death-panel" role="dialog" aria-modal="true" aria-labelledby="multiplayer-death-title" aria-describedby="multiplayer-death-summary">
+        <span class="multiplayer-eyebrow">You Are Down</span>
+        <h2 id="multiplayer-death-title">Buy Another Life?</h2>
+        <p id="multiplayer-death-summary">Spend points to rejoin the fight. Each revival costs twice as much as the last.</p>
+
+        <div class="multiplayer-death-panel__score" aria-label="Current score">
+          <span>Your score</span>
+          <strong id="multiplayer-current-score">0</strong>
+        </div>
+
+        <div class="multiplayer-death-panel__timer" aria-label="Time before automatic surrender" role="timer">
+          <span>Auto-surrender in</span>
+          <strong id="multiplayer-death-countdown">15</strong>
+          <span>seconds</span>
+        </div>
+
+        <div class="multiplayer-death-panel__actions">
+          <button id="multiplayer-revive-btn" type="button">
+            <span>Revive</span>
+            <small><strong id="multiplayer-revive-cost">2</strong> points</small>
+          </button>
+          <button id="multiplayer-surrender-btn" class="multiplayer-button--danger" type="button">
+            <span>Surrender</span>
+            <small>Leave this match for good</small>
+          </button>
+        </div>
+      </section>
+
+      <section id="multiplayer-result-panel" class="panel multiplayer-result-panel" role="dialog" aria-modal="true" aria-labelledby="multiplayer-result-title" aria-describedby="multiplayer-result-summary">
+        <span class="multiplayer-eyebrow">Local PvP Complete</span>
+        <h2 id="multiplayer-result-title">Match Finished</h2>
+        <p id="multiplayer-result-summary">Final results</p>
+
+        <div class="multiplayer-final-results" aria-label="Final player standings">
+          <table>
+            <caption class="visually-hidden">Final local multiplayer player standings</caption>
+            <thead>
+              <tr>
+                <th scope="col"><span class="visually-hidden">Place</span>#</th>
+                <th scope="col">Player</th>
+                <th scope="col">Score</th>
+                <th scope="col">State</th>
+              </tr>
+            </thead>
+            <tbody id="multiplayer-final-results-body">
+              <tr data-placeholder="true"><td colspan="4">Calculating final scores...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="multiplayer-result-panel__actions">
+          <button id="multiplayer-return-lobby-btn" type="button">
+            <span>Return to Lobby</span>
+            <small>Keep the nearby group together</small>
+          </button>
+          <button id="multiplayer-return-menu-btn" class="multiplayer-button--quiet" type="button">
+            <span>Main Menu</span>
+            <small>Leave the nearby match</small>
+          </button>
+        </div>
+      </section>
+
+      <section id="pause-menu" class="pause-menu" aria-label="Game menu" aria-hidden="true">
+        <div class="pause-menu__panel" role="dialog" aria-modal="true" aria-labelledby="pause-menu-title">
+          <button id="pause-close-btn" class="pause-menu__close" type="button" aria-label="Close menu" title="Close">&times;</button>
+
+          <div id="pause-main-panel" class="pause-menu__view is-visible">
+            <h2 id="pause-menu-title">Paused</h2>
+            <div class="pause-menu__actions">
+              <button id="pause-continue-btn" type="button">Continue</button>
+              <button id="pause-settings-btn" type="button">Settings</button>
+              <button id="pause-exit-btn" class="pause-menu__danger" type="button">Exit</button>
+            </div>
+          </div>
+
+          <div id="pause-settings-panel" class="pause-menu__view" aria-label="Sound settings">
+            <h2>Settings</h2>
+            <div class="pause-volume">
+              <label class="pause-volume__control" for="music-volume">
+                <span class="pause-volume__head">
+                  <span>Music</span>
+                  <output id="music-volume-value" for="music-volume">100%</output>
+                </span>
+                <input id="music-volume" type="range" min="0" max="200" step="1" value="100">
+              </label>
+              <label class="pause-volume__control" for="sfx-volume">
+                <span class="pause-volume__head">
+                  <span>Sound Effects</span>
+                  <output id="sfx-volume-value" for="sfx-volume">100%</output>
+                </span>
+                <input id="sfx-volume" type="range" min="0" max="200" step="1" value="100">
+              </label>
+            </div>
+            <div class="pause-menu__actions">
+              <button id="control-layout-btn" type="button">Control Layout</button>
+              <button id="pause-settings-back-btn" type="button">Back</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="control-layout-editor" class="control-layout-editor" aria-label="Control layout" aria-hidden="true">
+        <div class="control-layout-editor__bar">
+          <strong>Control Layout</strong>
+          <div class="control-layout-editor__actions">
+            <button id="control-layout-apply-btn" type="button">Apply</button>
+            <button id="control-layout-reset-btn" type="button">Reset</button>
+          </div>
+        </div>
+      </section>
+
       <section id="class-choice" class="panel class-choice-panel" aria-label="Class choice">
         <h2>Choose Your Path</h2>
         <p>Level 5. Pick a role for this run.</p>
-        <div class="class-options">
+        <div class="class-options class-options--classes">
           <button class="class-card class-card--black" type="button" data-class="gunslinger" data-rank="A" data-suit="&spades;">
             <span class="class-card__mark" aria-hidden="true">
               <svg class="class-card__weapon-icon" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
@@ -97,6 +413,13 @@
             <strong>Demolitionist</strong>
             <span>Unlock launcher; crates give +6 grenades</span>
           </button>
+          <button class="class-card class-card--red" type="button" data-class="marshal" data-rank="J" data-suit="&diams;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="coachGun" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Marshal</strong>
+              <span>Coach Gun: breach or consecrated path</span>
+          </button>
         </div>
       </section>
 
@@ -110,14 +433,14 @@
               <svg class="class-card__weapon-icon class-card__weapon-icon--dual-right" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
             </span>
             <strong>Dual Revolvers</strong>
-            <span>12-shot magazine, alternating fire, crates +24 ammo</span>
+            <span>12-shot magazine, alternating fire, crates +29 ammo</span>
           </button>
           <button class="class-card class-card--black" type="button" data-revolver-upgrade="bigIron" data-rank="A" data-suit="&spades;">
             <span class="class-card__mark class-card__mark--big-iron" aria-hidden="true">
               <svg class="class-card__weapon-icon class-card__weapon-icon--big-iron" data-weapon-icon="revolver" viewBox="0 0 128 64" focusable="false"></svg>
             </span>
             <strong>Big Iron</strong>
-            <span>Slow piercing shots, damage x4, crates +12 ammo</span>
+            <span>Slow piercing shots, damage x4, crates +15 ammo</span>
           </button>
         </div>
       </section>
@@ -152,14 +475,35 @@
               <svg class="class-card__weapon-icon" data-weapon-icon="launcher" viewBox="0 0 128 64" focusable="false"></svg>
             </span>
             <strong>Bombardier</strong>
-            <span>6-grenade magazine, +12 crate ammo, chain blasts</span>
+            <span>6-grenade magazine, +15 crate ammo, chain blasts</span>
           </button>
           <button class="class-card class-card--red" type="button" data-launcher-upgrade="pyrotechnician" data-rank="K" data-suit="&hearts;">
             <span class="class-card__mark" aria-hidden="true">
               <svg class="class-card__weapon-icon" data-weapon-icon="incendiaryShell" viewBox="0 0 128 64" focusable="false"></svg>
             </span>
             <strong>Pyrotechnician</strong>
-            <span>Fire pools, fire healing, +9 crate ammo</span>
+            <span>Fire pools, fire healing, +11 crate ammo</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="marshal-upgrade" class="panel class-choice-panel marshal-upgrade-panel" aria-label="Marshal upgrade choice">
+        <h2>Choose Your Oath</h2>
+        <p>Level 10. The Marshal path splits.</p>
+        <div class="class-options">
+          <button class="class-card class-card--red" type="button" data-marshal-upgrade="breachMarshal" data-rank="K" data-suit="&diams;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="coachGunBreach" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Breach Marshal</strong>
+            <span>Sawed-off spread, brutal knockback, point-blank momentum</span>
+          </button>
+          <button class="class-card class-card--black" type="button" data-marshal-upgrade="graveWarden" data-rank="A" data-suit="&spades;">
+            <span class="class-card__mark" aria-hidden="true">
+              <svg class="class-card__weapon-icon" data-weapon-icon="coachGunGrave" viewBox="0 0 128 64" focusable="false"></svg>
+            </span>
+            <strong>Grave Warden</strong>
+            <span>Tight choke, consecrated marks, control and purification</span>
           </button>
         </div>
       </section>
@@ -170,6 +514,52 @@
         <div id="level-up-options" class="class-options level-up-options"></div>
       </section>
 
+      <template id="multiplayer-session-row-template">
+        <li class="multiplayer-session-row" data-session-id="">
+          <button class="multiplayer-session-row__select" type="button" aria-pressed="false">
+            <span class="multiplayer-session-row__signal" aria-hidden="true"></span>
+            <span class="multiplayer-session-row__details">
+              <strong class="multiplayer-session-row__name">Nearby Match</strong>
+              <span class="multiplayer-session-row__host">Host</span>
+            </span>
+            <span class="multiplayer-session-row__capacity">1 / 4</span>
+          </button>
+        </li>
+      </template>
+
+      <template id="multiplayer-player-row-template">
+        <li class="multiplayer-player-row" data-player-id="">
+          <span class="multiplayer-player-row__marker" aria-hidden="true"></span>
+          <span class="multiplayer-player-row__name">Player</span>
+          <span class="multiplayer-player-row__state">Not ready</span>
+        </li>
+      </template>
+
+      <template id="multiplayer-score-row-template">
+        <tr class="multiplayer-score-row" data-player-id="">
+          <td class="multiplayer-score-row__place">1</td>
+          <th class="multiplayer-score-row__player" scope="row">
+            <span class="multiplayer-score-row__marker" aria-hidden="true"></span>
+            <span class="multiplayer-score-row__name">Player</span>
+          </th>
+          <td class="multiplayer-score-row__score">0</td>
+          <td class="multiplayer-score-row__state">Alive</td>
+        </tr>
+      </template>
+
+      <template id="multiplayer-upgrade-option-template">
+        <div class="multiplayer-upgrade-option" role="listitem" data-upgrade-id="">
+          <button class="multiplayer-upgrade-option__button" type="button" data-multiplayer-upgrade="">
+            <span class="multiplayer-upgrade-option__icon" aria-hidden="true">+</span>
+            <span class="multiplayer-upgrade-option__copy">
+              <strong class="multiplayer-upgrade-option__title">Upgrade</strong>
+              <span class="multiplayer-upgrade-option__description">Upgrade description</span>
+            </span>
+            <span class="multiplayer-upgrade-option__action" aria-hidden="true">Choose</span>
+          </button>
+        </div>
+      </template>
+
       <div id="mobile-controls" class="mobile-controls" aria-label="Mobile controls">
         <div id="move-stick" class="move-stick" aria-label="Move">
           <div id="move-knob" class="move-knob"></div>
@@ -179,12 +569,12 @@
 
       <div class="rotate-notice" aria-hidden="true">
         <div class="rotate-device"></div>
-        <strong>Поверните экран</strong>
-        <span>Игра рассчитана на горизонтальный режим</span>
+        <strong>Rotate Your Device</strong>
+        <span>This game is designed for landscape mode</span>
       </div>
     </main>
 
     <script src="vendor/three.min.js"></script>
-    <script src="game.js"></script>
+  <script src="game.js?v=boss-tunnel-sync-v16-20260718"></script>
   </body>
 </html>
