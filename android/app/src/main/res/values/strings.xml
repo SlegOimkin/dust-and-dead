@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Dust and Dead</string>
+    <string name="title_activity_main">Dust and Dead</string>
+    <string name="package_name">com.testproject.dustanddead</string>
+    <string name="custom_url_scheme">com.testproject.dustanddead</string>
+</resources>

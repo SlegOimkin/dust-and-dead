@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Dust &amp; Dead — Ghost Train local scene</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #080b0b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #080b0b;
+    }
+
+    #game-frame {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #080b0b;
+    }
+
+    .curtain {
+      position: fixed;
+      z-index: 3;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #dffff4;
+      background:
+        radial-gradient(circle at 50% 42%, rgba(45, 145, 119, 0.22), transparent 34%),
+        #080b0b;
+      font-size: clamp(14px, 2vw, 20px);
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      transition: opacity 220ms ease;
+    }
+
+    body.is-ready .curtain {
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    body.has-error .curtain {
+      padding: 24px;
+      color: #ffd2cc;
+      text-align: center;
+      letter-spacing: 0.03em;
+      text-transform: none;
+    }
+
+    .local-scene-dock {
+      position: fixed;
+      z-index: 4;
+      right: max(10px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 8px 7px 11px;
+      border: 1px solid rgba(96, 238, 201, 0.42);
+      border-radius: 999px;
+      color: rgba(225, 255, 247, 0.88);
+      background: rgba(9, 25, 23, 0.88);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
+      backdrop-filter: blur(8px);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      pointer-events: none;
+      text-transform: uppercase;
+    }
+
+    .local-scene-dock .phase-buttons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .local-scene-dock .phase-buttons button {
+      min-width: 30px;
+      padding-inline: 8px;
+    }
+
+    .local-scene-dock::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #68f0c5;
+      box-shadow: 0 0 10px rgba(104, 240, 197, 0.9);
+      content: "";
+    }
+
+    .local-scene-dock button {
+      min-height: 28px;
+      padding: 5px 10px;
+      border: 1px solid rgba(116, 250, 216, 0.4);
+      border-radius: 999px;
+      color: #e8fff8;
+      background: rgba(40, 103, 88, 0.78);
+      font: inherit;
+      cursor: pointer;
+      pointer-events: auto;
+      text-transform: uppercase;
+    }
+
+    .local-scene-dock button:hover,
+    .local-scene-dock button:focus-visible {
+      border-color: #82f7d8;
+      background: rgba(52, 136, 113, 0.9);
+      outline: none;
+    }
+
+  </style>
+</head>
+<body>
+  <iframe
+    id="game-frame"
+    title="Локальная боевая сцена с боссом Поездом"
+    src="../index.html?mapSeed=7331&amp;preview=bell-ringer-rifle-test"
+    allow="autoplay; fullscreen"
+  ></iframe>
+
+  <div id="curtain" class="curtain" role="status">Запускаю Похоронный экспресс…</div>
+
+  <div class="local-scene-dock" aria-label="Локальный стенд Поезда">
+    <span id="scene-phase">Фаза 1 · полный состав</span>
+    <div class="phase-buttons" aria-label="Фазы состава">
+      <button type="button" data-tail-index="4" title="Полный состав">Ф1</button>
+      <button type="button" data-tail-index="3" title="Три вагона">Ф2</button>
+      <button type="button" data-tail-index="2" title="Два вагона">Ф3</button>
+      <button type="button" data-tail-index="1" title="Один вагон">Ф4</button>
+      <button type="button" data-tail-index="0" title="Только паровоз">Ф5</button>
+    </div>
+    <button id="tunnel-phase" type="button">Вход в тоннель</button>
+    <button id="tunnel-exit" type="button">Выход из тоннеля</button>
+    <button id="final-phase" type="button">Паровая атака</button>
+    <button id="restart-scene" type="button">Перезапустить</button>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var frame = document.getElementById("game-frame");
+      var curtain = document.getElementById("curtain");
+      var scenePhase = document.getElementById("scene-phase");
+      var phaseButtons = Array.prototype.slice.call(document.querySelectorAll("[data-tail-index]"));
+      var tunnelPhaseButton = document.getElementById("tunnel-phase");
+      var tunnelExitButton = document.getElementById("tunnel-exit");
+      var finalPhaseButton = document.getElementById("final-phase");
+      var restartButton = document.getElementById("restart-scene");
+
+      function wait(milliseconds) {
+        return new Promise(function (resolve) {
+          window.setTimeout(resolve, milliseconds);
+        });
+      }
+
+      async function waitForGame() {
+        var attempts = 0;
+        while (attempts < 240) {
+          var target = frame.contentWindow;
+          if (target && target.__dustAndDeadTest && target.render_game_to_text) return target;
+          attempts += 1;
+          await wait(50);
+        }
+        throw new Error("Игра не завершила загрузку за 12 секунд.");
+      }
+
+      function positionPlayerNearTrain(api) {
+        var train = api.getGhostTrainDiagnostics();
+        if (!train || train.segments.length < 2) return;
+        var engine = train.segments[0];
+        var firstWagon = train.segments[1];
+        var tail = train.segments[train.activeTailIndex];
+        var backX = firstWagon.x - engine.x;
+        var backZ = firstWagon.z - engine.z;
+        var length = Math.max(0.001, Math.hypot(backX, backZ));
+        backX /= length;
+        backZ /= length;
+        var sideX = -backZ;
+        var sideZ = backX;
+        api.setPlayerPosition(engine.x + sideX * 15 + backX * 5, engine.z + sideZ * 15 + backZ * 5);
+        api.setAimTarget(tail.x, tail.z);
+      }
+
+      function getPhaseLabel(activeTailIndex) {
+        if (activeTailIndex === 4) return "Фаза 1 · полный состав";
+        if (activeTailIndex === 3) return "Фаза 2 · три вагона";
+        if (activeTailIndex === 2) return "Фаза 3 · два вагона";
+        if (activeTailIndex === 1) return "Фаза 4 · один вагон";
+        return "Фаза 5 · только паровоз";
+      }
+
+      function positionPhaseForPortrait(api) {
+        var train = api.getGhostTrainDiagnostics();
+        if (!train || !train.segments.length) return;
+        var engine = train.segments[0];
+        var tail = train.segments[train.activeTailIndex];
+        var centerX = (engine.x + tail.x) * 0.5;
+        var centerZ = (engine.z + tail.z) * 0.5;
+        api.setPlayerPosition(centerX, centerZ);
+        api.setPlayerMaxHp(9999, 9999);
+        api.setAimTarget(engine.x, engine.z);
+      }
+
+      function positionTunnelForPortrait(api, portalKey) {
+        var train = api.getGhostTrainDiagnostics();
+        var portal = train && train.tunnel && train.tunnel[portalKey];
+        var engine = train && train.segments && train.segments[0];
+        if (!portal || !engine) return;
+        api.setPlayerPosition((portal.x + engine.x) * 0.5, (portal.z + engine.z) * 0.5);
+        api.setPlayerMaxHp(9999, 9999);
+        api.setAimTarget(engine.x, engine.z);
+        api.advanceGhostTrain(32);
+      }
+
+      async function showPhase(targetTailIndex, showSteam) {
+        var gameWindow = await waitForGame();
+        var api = gameWindow.__dustAndDeadTest;
+        api.showGhostTrainPreview(targetTailIndex <= 2);
+        var diagnostics = api.getGhostTrainDiagnostics();
+        api.setGhostTrainAiEnabled(false);
+        api.setGhostTrainMotionFrozen(true);
+        while (diagnostics.activeTailIndex > targetTailIndex) {
+          api.damageGhostTrainTail(9999, true);
+          api.advanceGhostTrain(1800);
+          diagnostics = api.getGhostTrainDiagnostics();
+        }
+        api.forceGhostTrainAction(targetTailIndex === 0 && !showSteam ? "spectral" : "broadside", 30);
+        positionPhaseForPortrait(api);
+        api.advanceGhostTrain(showSteam ? 420 : 80);
+        scenePhase.textContent = showSteam ? "Фаза 5 · паровая атака" : getPhaseLabel(targetTailIndex);
+        gameWindow.focus();
+      }
+
+      async function showTunnel() {
+        var gameWindow = await waitForGame();
+        var api = gameWindow.__dustAndDeadTest;
+        api.startWaveNow(10, "ghostTrain");
+        api.clearEnemies();
+        api.setGhostTrainAiEnabled(false);
+        api.setGhostTrainMotionFrozen(false);
+        api.setPlayerMaxHp(9999, 9999);
+        for (var destroyed = 0; destroyed < 3; destroyed += 1) api.damageGhostTrainTail(9999, true);
+        api.advanceGhostTrain(3200);
+        positionPlayerNearTrain(api);
+        api.setGhostTrainAiEnabled(true);
+        api.forceGhostTrainAction("dematerialize", 0.05);
+        api.advanceGhostTrain(600);
+        api.setGhostTrainAiEnabled(false);
+        api.setGhostTrainMotionFrozen(true);
+        positionTunnelForPortrait(api, "entryPortal");
+        scenePhase.textContent = "Фаза 4 · вход в призрачный тоннель";
+        gameWindow.focus();
+      }
+
+      async function showTunnelExit() {
+        var gameWindow = await waitForGame();
+        var api = gameWindow.__dustAndDeadTest;
+        var tunnel = api.getGhostTrainDiagnostics().tunnel;
+        if (!tunnel || !tunnel.active || tunnel.teleported) await showTunnel();
+        api.setGhostTrainMotionFrozen(false);
+        api.setGhostTrainAiEnabled(true);
+        api.advanceGhostTrain(1050);
+        api.setGhostTrainAiEnabled(false);
+        api.setGhostTrainMotionFrozen(true);
+        positionTunnelForPortrait(api, "exitPortal");
+        scenePhase.textContent = "Фаза 4 · выход из призрачного тоннеля";
+        gameWindow.focus();
+      }
+
+      async function launchScene() {
+        document.body.classList.remove("is-ready", "has-error");
+        curtain.textContent = "Запускаю Похоронный экспресс…";
+        try {
+          var gameWindow = await waitForGame();
+          await wait(80);
+
+          var api = gameWindow.__dustAndDeadTest;
+          api.startWaveNow(10, "ghostTrain");
+          api.clearEnemies();
+          api.setGhostTrainAiEnabled(true);
+          api.setPlayerMaxHp(9999, 9999);
+          api.setAmmo("rifle", 9999, 9999);
+          positionPlayerNearTrain(api);
+
+          var diagnostics = api.getGhostTrainDiagnostics();
+          if (!diagnostics.active || diagnostics.segments.length !== 5) {
+            throw new Error("Поезд не появился в сцене.");
+          }
+
+          gameWindow.focus();
+          scenePhase.textContent = getPhaseLabel(4);
+          document.body.classList.add("is-ready");
+        } catch (error) {
+          curtain.textContent = "Не удалось запустить сцену: " + (error && error.message ? error.message : error);
+          document.body.classList.add("has-error");
+        }
+      }
+
+      frame.addEventListener("load", launchScene);
+      if (frame.contentDocument && frame.contentDocument.readyState === "complete") {
+        launchScene();
+      }
+      restartButton.addEventListener("click", function () {
+        document.body.classList.remove("is-ready", "has-error");
+        curtain.textContent = "Перезапускаю сцену…";
+        frame.contentWindow.location.reload();
+      });
+      phaseButtons.forEach(function (button) {
+        button.addEventListener("click", async function () {
+          await showPhase(Number(button.getAttribute("data-tail-index")), false);
+        });
+      });
+      tunnelPhaseButton.addEventListener("click", showTunnel);
+      tunnelExitButton.addEventListener("click", showTunnelExit);
+      finalPhaseButton.addEventListener("click", async function () {
+        await showPhase(0, true);
+      });
+    }());
+  </script>
+</body>
+</html>
