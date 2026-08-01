@@ -132,7 +132,7 @@
       <aside id="multiplayer-scoreboard" class="multiplayer-scoreboard" aria-labelledby="multiplayer-scoreboard-title" aria-hidden="true" hidden>
         <div class="multiplayer-scoreboard__header">
           <div>
-            <span class="multiplayer-eyebrow">Local PvP</span>
+            <span id="multiplayer-scoreboard-mode" class="multiplayer-eyebrow">Local PvP</span>
             <h2 id="multiplayer-scoreboard-title">Player Scores</h2>
           </div>
           <span id="multiplayer-match-status" class="multiplayer-scoreboard__status" role="status" aria-live="polite">Match starting</span>
@@ -244,6 +244,7 @@
           <div class="menu-panel__play-actions">
             <button id="start-btn" type="button">Start Hunt</button>
             <button id="local-multiplayer-btn" type="button">Local Multiplayer</button>
+            <button id="online-multiplayer-btn" type="button" data-i18n="menu.onlineMultiplayer">Online Multiplayer</button>
             <button id="menu-music-btn" class="menu-music-btn" type="button" aria-label="Mute menu music" aria-pressed="true" title="Mute menu music">&#9835;</button>
             <button id="contracts-btn" class="menu-contracts-btn" type="button" aria-haspopup="dialog" aria-controls="contracts-menu" aria-expanded="false">
               <span class="menu-contracts-btn__icon" aria-hidden="true">
@@ -707,6 +708,10 @@
                   <article>
                     <span>Local Multiplayer</span>
                     <p>Fight zombies and rival cowboys in a nearby 2–4 player PvP match. Zombie and player kills earn points; the last survivor wins once they also hold the lead. Upgrade choices do not pause the fight.</p>
+                  </article>
+                  <article>
+                    <span data-i18n="guide.progress.online.title">Online Multiplayer</span>
+                    <p data-i18n="guide.progress.online.body">Use automatic matchmaking for a server-hosted 2–4 player match. Leave the search code empty for public play, or share one code to meet only players using it.</p>
                   </article>
                 </div>
               </section>
@@ -1224,6 +1229,99 @@
         </footer>
       </section>
 
+      <section id="online-multiplayer-lobby" class="panel multiplayer-lobby online-multiplayer-lobby" role="dialog" aria-modal="true" aria-labelledby="online-multiplayer-lobby-title" aria-hidden="true">
+        <header class="multiplayer-lobby__header">
+          <div>
+            <span class="multiplayer-eyebrow" data-i18n="multiplayer.online.eyebrow">Dedicated Online Play</span>
+            <h2 id="online-multiplayer-lobby-title" data-i18n="multiplayer.online.title">Online PvP</h2>
+            <p data-i18n="multiplayer.online.subtitle">Find players automatically. Every match runs on the game server, so no player acts as host.</p>
+          </div>
+          <span class="multiplayer-nearby-badge online-multiplayer-badge" aria-label="Dedicated server mode" data-i18n-attr-aria-label="multiplayer.online.serverMode.a11y">
+            <span aria-hidden="true"></span>
+            <b data-i18n="multiplayer.online.serverHosted">Server Hosted</b>
+          </span>
+        </header>
+
+        <div class="multiplayer-lobby__grid online-multiplayer-lobby__grid">
+          <section class="multiplayer-lobby__card online-matchmaking-card" aria-labelledby="online-matchmaking-title">
+            <div class="multiplayer-lobby__section-title">
+              <h3 id="online-matchmaking-title" data-i18n="multiplayer.online.matchmaking.title">Automatic Matchmaking</h3>
+              <span id="online-matchmaking-state" aria-live="polite" data-i18n="multiplayer.online.state.idle">Idle</span>
+            </div>
+
+            <label class="multiplayer-name-field" for="online-multiplayer-player-name">
+              <span data-i18n="multiplayer.lobby.playerName">Player name</span>
+              <input
+                id="online-multiplayer-player-name"
+                name="online-multiplayer-player-name"
+                type="text"
+                value="Cowboy"
+                data-i18n-attr-value="multiplayer.lobby.playerName.default"
+                maxlength="20"
+                autocomplete="nickname"
+                enterkeyhint="next"
+                spellcheck="false"
+              >
+            </label>
+
+            <label class="multiplayer-name-field online-search-code-field" for="online-multiplayer-search-code">
+              <span><span data-i18n="multiplayer.online.searchCode.label">Search code</span> <small data-i18n="multiplayer.online.searchCode.optional">optional</small></span>
+              <input
+                id="online-multiplayer-search-code"
+                name="online-multiplayer-search-code"
+                type="text"
+                value=""
+                maxlength="12"
+                autocomplete="off"
+                autocapitalize="characters"
+                enterkeyhint="search"
+                spellcheck="false"
+                aria-describedby="online-search-code-help"
+              >
+            </label>
+            <p id="online-search-code-help" class="online-search-code-help" data-i18n="multiplayer.online.searchCode.help">Leave empty for public matchmaking. A code only matches players using the same code.</p>
+
+            <div class="online-matchmaking-actions">
+              <button id="online-matchmaking-find-btn" type="button" data-i18n="multiplayer.online.find">Find Match</button>
+              <button id="online-matchmaking-cancel-btn" class="multiplayer-button--secondary" type="button" hidden data-i18n="multiplayer.online.cancel">Cancel Search</button>
+            </div>
+
+            <p id="online-multiplayer-status" class="multiplayer-lobby__status" role="status" aria-live="polite" aria-atomic="true">
+              <span class="multiplayer-lobby__status-dot" aria-hidden="true"></span>
+              <span id="online-multiplayer-status-copy" data-i18n="multiplayer.online.status.initial">Enter an optional code or search the public queue.</span>
+            </p>
+          </section>
+
+          <section class="multiplayer-lobby__card multiplayer-lobby__room online-room-card" aria-labelledby="online-room-title">
+            <div class="multiplayer-lobby__section-title">
+              <h3 id="online-room-title" data-i18n="multiplayer.online.room.title">Server Room</h3>
+              <span id="online-multiplayer-player-count" aria-live="polite">0 / 4</span>
+            </div>
+
+            <ul id="online-multiplayer-player-list" class="multiplayer-player-list" aria-label="Players in the server room" aria-live="polite" data-i18n-attr-aria-label="multiplayer.online.room.players.a11y">
+              <li class="multiplayer-list-empty" data-placeholder="true" data-i18n="multiplayer.online.room.empty">Find a match to join a server room.</li>
+            </ul>
+
+            <div id="online-multiplayer-countdown" class="online-multiplayer-countdown" role="timer" aria-live="polite" aria-atomic="true" hidden>
+              <span data-i18n="multiplayer.online.countdown.prefix">Automatic start in</span>
+              <strong id="online-multiplayer-countdown-value">40</strong>
+              <small data-i18n="multiplayer.online.countdown.seconds">seconds</small>
+            </div>
+
+            <p id="online-room-help" class="online-room-help" data-i18n="multiplayer.online.room.help">The match starts immediately when everyone is ready.</p>
+
+            <div class="multiplayer-room-actions online-room-actions">
+              <button id="online-multiplayer-ready-btn" class="multiplayer-button--secondary" type="button" aria-pressed="false" disabled data-i18n="multiplayer.lobby.ready">Ready</button>
+            </div>
+          </section>
+        </div>
+
+        <footer class="multiplayer-lobby__footer">
+          <button id="online-multiplayer-lobby-back-btn" class="multiplayer-button--quiet" type="button" data-i18n="common.back">Back</button>
+          <span data-i18n="multiplayer.online.footer">Matchmaking is automatic; rooms have no player host or server browser.</span>
+        </footer>
+      </section>
+
       <section
         id="multiplayer-death-panel"
         class="panel multiplayer-death-panel"
@@ -1261,7 +1359,7 @@
       </section>
 
       <section id="multiplayer-result-panel" class="panel multiplayer-result-panel" role="dialog" aria-modal="true" aria-labelledby="multiplayer-result-title" aria-describedby="multiplayer-result-summary">
-        <span class="multiplayer-eyebrow">Local PvP Complete</span>
+        <span id="multiplayer-result-mode" class="multiplayer-eyebrow">Local PvP Complete</span>
         <h2 id="multiplayer-result-title">Match Finished</h2>
         <p id="multiplayer-result-summary">Final results</p>
 
@@ -1285,11 +1383,11 @@
         <div class="multiplayer-result-panel__actions">
           <button id="multiplayer-return-lobby-btn" type="button">
             <span>Return to Lobby</span>
-            <small>Keep the nearby group together</small>
+            <small id="multiplayer-return-lobby-hint">Keep the nearby group together</small>
           </button>
           <button id="multiplayer-return-menu-btn" class="multiplayer-button--quiet" type="button">
             <span>Main Menu</span>
-            <small>Leave the nearby match</small>
+            <small id="multiplayer-return-menu-hint">Leave the nearby match</small>
           </button>
         </div>
       </section>
@@ -1657,6 +1755,8 @@
     </main>
 
     <script src="build-profile.js?v=build-profile-v1-20260801"></script>
+    <script src="multiplayer-protocol.js?v=online-protocol-v47"></script>
+    <script src="online-config.js?v=online-config-v1"></script>
     <script src="vendor/three.min.js"></script>
     <script src="localization.js?v=i18n-v2-20260730"></script>
     <script src="locales/ui.js?v=i18n-v2-20260730"></script>

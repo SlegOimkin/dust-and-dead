@@ -5,6 +5,8 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
 $files = @(
   "build-profile.js",
+  "multiplayer-protocol.js",
+  "online-config.js",
   "localization.js",
   "locales\ui.js",
   "locales\gameplay.js",
@@ -14,6 +16,8 @@ $files = @(
   "hordeheart-model.js",
   "land-eater-model.js",
   "www\build-profile.js",
+  "www\multiplayer-protocol.js",
+  "www\online-config.js",
   "www\localization.js",
   "www\locales\ui.js",
   "www\locales\gameplay.js",
@@ -23,6 +27,8 @@ $files = @(
   "www\hordeheart-model.js",
   "www\land-eater-model.js",
   "android\app\src\main\assets\public\build-profile.js",
+  "android\app\src\main\assets\public\multiplayer-protocol.js",
+  "android\app\src\main\assets\public\online-config.js",
   "android\app\src\main\assets\public\localization.js",
   "android\app\src\main\assets\public\locales\ui.js",
   "android\app\src\main\assets\public\locales\gameplay.js",
@@ -41,12 +47,34 @@ foreach ($file in $files) {
   }
 
   & node --check $path
+  if ($LASTEXITCODE -ne 0) {
+    throw "JavaScript syntax check failed: $file"
+  }
+}
+
+$serverRoot = Join-Path $ProjectRoot "server"
+if (-not (Test-Path -LiteralPath $serverRoot -PathType Container)) {
+  throw "Missing online server source directory: server"
+}
+
+$serverFiles = @(Get-ChildItem -LiteralPath $serverRoot -Recurse -File -Filter "*.js")
+if ($serverFiles.Count -eq 0) {
+  throw "No online server JavaScript sources were found."
+}
+
+foreach ($serverFile in $serverFiles) {
+  & node --check $serverFile.FullName
+  if ($LASTEXITCODE -ne 0) {
+    throw "JavaScript syntax check failed: $($serverFile.FullName)"
+  }
 }
 
 $assetFiles = @(
   "index.html",
   "styles.css",
   "build-profile.js",
+  "multiplayer-protocol.js",
+  "online-config.js",
   "localization.js",
   "locales\ui.js",
   "locales\gameplay.js",

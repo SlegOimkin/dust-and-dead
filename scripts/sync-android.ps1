@@ -14,6 +14,8 @@ New-Item -ItemType Directory -Path (Join-Path $ProjectRoot "www\locales") -Force
 Copy-Item (Join-Path $ProjectRoot "index.html") (Join-Path $ProjectRoot "www\index.html") -Force
 Copy-Item (Join-Path $ProjectRoot "styles.css") (Join-Path $ProjectRoot "www\styles.css") -Force
 Copy-Item (Join-Path $ProjectRoot "build-profile.js") (Join-Path $ProjectRoot "www\build-profile.js") -Force
+Copy-Item (Join-Path $ProjectRoot "multiplayer-protocol.js") (Join-Path $ProjectRoot "www\multiplayer-protocol.js") -Force
+Copy-Item (Join-Path $ProjectRoot "online-config.js") (Join-Path $ProjectRoot "www\online-config.js") -Force
 Copy-Item (Join-Path $ProjectRoot "localization.js") (Join-Path $ProjectRoot "www\localization.js") -Force
 Copy-Item (Join-Path $ProjectRoot "locales\ui.js") (Join-Path $ProjectRoot "www\locales\ui.js") -Force
 Copy-Item (Join-Path $ProjectRoot "locales\gameplay.js") (Join-Path $ProjectRoot "www\locales\gameplay.js") -Force
@@ -39,6 +41,8 @@ $assetFiles = @(
   "index.html",
   "styles.css",
   "build-profile.js",
+  "multiplayer-protocol.js",
+  "online-config.js",
   "localization.js",
   "locales\ui.js",
   "locales\gameplay.js",

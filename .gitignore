@@ -8,7 +8,15 @@ artifacts/
 .tmp-*
 .codex-remote-attachments/
 test-results/
+playwright-report/
+blob-report/
+coverage/
 debug.log
+
+# Local deployment configuration and secrets.
+.env
+.env.*
+!.env.example
 
 *.apk
 *.aab
@@ -17,6 +25,12 @@ debug.log
 
 test-actions*.json
 progress.md
+
+# Local reference media and scratch test output; none is required to rebuild.
+/Fire-GPU-Preview.png
+/music_sample/
+/oilBaron
+/svg-all-right.txt
 
 .DS_Store
 Thumbs.db

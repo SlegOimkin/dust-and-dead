@@ -55,7 +55,10 @@
   var MAX_SIMULATION_BACKLOG = 0.5;
   var SIMULATION_CATCH_UP_CPU_BUDGET_MS = 12;
   var MAX_ADVANCE_STEPS = 240;
-  var MULTIPLAYER_PROTOCOL_VERSION = 46;
+  var MULTIPLAYER_SHARED_PROTOCOL = window.DustAndDeadMultiplayerProtocol || null;
+  var MULTIPLAYER_PROTOCOL_VERSION = MULTIPLAYER_SHARED_PROTOCOL
+    ? MULTIPLAYER_SHARED_PROTOCOL.VERSION
+    : 47;
   var MULTIPLAYER_TERMINAL_CONTROL_RETRY_MS = 500;
   var MULTIPLAYER_TERMINAL_CONTROL_TIMEOUT_MS = 20000;
   var MULTIPLAYER_TERMINAL_CONTROL_MAX_ATTEMPTS = Math.ceil(
@@ -66,7 +69,9 @@
   // profiler opt-in instead of rebuilding diagnostic JSON for every viewer.
   var MULTIPLAYER_WIRE_BYTE_DIAGNOSTICS =
     new URLSearchParams(window.location.search || "").get("networkDiagnostics") === "1";
-  var MULTIPLAYER_MAX_PLAYERS = 4;
+  var MULTIPLAYER_MAX_PLAYERS = MULTIPLAYER_SHARED_PROTOCOL
+    ? MULTIPLAYER_SHARED_PROTOCOL.MAX_PLAYERS
+    : 4;
   var MULTIPLAYER_MAX_AMMO_CRATES = 5;
   var MULTIPLAYER_FULL_PARTY_MAX_AMMO_CRATES = 6;
   var MULTIPLAYER_REVIVE_AMMO_MAGAZINES = 3;
@@ -1655,6 +1660,7 @@
   var moveKnob = document.getElementById("move-knob");
   var mobileFire = document.getElementById("mobile-fire");
   var localMultiplayerBtn = document.getElementById("local-multiplayer-btn");
+  var onlineMultiplayerBtn = document.getElementById("online-multiplayer-btn");
   var multiplayerLobby = document.getElementById("local-multiplayer-lobby");
   var multiplayerPlayerName = document.getElementById("multiplayer-player-name");
   var multiplayerHostBtn = document.getElementById("multiplayer-host-btn");
@@ -1669,10 +1675,25 @@
   var multiplayerReadyBtn = document.getElementById("multiplayer-ready-btn");
   var multiplayerStartBtn = document.getElementById("multiplayer-start-btn");
   var multiplayerLobbyBackBtn = document.getElementById("multiplayer-lobby-back-btn");
+  var onlineMultiplayerLobby = document.getElementById("online-multiplayer-lobby");
+  var onlineMultiplayerPlayerName = document.getElementById("online-multiplayer-player-name");
+  var onlineMultiplayerSearchCode = document.getElementById("online-multiplayer-search-code");
+  var onlineMatchmakingFindBtn = document.getElementById("online-matchmaking-find-btn");
+  var onlineMatchmakingCancelBtn = document.getElementById("online-matchmaking-cancel-btn");
+  var onlineMatchmakingState = document.getElementById("online-matchmaking-state");
+  var onlineMultiplayerStatus = document.getElementById("online-multiplayer-status");
+  var onlineMultiplayerStatusCopy = document.getElementById("online-multiplayer-status-copy");
+  var onlineMultiplayerPlayerList = document.getElementById("online-multiplayer-player-list");
+  var onlineMultiplayerPlayerCount = document.getElementById("online-multiplayer-player-count");
+  var onlineMultiplayerReadyBtn = document.getElementById("online-multiplayer-ready-btn");
+  var onlineMultiplayerCountdown = document.getElementById("online-multiplayer-countdown");
+  var onlineMultiplayerCountdownValue = document.getElementById("online-multiplayer-countdown-value");
+  var onlineMultiplayerLobbyBackBtn = document.getElementById("online-multiplayer-lobby-back-btn");
   var multiplayerScoreboardToggle = document.getElementById("multiplayer-scoreboard-toggle");
   var multiplayerScoreboard = document.getElementById("multiplayer-scoreboard");
   var multiplayerScoreboardBody = document.getElementById("multiplayer-scoreboard-body");
   var multiplayerMatchStatus = document.getElementById("multiplayer-match-status");
+  var multiplayerScoreboardMode = document.getElementById("multiplayer-scoreboard-mode");
   var multiplayerEventHistory = document.getElementById("multiplayer-event-history");
   var multiplayerEventHistoryList = document.getElementById("multiplayer-event-history-list");
   var multiplayerDeathPanel = document.getElementById("multiplayer-death-panel");
@@ -1688,10 +1709,13 @@
   var multiplayerSpectatorName = document.getElementById("multiplayer-spectator-name");
   var multiplayerResultPanel = document.getElementById("multiplayer-result-panel");
   var multiplayerResultTitle = document.getElementById("multiplayer-result-title");
+  var multiplayerResultMode = document.getElementById("multiplayer-result-mode");
   var multiplayerResultSummary = document.getElementById("multiplayer-result-summary");
   var multiplayerFinalResultsBody = document.getElementById("multiplayer-final-results-body");
   var multiplayerReturnLobbyBtn = document.getElementById("multiplayer-return-lobby-btn");
   var multiplayerReturnMenuBtn = document.getElementById("multiplayer-return-menu-btn");
+  var multiplayerReturnLobbyHint = document.getElementById("multiplayer-return-lobby-hint");
+  var multiplayerReturnMenuHint = document.getElementById("multiplayer-return-menu-hint");
   var multiplayerUpgradeToggle = document.getElementById("multiplayer-upgrade-toggle");
   var multiplayerUpgradePendingCount = document.getElementById("multiplayer-upgrade-pending-count");
   var multiplayerUpgradeDrawer = document.getElementById("multiplayer-upgrade-drawer");
@@ -5355,6 +5379,8 @@
     active: false,
     phase: "idle",
     role: "none",
+    transportKind: "none",
+    dedicatedAuthority: false,
     mapSeed: MAP_SEED,
     localPlayerId: "",
     hostPlayerId: "",
@@ -5538,6 +5564,44 @@
       adaptiveCoalescedBaseline: 0,
       adaptiveCongestionScore: 0,
     },
+  };
+
+  var ONLINE_SERVER_ENDPOINT_ID = "online-server";
+  var ONLINE_SESSION_STORAGE_KEY = "dustAndDeadOnlineSessionV1";
+  var ONLINE_RECONNECT_MAX_DELAY_MS = 4000;
+  var onlineMultiplayerState = {
+    open: false,
+    socket: null,
+    socketGeneration: 0,
+    intentionalClose: false,
+    shouldReconnect: false,
+    reconnectAttempt: 0,
+    reconnectTimer: 0,
+    reconnectStartedAt: 0,
+    reconnectGraceMs: MULTIPLAYER_SHARED_PROTOCOL
+      ? MULTIPLAYER_SHARED_PROTOCOL.RECONNECT_GRACE_MS
+      : 20000,
+    connectionState: "idle",
+    desiredQueue: false,
+    queued: false,
+    sessionId: "",
+    playerId: "",
+    resumeToken: "",
+    searchCode: "",
+    room: null,
+    roomRevision: -1,
+    serverClockOffsetMs: 0,
+    readyPending: false,
+    readyTarget: false,
+    lastCountdownSecond: -1,
+    previousPlugin: null,
+    bridgeInstalled: false,
+    statusKey: "multiplayer.online.status.initial",
+    statusFallback: "Enter an optional code or search the public queue.",
+    statusParams: null,
+    statusError: false,
+    helloAttempted: false,
+    resumeAttempted: false,
   };
 
   var careerProgression = window.DustAndDeadProgression || null;
@@ -75301,6 +75365,7 @@
 
   function update(dt, skipFrameWork) {
     if (!skipFrameWork) updateRenderFrameMaintenance(dt);
+    updateOnlineMultiplayerCountdown(false);
     flushPendingDoppelgangerWorldCleanup();
     if (state.paused) {
       if (state.enemyAnimationPreview) updateEnemyBestiaryAnimationPreview(dt);
@@ -75311,7 +75376,7 @@
     state.time += dt;
     state.shake = Math.max(0, state.shake - dt * 5.5);
 
-    if (state.player) {
+    if (state.player && !multiplayerState.dedicatedAuthority) {
       updateAim();
       updatePlayerVisual(dt);
     }
@@ -75380,16 +75445,23 @@
       }
     }
 
-    if (canUpdateLocalPersonalSystems()) {
-      updateMarshalSystems(dt);
-      updateReloads(dt);
-      updateRifleTimers(dt);
-    } else {
-      // Hallowed grounds are world-owned effects and must continue to expire
-      // while the host's local player is waiting to revive or has surrendered.
+    if (multiplayerState.dedicatedAuthority && isMultiplayerHostMatch()) {
+      // Every participant in a dedicated match is driven by validated network
+      // input inside updateMultiplayerRemotePlayers(). The first player still
+      // owns state.player for legacy world systems, but is not a local host.
       updateMarshalHallowedGrounds(dt);
+    } else {
+      if (canUpdateLocalPersonalSystems()) {
+        updateMarshalSystems(dt);
+        updateReloads(dt);
+        updateRifleTimers(dt);
+      } else {
+        // Hallowed grounds are world-owned effects and must continue to expire
+        // while the host's local player is waiting to revive or has surrendered.
+        updateMarshalHallowedGrounds(dt);
+      }
+      updatePlayer(dt);
     }
-    updatePlayer(dt);
     flushPendingDoppelgangerWorldCleanup();
     if (isMultiplayerHostMatch()) {
       updateMultiplayerRemotePlayers(dt);
@@ -96901,16 +96973,925 @@
     return plugin || null;
   }
 
+  function normalizeOnlineSearchCode(value) {
+    if (MULTIPLAYER_SHARED_PROTOCOL && typeof MULTIPLAYER_SHARED_PROTOCOL.normalizeSearchCode === "function") {
+      return MULTIPLAYER_SHARED_PROTOCOL.normalizeSearchCode(value);
+    }
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 12);
+  }
+
+  function getOnlineMultiplayerDisplayName() {
+    var source = (onlineMultiplayerPlayerName ? onlineMultiplayerPlayerName.value : "") || readStoredMultiplayerName();
+    var name = normalizeMultiplayerName(source);
+    if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.value = name;
+    if (multiplayerPlayerName) multiplayerPlayerName.value = name;
+    storeMultiplayerName(name);
+    return name;
+  }
+
+  function readStoredOnlineSession() {
+    try {
+      var raw = window.sessionStorage && window.sessionStorage.getItem(ONLINE_SESSION_STORAGE_KEY);
+      var value = raw ? JSON.parse(raw) : null;
+      if (
+        !value ||
+        Number(value.version) !== MULTIPLAYER_PROTOCOL_VERSION ||
+        !value.sessionId ||
+        !value.resumeToken
+      ) return null;
+      return {
+        sessionId: String(value.sessionId),
+        playerId: String(value.playerId || ""),
+        resumeToken: String(value.resumeToken),
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function storeOnlineSession() {
+    if (!onlineMultiplayerState.sessionId || !onlineMultiplayerState.resumeToken) return;
+    try {
+      if (!window.sessionStorage) return;
+      window.sessionStorage.setItem(ONLINE_SESSION_STORAGE_KEY, JSON.stringify({
+        version: MULTIPLAYER_PROTOCOL_VERSION,
+        sessionId: onlineMultiplayerState.sessionId,
+        playerId: onlineMultiplayerState.playerId,
+        resumeToken: onlineMultiplayerState.resumeToken,
+      }));
+    } catch (error) {}
+  }
+
+  function clearStoredOnlineSession() {
+    onlineMultiplayerState.sessionId = "";
+    onlineMultiplayerState.playerId = "";
+    onlineMultiplayerState.resumeToken = "";
+    try {
+      if (window.sessionStorage) window.sessionStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
+    } catch (error) {}
+  }
+
+  function resolveOnlineMultiplayerUrl() {
+    var config = window.DustAndDeadOnlineConfig || {};
+    var configuredUrl = String(config.url || "").trim();
+    var configuredPath = String(config.path || "/online").trim() || "/online";
+    try {
+      var url;
+      if (configuredUrl) {
+        url = new URL(configuredUrl, window.location.href);
+        if ((url.pathname === "/" || !url.pathname) && configuredPath) url.pathname = configuredPath;
+      } else {
+        if (window.location.protocol !== "http:" && window.location.protocol !== "https:") return "";
+        url = new URL(configuredPath, window.location.href);
+      }
+      if (url.protocol === "http:") url.protocol = "ws:";
+      if (url.protocol === "https:") url.protocol = "wss:";
+      return url.protocol === "ws:" || url.protocol === "wss:" ? url.toString() : "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function setOnlineConnectionState(nextState) {
+    onlineMultiplayerState.connectionState = String(nextState || "idle");
+    var labels = {
+      idle: ["multiplayer.online.state.idle", "Idle"],
+      connecting: ["multiplayer.online.state.connecting", "Connecting"],
+      searching: ["multiplayer.online.state.searching", "Searching"],
+      room: ["multiplayer.online.state.room", "Room Found"],
+      reconnecting: ["multiplayer.online.state.reconnecting", "Reconnecting"],
+      starting: ["multiplayer.online.state.starting", "Starting"],
+      error: ["multiplayer.online.state.error", "Connection Error"],
+    };
+    var label = labels[onlineMultiplayerState.connectionState] || labels.idle;
+    if (onlineMatchmakingState) {
+      onlineMatchmakingState.removeAttribute("data-i18n");
+      onlineMatchmakingState.textContent = tr(label[0], label[1]);
+    }
+    if (onlineMultiplayerLobby) {
+      onlineMultiplayerLobby.classList.toggle("is-searching", onlineMultiplayerState.connectionState === "searching" || onlineMultiplayerState.connectionState === "connecting");
+      onlineMultiplayerLobby.classList.toggle("is-reconnecting", onlineMultiplayerState.connectionState === "reconnecting");
+      onlineMultiplayerLobby.classList.toggle("is-error", onlineMultiplayerState.connectionState === "error");
+      onlineMultiplayerLobby.setAttribute(
+        "aria-busy",
+        onlineMultiplayerState.connectionState === "connecting" || onlineMultiplayerState.connectionState === "reconnecting" ? "true" : "false"
+      );
+    }
+  }
+
+  function setOnlineMultiplayerStatus(key, fallback, params, isError) {
+    onlineMultiplayerState.statusKey = String(key || "");
+    onlineMultiplayerState.statusFallback = String(fallback || "");
+    onlineMultiplayerState.statusParams = params || null;
+    onlineMultiplayerState.statusError = !!isError;
+    if (!onlineMultiplayerStatus) return;
+    if (!onlineMultiplayerStatusCopy) {
+      onlineMultiplayerStatusCopy = document.createElement("span");
+      onlineMultiplayerStatusCopy.id = "online-multiplayer-status-copy";
+      onlineMultiplayerStatus.appendChild(onlineMultiplayerStatusCopy);
+    }
+    onlineMultiplayerStatusCopy.removeAttribute("data-i18n");
+    onlineMultiplayerStatusCopy.textContent = tr(
+      onlineMultiplayerState.statusKey,
+      onlineMultiplayerState.statusFallback,
+      onlineMultiplayerState.statusParams
+    );
+    onlineMultiplayerStatus.classList.toggle("is-error", !!isError);
+  }
+
+  function isOnlineSocketOpen() {
+    return !!(onlineMultiplayerState.socket && onlineMultiplayerState.socket.readyState === 1);
+  }
+
+  function sendOnlineEnvelope(message) {
+    if (!isOnlineSocketOpen() || !message || typeof message !== "object") return false;
+    try {
+      onlineMultiplayerState.socket.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function createOnlineMultiplayerTransport() {
+    return {
+      sendBytes: function (options) {
+        var sent = sendOnlineEnvelope({
+          type: "game",
+          data: String(options && options.data || ""),
+          latestOnly: !!(options && options.latestOnly),
+          latestKind: String(options && options.latestKind || ""),
+        });
+        return sent
+          ? Promise.resolve(true)
+          : Promise.reject(new Error("Online server connection is unavailable."));
+      },
+      stopAdvertising: function () { return Promise.resolve(); },
+      stopDiscovery: function () { return Promise.resolve(); },
+      stopAll: function () { return Promise.resolve(); },
+      disconnect: function () { return Promise.resolve(); },
+    };
+  }
+
+  function installOnlineMultiplayerBridge() {
+    if (!onlineMultiplayerState.bridgeInstalled) {
+      onlineMultiplayerState.previousPlugin = multiplayerState.plugin;
+      onlineMultiplayerState.bridgeInstalled = true;
+    }
+    multiplayerState.plugin = createOnlineMultiplayerTransport();
+    multiplayerState.active = true;
+    if (multiplayerState.phase === "idle") multiplayerState.phase = "lobby";
+    multiplayerState.role = "guest";
+    multiplayerState.transportKind = "online";
+    multiplayerState.dedicatedAuthority = false;
+    multiplayerState.localEndpointId = ONLINE_SERVER_ENDPOINT_ID;
+    if (onlineMultiplayerState.playerId) multiplayerState.localPlayerId = onlineMultiplayerState.playerId;
+  }
+
+  function markOnlineMultiplayerBridgeConnected() {
+    installOnlineMultiplayerBridge();
+    var endpointId = ONLINE_SERVER_ENDPOINT_ID;
+    multiplayerState.connectedEndpoints[endpointId] = true;
+    multiplayerState.endpointOperationIds[endpointId] = multiplayerState.transportOperationId;
+    multiplayerState.endpointConnectionNonces[endpointId] = Math.max(
+      1,
+      getMultiplayerEndpointConnectionNonce(endpointId) + 1
+    );
+  }
+
+  function markOnlineMultiplayerBridgeDisconnected() {
+    delete multiplayerState.connectedEndpoints[ONLINE_SERVER_ENDPOINT_ID];
+    delete multiplayerState.endpointOperationIds[ONLINE_SERVER_ENDPOINT_ID];
+    delete multiplayerState.endpointConnectionNonces[ONLINE_SERVER_ENDPOINT_ID];
+    clearPendingNearbyLatestMessagesForEndpoint(ONLINE_SERVER_ENDPOINT_ID);
+  }
+
+  function syncMultiplayerModeCopy() {
+    var online = multiplayerState.transportKind === "online";
+    if (multiplayerScoreboardMode) {
+      multiplayerScoreboardMode.textContent = online
+        ? tr("multiplayer.mode.onlinePvp", "Online PvP")
+        : tr("multiplayer.mode.localPvp", "Local PvP");
+    }
+    if (multiplayerResultMode) {
+      multiplayerResultMode.textContent = online
+        ? tr("multiplayer.results.onlineEyebrow", "Online PvP Complete")
+        : tr("multiplayer.results.eyebrow", "Local PvP Complete");
+    }
+    if (multiplayerReturnLobbyHint) {
+      multiplayerReturnLobbyHint.textContent = online
+        ? tr("multiplayer.results.onlineReturnHint", "Return with the server room")
+        : tr("multiplayer.results.returnLobbyHint", "Keep the nearby group together");
+    }
+    if (multiplayerReturnMenuHint) {
+      multiplayerReturnMenuHint.textContent = online
+        ? tr("multiplayer.results.onlineMenuHint", "Leave the online match")
+        : tr("multiplayer.results.mainMenuHint", "Leave the nearby match");
+    }
+  }
+
+  function getOnlineRoomPlayers() {
+    return onlineMultiplayerState.room && Array.isArray(onlineMultiplayerState.room.players)
+      ? onlineMultiplayerState.room.players
+      : [];
+  }
+
+  function renderOnlineMultiplayerPlayers() {
+    var room = onlineMultiplayerState.room;
+    var players = getOnlineRoomPlayers();
+    if (onlineMultiplayerPlayerList) {
+      onlineMultiplayerPlayerList.textContent = "";
+      if (!players.length) {
+        var empty = document.createElement("li");
+        empty.className = "multiplayer-list-empty";
+        empty.setAttribute("data-placeholder", "true");
+        empty.textContent = tr("multiplayer.online.room.empty", "Find a match to join a server room.");
+        onlineMultiplayerPlayerList.appendChild(empty);
+      } else {
+        players.forEach(function (entry) {
+          var row = document.createElement("li");
+          var local = String(entry.id || "") === String(onlineMultiplayerState.playerId || "");
+          var connected = entry.connected !== false;
+          row.className = "multiplayer-player-row";
+          row.classList.toggle("is-local", local);
+          row.classList.toggle("is-ready", !!entry.ready);
+          row.classList.toggle("is-disconnected", !connected);
+          row.classList.toggle("is-auto-ready", !!entry.autoReady);
+          row.setAttribute("data-player-id", String(entry.id || ""));
+
+          var marker = document.createElement("span");
+          marker.className = "multiplayer-player-row__marker";
+          marker.setAttribute("aria-hidden", "true");
+          var name = document.createElement("span");
+          name.className = "multiplayer-player-row__name";
+          name.textContent = normalizeMultiplayerName(entry.name) + (local
+            ? " · " + tr("multiplayer.online.player.you", "You")
+            : "");
+          var ready = document.createElement("span");
+          ready.className = "multiplayer-player-row__state" + (entry.ready ? " is-ready" : "");
+          ready.textContent = !connected
+            ? tr("multiplayer.online.player.reconnecting", "Reconnecting")
+            : entry.autoReady
+              ? tr("multiplayer.online.player.autoReady", "Auto-ready")
+              : entry.ready
+                ? tr("multiplayer.lobby.ready", "Ready")
+                : tr("multiplayer.player.notReady", "Not ready");
+          row.appendChild(marker);
+          row.appendChild(name);
+          row.appendChild(ready);
+          onlineMultiplayerPlayerList.appendChild(row);
+        });
+      }
+    }
+    var maximum = room && Number(room.maxPlayers) || MULTIPLAYER_MAX_PLAYERS;
+    if (onlineMultiplayerPlayerCount) onlineMultiplayerPlayerCount.textContent = players.length + " / " + maximum;
+
+    var localPlayer = players.find(function (entry) {
+      return String(entry.id || "") === String(onlineMultiplayerState.playerId || "");
+    });
+    if (onlineMultiplayerReadyBtn) {
+      var canReady = !!(
+        localPlayer &&
+        localPlayer.connected !== false &&
+        room &&
+        room.phase === "lobby" &&
+        isOnlineSocketOpen() &&
+        !onlineMultiplayerState.readyPending
+      );
+      onlineMultiplayerReadyBtn.removeAttribute("data-i18n");
+      onlineMultiplayerReadyBtn.disabled = !canReady;
+      onlineMultiplayerReadyBtn.setAttribute("aria-pressed", localPlayer && localPlayer.ready ? "true" : "false");
+      onlineMultiplayerReadyBtn.textContent = onlineMultiplayerState.readyPending
+        ? tr("multiplayer.online.ready.pending", "Saving…")
+        : localPlayer && localPlayer.ready
+          ? tr("multiplayer.online.ready.cancel", "Cancel Ready")
+          : tr("multiplayer.lobby.ready", "Ready");
+    }
+  }
+
+  function getOnlineRoomReadiness(room) {
+    var players = room && Array.isArray(room.players) ? room.players : [];
+    var readyCount = room && Number.isFinite(Number(room.readyCount))
+      ? Math.max(0, Math.floor(Number(room.readyCount)))
+      : players.filter(function (entry) { return entry && entry.ready; }).length;
+    return {
+      total: players.length,
+      ready: readyCount,
+      minimum: room && Number(room.minPlayers) || (MULTIPLAYER_SHARED_PROTOCOL ? MULTIPLAYER_SHARED_PROTOCOL.MIN_PLAYERS : 2),
+    };
+  }
+
+  function updateOnlineMultiplayerCountdown(force) {
+    if (!onlineMultiplayerState.open && multiplayerState.transportKind !== "online") return;
+    var room = onlineMultiplayerState.room;
+    var readiness = getOnlineRoomReadiness(room);
+    var autoStartAt = room ? Math.max(0, Number(room.autoStartAt) || 0) : 0;
+    var countdownActive = !!(room && room.phase === "lobby" && autoStartAt > 0);
+    if (onlineMultiplayerCountdown) onlineMultiplayerCountdown.hidden = !countdownActive;
+    if (!countdownActive) {
+      onlineMultiplayerState.lastCountdownSecond = -1;
+      return;
+    }
+    var serverNow = Date.now() + onlineMultiplayerState.serverClockOffsetMs;
+    var seconds = Math.max(0, Math.ceil((autoStartAt - serverNow) / 1000));
+    if (force || seconds !== onlineMultiplayerState.lastCountdownSecond) {
+      onlineMultiplayerState.lastCountdownSecond = seconds;
+      if (onlineMultiplayerCountdownValue) onlineMultiplayerCountdownValue.textContent = String(seconds);
+      if (onlineMultiplayerState.connectionState !== "reconnecting") {
+        setOnlineMultiplayerStatus(
+          "multiplayer.online.status.countdown",
+          "One player is not ready. The server starts the match in {seconds} seconds.",
+          { seconds: seconds }
+        );
+      }
+    }
+  }
+
+  function refreshOnlineRoomStatus() {
+    var room = onlineMultiplayerState.room;
+    if (!room) return;
+    var readiness = getOnlineRoomReadiness(room);
+    if (room.phase === "preparing" || room.phase === "starting") {
+      setOnlineConnectionState("starting");
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.status.allReady",
+        "Everyone is ready. The server is starting the match…"
+      );
+      return;
+    }
+    setOnlineConnectionState("room");
+    if (room.autoStartAt) {
+      updateOnlineMultiplayerCountdown(true);
+    } else if (readiness.total >= readiness.minimum && readiness.ready === readiness.total) {
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.status.allReady",
+        "Everyone is ready. The server is starting the match…"
+      );
+    } else if (readiness.total) {
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.status.waiting",
+        "Waiting for more players. {ready} of {total} ready.",
+        { ready: readiness.ready, total: readiness.total }
+      );
+    } else {
+      setOnlineMultiplayerStatus("multiplayer.online.status.room", "Room found. Mark yourself ready when you are set.");
+    }
+  }
+
+  function syncOnlineMultiplayerUi() {
+    var room = onlineMultiplayerState.room;
+    var busy = onlineMultiplayerState.connectionState === "connecting" ||
+      onlineMultiplayerState.connectionState === "searching" ||
+      onlineMultiplayerState.connectionState === "reconnecting" ||
+      onlineMultiplayerState.connectionState === "starting";
+    var hasRoom = !!(room && (room.phase === "lobby" || room.phase === "preparing" || room.phase === "starting"));
+    if (onlineMatchmakingFindBtn) onlineMatchmakingFindBtn.disabled = busy || hasRoom;
+    if (onlineMatchmakingCancelBtn) {
+      onlineMatchmakingCancelBtn.hidden = !(onlineMultiplayerState.desiredQueue || hasRoom);
+      onlineMatchmakingCancelBtn.disabled = onlineMultiplayerState.connectionState === "starting";
+    }
+    if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.disabled = busy || hasRoom;
+    if (onlineMultiplayerSearchCode) onlineMultiplayerSearchCode.disabled = busy || hasRoom;
+    renderOnlineMultiplayerPlayers();
+    updateOnlineMultiplayerCountdown(false);
+  }
+
+  function sendOnlineSessionJoin() {
+    var hasResume = !!(onlineMultiplayerState.sessionId && onlineMultiplayerState.resumeToken);
+    onlineMultiplayerState.resumeAttempted = hasResume;
+    onlineMultiplayerState.helloAttempted = !hasResume;
+    var message = {
+      type: "session.join",
+      protocolVersion: MULTIPLAYER_PROTOCOL_VERSION,
+      name: getOnlineMultiplayerDisplayName(),
+      searchCode: onlineMultiplayerState.searchCode || undefined,
+      unlocks: serializeCareerUnlockProfile(captureLiveCareerUnlockProfile()),
+      cosmetics: serializeCowboyCosmetics(captureLiveCosmeticProfile()),
+    };
+    if (hasResume) {
+      message.sessionId = onlineMultiplayerState.sessionId;
+      message.resumeToken = onlineMultiplayerState.resumeToken;
+    }
+    return sendOnlineEnvelope(message);
+  }
+
+  function sendOnlineJoin() {
+    if (!isOnlineSocketOpen() || !onlineMultiplayerState.sessionId) return false;
+    onlineMultiplayerState.queued = true;
+    setOnlineConnectionState("searching");
+    setOnlineMultiplayerStatus(
+      onlineMultiplayerState.searchCode
+        ? "multiplayer.online.status.searching"
+        : "multiplayer.online.status.publicSearching",
+      onlineMultiplayerState.searchCode
+        ? "Searching for players with the same matchmaking code…"
+        : "Searching for players in the public queue…"
+    );
+    syncOnlineMultiplayerUi();
+    return sendOnlineEnvelope({
+      type: "queue.join",
+      searchCode: onlineMultiplayerState.searchCode || undefined,
+    });
+  }
+
+  function resetOnlineGuestStartPreparation() {
+    if (
+      multiplayerState.transportKind !== "online" ||
+      multiplayerState.role !== "guest" ||
+      (multiplayerState.phase !== "starting" && !multiplayerState.pendingGuestStart)
+    ) return false;
+    multiplayerState.pendingGuestStart = null;
+    multiplayerState.startId = "";
+    multiplayerState.startRoster = [];
+    multiplayerState.startAcks = Object.create(null);
+    multiplayerState.startCommitPending = false;
+    multiplayerState.startDeadline = 0;
+    multiplayerState.phase = "lobby";
+    return true;
+  }
+
+  function applyOnlineRoomSnapshot(message) {
+    var roomId = String(message.id || "");
+    var revision = Math.max(0, Math.floor(Number(message.revision) || 0));
+    if (
+      onlineMultiplayerState.room &&
+      String(onlineMultiplayerState.room.id || "") === roomId &&
+      revision < onlineMultiplayerState.roomRevision
+    ) return;
+    onlineMultiplayerState.room = message;
+    onlineMultiplayerState.roomRevision = revision;
+    onlineMultiplayerState.queued = true;
+    if (Number.isFinite(Number(message.serverNow))) {
+      onlineMultiplayerState.serverClockOffsetMs = Number(message.serverNow) - Date.now();
+    }
+    var players = Array.isArray(message.players) ? message.players : [];
+    var localEntry = players.find(function (entry) {
+      return String(entry && entry.id || "") === String(onlineMultiplayerState.playerId || "");
+    });
+    if (onlineMultiplayerState.readyPending && localEntry && !!localEntry.ready === onlineMultiplayerState.readyTarget) {
+      onlineMultiplayerState.readyPending = false;
+    }
+    if (multiplayerState.phase === "ended" && message.phase === "lobby") {
+      returnMultiplayerMatchToLobby(false, players, players.length ? players[0].id : "");
+      return;
+    }
+    if (message.phase === "lobby") resetOnlineGuestStartPreparation();
+    if (multiplayerState.phase !== "match" && multiplayerState.phase !== "ended") {
+      multiplayerState.phase = multiplayerState.pendingGuestStart ? "starting" : "lobby";
+      applyLobbyPlayers(players, players.length ? players[0].id : "");
+      players.forEach(function (entry) {
+        var player = getMultiplayerPlayer(entry && entry.id);
+        if (player) player.autoReady = !!entry.autoReady;
+      });
+    }
+    refreshOnlineRoomStatus();
+    renderOnlineMultiplayerPlayers();
+    syncOnlineMultiplayerUi();
+  }
+
+  function getOnlineErrorCopy(code) {
+    var normalized = String(code || "").toLowerCase();
+    if (normalized.indexOf("version") !== -1 || normalized.indexOf("protocol") !== -1) {
+      return ["multiplayer.online.error.version", "The server requires a different game version."];
+    }
+    if (normalized.indexOf("session") !== -1 || normalized.indexOf("resume") !== -1 || normalized.indexOf("token") !== -1) {
+      return ["multiplayer.online.error.session", "Your online session expired. Start matchmaking again."];
+    }
+    if (normalized.indexOf("room") !== -1 || normalized.indexOf("match") !== -1) {
+      return ["multiplayer.online.error.room", "The server room is no longer available."];
+    }
+    if (normalized.indexOf("capacity") !== -1 || normalized.indexOf("full") !== -1) {
+      return ["multiplayer.online.error.capacity", "The online server is full. Try again soon."];
+    }
+    if (normalized.indexOf("rate") !== -1 || normalized.indexOf("limit") !== -1) {
+      return ["multiplayer.online.error.rate", "Too many requests. Wait a moment and try again."];
+    }
+    return ["multiplayer.online.error.generic", "Online matchmaking failed. Try again."];
+  }
+
+  function handleOnlineMultiplayerError(message) {
+    var code = String(message && message.code || "online_error");
+    var sessionFailure = /session|resume|token/i.test(code);
+    if (sessionFailure && onlineMultiplayerState.resumeAttempted) {
+      clearStoredOnlineSession();
+      onlineMultiplayerState.resumeAttempted = false;
+      onlineMultiplayerState.helloAttempted = true;
+      setOnlineConnectionState("reconnecting");
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.status.reconnecting",
+        "Connection lost. Reconnecting to your server room…"
+      );
+      return;
+    }
+    var copy = getOnlineErrorCopy(code);
+    onlineMultiplayerState.readyPending = false;
+    if (message && message.fatal) onlineMultiplayerState.shouldReconnect = false;
+    if (/version|protocol/i.test(code)) onlineMultiplayerState.shouldReconnect = false;
+    setOnlineConnectionState("error");
+    setOnlineMultiplayerStatus(copy[0], copy[1], null, true);
+    syncOnlineMultiplayerUi();
+  }
+
+  function handleOnlineMultiplayerMessage(raw) {
+    var message;
+    try {
+      message = typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch (error) {
+      return;
+    }
+    if (!message || typeof message.type !== "string") return;
+    var envelopeVersion = message.protocolVersion != null ? message.protocolVersion : message.version;
+    if (envelopeVersion != null && Number(envelopeVersion) !== MULTIPLAYER_PROTOCOL_VERSION) {
+      handleOnlineMultiplayerError({ code: "protocol_version", fatal: true });
+      return;
+    }
+    if (message.type === "server.hello") {
+      if (Number.isFinite(Number(message.reconnectGraceMs))) {
+        onlineMultiplayerState.reconnectGraceMs = Math.max(1000, Number(message.reconnectGraceMs));
+      }
+      return;
+    }
+    if (message.type === "session.welcome") {
+      if (!message.sessionId || !message.playerId || !message.resumeToken) {
+        handleOnlineMultiplayerError({ code: "invalid_session", fatal: true });
+        return;
+      }
+      onlineMultiplayerState.sessionId = String(message.sessionId);
+      onlineMultiplayerState.playerId = String(message.playerId);
+      onlineMultiplayerState.resumeToken = String(message.resumeToken);
+      onlineMultiplayerState.reconnectGraceMs = Math.max(
+        1000,
+        Number(message.reconnectGraceMs) || onlineMultiplayerState.reconnectGraceMs
+      );
+      onlineMultiplayerState.reconnectAttempt = 0;
+      onlineMultiplayerState.reconnectStartedAt = 0;
+      onlineMultiplayerState.shouldReconnect = (window.DustAndDeadOnlineConfig || {}).reconnect !== false;
+      storeOnlineSession();
+      markOnlineMultiplayerBridgeConnected();
+      if (message.resumed) {
+        setOnlineConnectionState(onlineMultiplayerState.room ? "room" : "searching");
+        setOnlineMultiplayerStatus("multiplayer.online.status.reconnected", "Reconnected to the server room.");
+      } else if (onlineMultiplayerState.desiredQueue) {
+        setOnlineConnectionState("searching");
+        setOnlineMultiplayerStatus(
+          onlineMultiplayerState.searchCode
+            ? "multiplayer.online.status.searching"
+            : "multiplayer.online.status.publicSearching",
+          onlineMultiplayerState.searchCode
+            ? "Searching for players with the same matchmaking code…"
+            : "Searching for players in the public queue…"
+        );
+      } else {
+        // session.join always assigns a room. If the user canceled while the
+        // handshake was still in flight, immediately undo that automatic join.
+        sendOnlineEnvelope({ type: "queue.leave" });
+        setOnlineConnectionState("idle");
+      }
+      syncOnlineMultiplayerUi();
+      return;
+    }
+    if (message.type === "queue.joined") {
+      onlineMultiplayerState.queued = true;
+      setOnlineConnectionState("searching");
+      syncOnlineMultiplayerUi();
+      return;
+    }
+    if (message.type === "queue.left") {
+      onlineMultiplayerState.queued = false;
+      onlineMultiplayerState.desiredQueue = false;
+      onlineMultiplayerState.room = null;
+      onlineMultiplayerState.roomRevision = -1;
+      multiplayerState.phase = "lobby";
+      setOnlineConnectionState("idle");
+      setOnlineMultiplayerStatus("multiplayer.online.status.cancelled", "Matchmaking canceled.");
+      syncOnlineMultiplayerUi();
+      return;
+    }
+    if (message.type === "room.state") {
+      if (!message.room || typeof message.room !== "object") return;
+      if (message.room.serverNow == null && message.serverNow != null) message.room.serverNow = message.serverNow;
+      applyOnlineRoomSnapshot(message.room);
+      return;
+    }
+    if (message.type === "game") {
+      if (!message.data || multiplayerState.transportKind !== "online") return;
+      var coreMessage = null;
+      try { coreMessage = JSON.parse(decodeMultiplayerBase64(String(message.data))); } catch (error) {}
+      if (coreMessage && coreMessage.type === "startPrepare") {
+        // room.state enters the visual "starting" state first, but the legacy
+        // guest protocol must still receive startPrepare while its core phase
+        // is lobby so it can validate the roster and send a base64 startAck.
+        if (!multiplayerState.pendingGuestStart) multiplayerState.phase = "lobby";
+        setOnlineConnectionState("starting");
+        setOnlineMultiplayerStatus(
+          "multiplayer.online.status.allReady",
+          "Everyone is ready. The server is starting the match…"
+        );
+      }
+      handleNearbyMessageEvent({
+        endpointId: ONLINE_SERVER_ENDPOINT_ID,
+        data: String(message.data),
+        latestKind: message.latestKind === "snapshot" || message.latestKind === "input" ? message.latestKind : "",
+        operationId: multiplayerState.transportOperationId,
+        connectionNonce: getMultiplayerEndpointConnectionNonce(ONLINE_SERVER_ENDPOINT_ID),
+      });
+      if (coreMessage && coreMessage.type === "startPrepare") {
+        setOnlineConnectionState("starting");
+        renderOnlineMultiplayerPlayers();
+        syncOnlineMultiplayerUi();
+      } else if (coreMessage && coreMessage.type === "start" && multiplayerState.phase === "match") {
+        onlineMultiplayerState.readyPending = false;
+        onlineMultiplayerState.queued = false;
+        if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, false);
+        syncMultiplayerModeCopy();
+      }
+      return;
+    }
+    if (message.type === "session.error") handleOnlineMultiplayerError(message);
+  }
+
+  function scheduleOnlineMultiplayerReconnect() {
+    if (
+      !onlineMultiplayerState.open ||
+      onlineMultiplayerState.intentionalClose ||
+      !onlineMultiplayerState.shouldReconnect ||
+      onlineMultiplayerState.reconnectTimer
+    ) return;
+    var now = Date.now();
+    if (!onlineMultiplayerState.reconnectStartedAt) onlineMultiplayerState.reconnectStartedAt = now;
+    if (now - onlineMultiplayerState.reconnectStartedAt >= onlineMultiplayerState.reconnectGraceMs) {
+      onlineMultiplayerState.shouldReconnect = false;
+      onlineMultiplayerState.desiredQueue = false;
+      if (multiplayerState.phase === "match" || multiplayerState.phase === "ended") {
+        if (multiplayerMatchStatus) {
+          multiplayerMatchStatus.textContent = tr(
+            "multiplayer.online.error.unavailable",
+            "The online server is unavailable. Try again in a moment."
+          );
+        }
+        closeOnlineMultiplayerLobby();
+        return;
+      }
+      setOnlineConnectionState("error");
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.error.unavailable",
+        "The online server is unavailable. Try again in a moment.",
+        null,
+        true
+      );
+      syncOnlineMultiplayerUi();
+      return;
+    }
+    setOnlineConnectionState("reconnecting");
+    setOnlineMultiplayerStatus(
+      "multiplayer.online.status.reconnecting",
+      "Connection lost. Reconnecting to your server room…"
+    );
+    var delay = Math.min(ONLINE_RECONNECT_MAX_DELAY_MS, 500 * Math.pow(2, onlineMultiplayerState.reconnectAttempt));
+    onlineMultiplayerState.reconnectAttempt += 1;
+    onlineMultiplayerState.reconnectTimer = window.setTimeout(function () {
+      onlineMultiplayerState.reconnectTimer = 0;
+      connectOnlineMultiplayerSocket();
+    }, delay);
+    syncOnlineMultiplayerUi();
+  }
+
+  function connectOnlineMultiplayerSocket() {
+    if (!onlineMultiplayerState.open) return false;
+    if (onlineMultiplayerState.socket && (
+      onlineMultiplayerState.socket.readyState === 0 ||
+      onlineMultiplayerState.socket.readyState === 1
+    )) return true;
+    var url = resolveOnlineMultiplayerUrl();
+    if (!url || typeof window.WebSocket !== "function") {
+      onlineMultiplayerState.desiredQueue = false;
+      setOnlineConnectionState("error");
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.error.noUrl",
+        "Online server address is not configured for this build.",
+        null,
+        true
+      );
+      syncOnlineMultiplayerUi();
+      return false;
+    }
+    if (onlineMultiplayerState.reconnectTimer) {
+      window.clearTimeout(onlineMultiplayerState.reconnectTimer);
+      onlineMultiplayerState.reconnectTimer = 0;
+    }
+    onlineMultiplayerState.intentionalClose = false;
+    var generation = ++onlineMultiplayerState.socketGeneration;
+    var socket;
+    try {
+      socket = new window.WebSocket(url);
+    } catch (error) {
+      scheduleOnlineMultiplayerReconnect();
+      return false;
+    }
+    onlineMultiplayerState.socket = socket;
+    setOnlineConnectionState(onlineMultiplayerState.reconnectAttempt ? "reconnecting" : "connecting");
+    setOnlineMultiplayerStatus(
+      onlineMultiplayerState.reconnectAttempt
+        ? "multiplayer.online.status.reconnecting"
+        : "multiplayer.online.status.connecting",
+      onlineMultiplayerState.reconnectAttempt
+        ? "Connection lost. Reconnecting to your server room…"
+        : "Connecting to the game server…"
+    );
+    syncOnlineMultiplayerUi();
+    socket.onopen = function () {
+      if (generation !== onlineMultiplayerState.socketGeneration || socket !== onlineMultiplayerState.socket) return;
+      var stored = readStoredOnlineSession();
+      if (!onlineMultiplayerState.sessionId && stored) {
+        onlineMultiplayerState.sessionId = stored.sessionId;
+        onlineMultiplayerState.playerId = stored.playerId;
+        onlineMultiplayerState.resumeToken = stored.resumeToken;
+      }
+      sendOnlineSessionJoin();
+    };
+    socket.onmessage = function (event) {
+      if (generation !== onlineMultiplayerState.socketGeneration || socket !== onlineMultiplayerState.socket) return;
+      handleOnlineMultiplayerMessage(event.data);
+    };
+    socket.onerror = function () {};
+    socket.onclose = function () {
+      if (generation !== onlineMultiplayerState.socketGeneration || socket !== onlineMultiplayerState.socket) return;
+      onlineMultiplayerState.socket = null;
+      markOnlineMultiplayerBridgeDisconnected();
+      if (!onlineMultiplayerState.intentionalClose) scheduleOnlineMultiplayerReconnect();
+    };
+    return true;
+  }
+
+  function beginOnlineMatchmaking() {
+    if (!onlineMultiplayerState.open) return;
+    onlineMultiplayerState.searchCode = normalizeOnlineSearchCode(onlineMultiplayerSearchCode ? onlineMultiplayerSearchCode.value : "");
+    if (onlineMultiplayerSearchCode) onlineMultiplayerSearchCode.value = onlineMultiplayerState.searchCode;
+    getOnlineMultiplayerDisplayName();
+    onlineMultiplayerState.desiredQueue = true;
+    onlineMultiplayerState.shouldReconnect = (window.DustAndDeadOnlineConfig || {}).reconnect !== false;
+    onlineMultiplayerState.room = null;
+    onlineMultiplayerState.roomRevision = -1;
+    onlineMultiplayerState.readyPending = false;
+    if (isOnlineSocketOpen() && onlineMultiplayerState.sessionId) sendOnlineJoin();
+    else connectOnlineMultiplayerSocket();
+    syncOnlineMultiplayerUi();
+  }
+
+  function cancelOnlineMatchmaking() {
+    if (!onlineMultiplayerState.open || multiplayerState.phase === "match") return;
+    if (isOnlineSocketOpen()) sendOnlineEnvelope({ type: "queue.leave" });
+    onlineMultiplayerState.desiredQueue = false;
+    onlineMultiplayerState.shouldReconnect = false;
+    onlineMultiplayerState.queued = false;
+    onlineMultiplayerState.room = null;
+    onlineMultiplayerState.roomRevision = -1;
+    onlineMultiplayerState.readyPending = false;
+    multiplayerState.phase = "lobby";
+    multiplayerState.players = Object.create(null);
+    multiplayerState.playerOrder = [];
+    if (onlineMultiplayerCountdown) onlineMultiplayerCountdown.hidden = true;
+    setOnlineConnectionState("idle");
+    setOnlineMultiplayerStatus("multiplayer.online.status.cancelled", "Matchmaking canceled.");
+    syncOnlineMultiplayerUi();
+  }
+
+  function toggleOnlineMultiplayerReady() {
+    var room = onlineMultiplayerState.room;
+    if (!room || room.phase !== "lobby" || onlineMultiplayerState.readyPending) return;
+    var localPlayer = getOnlineRoomPlayers().find(function (entry) {
+      return String(entry.id || "") === String(onlineMultiplayerState.playerId || "");
+    });
+    if (!localPlayer || localPlayer.connected === false) return;
+    onlineMultiplayerState.readyTarget = !localPlayer.ready;
+    onlineMultiplayerState.readyPending = true;
+    var sent = sendOnlineEnvelope({
+      type: "room.ready",
+      ready: onlineMultiplayerState.readyTarget,
+      unlocks: serializeCareerUnlockProfile(captureLiveCareerUnlockProfile()),
+      cosmetics: serializeCowboyCosmetics(captureLiveCosmeticProfile()),
+    });
+    if (!sent) onlineMultiplayerState.readyPending = false;
+    syncOnlineMultiplayerUi();
+  }
+
+  function openOnlineMultiplayerLobby() {
+    setIntroActive(false);
+    setPanel(menu, false);
+    if (multiplayerLobby) setPanel(multiplayerLobby, false);
+    if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, true);
+    releaseMultiplayerPlayerEntities();
+    resetMultiplayerSessionState();
+    onlineMultiplayerState.open = true;
+    onlineMultiplayerState.intentionalClose = false;
+    onlineMultiplayerState.desiredQueue = false;
+    onlineMultiplayerState.queued = false;
+    onlineMultiplayerState.room = null;
+    onlineMultiplayerState.roomRevision = -1;
+    onlineMultiplayerState.readyPending = false;
+    onlineMultiplayerState.reconnectAttempt = 0;
+    onlineMultiplayerState.reconnectStartedAt = 0;
+    installOnlineMultiplayerBridge();
+    if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
+    if (onlineMultiplayerSearchCode) onlineMultiplayerSearchCode.value = "";
+    if (multiplayerScoreboard) multiplayerScoreboard.classList.remove("is-open");
+    if (multiplayerDeathPanel) setPanel(multiplayerDeathPanel, false);
+    if (multiplayerResultPanel) setPanel(multiplayerResultPanel, false);
+    if (ammoHud) ammoHud.hidden = true;
+    setOnlineConnectionState("idle");
+    setOnlineMultiplayerStatus(
+      "multiplayer.online.status.initial",
+      "Enter an optional code or search the public queue."
+    );
+    syncMultiplayerModeCopy();
+    syncOnlineMultiplayerUi();
+    updateModeClass();
+  }
+
+  function closeOnlineMultiplayerLobby() {
+    var returningFromMatch = multiplayerState.phase === "match" || multiplayerState.phase === "ended" || !!multiplayerState.matchId;
+    onlineMultiplayerState.open = false;
+    onlineMultiplayerState.intentionalClose = true;
+    onlineMultiplayerState.shouldReconnect = false;
+    onlineMultiplayerState.desiredQueue = false;
+    if (onlineMultiplayerState.reconnectTimer) {
+      window.clearTimeout(onlineMultiplayerState.reconnectTimer);
+      onlineMultiplayerState.reconnectTimer = 0;
+    }
+    if (isOnlineSocketOpen()) {
+      try {
+        onlineMultiplayerState.socket.send(JSON.stringify({
+          type: returningFromMatch ? "match.leave" : "queue.leave",
+        }));
+      } catch (error) {}
+    }
+    var socket = onlineMultiplayerState.socket;
+    onlineMultiplayerState.socket = null;
+    onlineMultiplayerState.socketGeneration += 1;
+    if (socket) {
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      try { socket.close(1000, "client_leave"); } catch (error) {}
+    }
+    clearStoredOnlineSession();
+    markOnlineMultiplayerBridgeDisconnected();
+    releaseMultiplayerPlayerEntities();
+    var previousPlugin = onlineMultiplayerState.previousPlugin;
+    resetMultiplayerSessionState();
+    multiplayerState.plugin = previousPlugin || null;
+    onlineMultiplayerState.bridgeInstalled = false;
+    onlineMultiplayerState.previousPlugin = null;
+    onlineMultiplayerState.queued = false;
+    onlineMultiplayerState.room = null;
+    onlineMultiplayerState.roomRevision = -1;
+    onlineMultiplayerState.readyPending = false;
+    onlineMultiplayerState.connectionState = "idle";
+    if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, false);
+    if (multiplayerScoreboard) multiplayerScoreboard.classList.remove("is-open");
+    if (multiplayerDeathPanel) setPanel(multiplayerDeathPanel, false);
+    if (multiplayerResultPanel) setPanel(multiplayerResultPanel, false);
+    setMultiplayerUpgradeDrawerOpen(false);
+    if (returningFromMatch) prepareFreshMainMenuMap();
+    else if (MAP_SEED !== SOLO_MAP_SEED) rebuildMapForSeed(SOLO_MAP_SEED);
+    multiplayerState.mapSeed = MAP_SEED;
+    resetRun("menu");
+    setPanel(menu, true);
+    syncMultiplayerModeCopy();
+    updateModeClass();
+  }
+
   function bindMultiplayerUi() {
     if (multiplayerPlayerName) multiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
+    if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
     if (localMultiplayerBtn) localMultiplayerBtn.addEventListener("click", openLocalMultiplayerLobby);
+    if (onlineMultiplayerBtn) onlineMultiplayerBtn.addEventListener("click", openOnlineMultiplayerLobby);
     if (multiplayerLobbyBackBtn) multiplayerLobbyBackBtn.addEventListener("click", closeLocalMultiplayerLobby);
+    if (onlineMultiplayerLobbyBackBtn) onlineMultiplayerLobbyBackBtn.addEventListener("click", closeOnlineMultiplayerLobby);
+    if (onlineMatchmakingFindBtn) onlineMatchmakingFindBtn.addEventListener("click", beginOnlineMatchmaking);
+    if (onlineMatchmakingCancelBtn) onlineMatchmakingCancelBtn.addEventListener("click", cancelOnlineMatchmaking);
+    if (onlineMultiplayerReadyBtn) onlineMultiplayerReadyBtn.addEventListener("click", toggleOnlineMultiplayerReady);
     if (multiplayerHostBtn) multiplayerHostBtn.addEventListener("click", hostLocalMultiplayerLobby);
     if (multiplayerDiscoverBtn) multiplayerDiscoverBtn.addEventListener("click", discoverLocalMultiplayerLobbies);
     if (multiplayerJoinBtn) multiplayerJoinBtn.addEventListener("click", joinSelectedMultiplayerLobby);
     if (multiplayerReadyBtn) multiplayerReadyBtn.addEventListener("click", toggleMultiplayerReady);
     if (multiplayerStartBtn) multiplayerStartBtn.addEventListener("click", startHostedMultiplayerMatch);
     if (multiplayerPlayerName) multiplayerPlayerName.addEventListener("change", function () { storeMultiplayerName(multiplayerPlayerName.value); });
+    if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.addEventListener("change", function () {
+      getOnlineMultiplayerDisplayName();
+    });
+    if (onlineMultiplayerSearchCode) {
+      onlineMultiplayerSearchCode.addEventListener("input", function () {
+        var normalized = normalizeOnlineSearchCode(onlineMultiplayerSearchCode.value);
+        if (onlineMultiplayerSearchCode.value !== normalized) onlineMultiplayerSearchCode.value = normalized;
+      });
+      onlineMultiplayerSearchCode.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        if (!onlineMatchmakingFindBtn || !onlineMatchmakingFindBtn.disabled) beginOnlineMatchmaking();
+      });
+    }
     if (multiplayerSessionList) {
       multiplayerSessionList.addEventListener("click", function (event) {
         var button = event.target.closest("[data-endpoint-id]");
@@ -96961,6 +97942,7 @@
     // after they connect, so opening the lobby never reloads or flashes the page.
     setIntroActive(false);
     setPanel(menu, false);
+    if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, false);
     if (multiplayerLobby) setPanel(multiplayerLobby, true);
     document.documentElement.classList.remove("local-multiplayer-boot");
     bindNearbyConnections();
@@ -96980,6 +97962,7 @@
     setMultiplayerLobbyStatus(getNearbyConnectionsPlugin() ? "Create a match or find nearby cowboys." : "Nearby Connections is available in the Android APK.");
     renderMultiplayerSessions();
     renderMultiplayerLobbyPlayers();
+    syncMultiplayerModeCopy();
     updateModeClass();
     requestNearbyPermissionsOnLobbyOpen();
   }
@@ -97002,6 +97985,10 @@
   }
 
   function closeLocalMultiplayerLobby() {
+    if (multiplayerState.transportKind === "online" || onlineMultiplayerState.open) {
+      closeOnlineMultiplayerLobby();
+      return;
+    }
     var returningFromMatch =
       multiplayerState.phase === "match" ||
       multiplayerState.phase === "ended" ||
@@ -97049,6 +98036,8 @@
     multiplayerState.active = false;
     multiplayerState.phase = "idle";
     multiplayerState.role = "none";
+    multiplayerState.transportKind = "none";
+    multiplayerState.dedicatedAuthority = false;
     multiplayerState.mapSeed = MAP_SEED;
     multiplayerState.localPlayerId = "";
     multiplayerState.hostPlayerId = "";
@@ -97306,6 +98295,8 @@
       multiplayerState.active = true;
       multiplayerState.phase = "lobby";
       multiplayerState.role = "host";
+      multiplayerState.transportKind = "nearby";
+      multiplayerState.dedicatedAuthority = false;
       multiplayerState.mapSeed = MAP_SEED;
       multiplayerState.localPlayerId = createMultiplayerId("host");
       multiplayerState.hostPlayerId = multiplayerState.localPlayerId;
@@ -97354,6 +98345,8 @@
       multiplayerState.active = true;
       multiplayerState.phase = "lobby";
       multiplayerState.role = "guest";
+      multiplayerState.transportKind = "nearby";
+      multiplayerState.dedicatedAuthority = false;
       multiplayerState.mapSeed = 0;
       if (!multiplayerState.localPlayerId) multiplayerState.localPlayerId = createMultiplayerId("guest");
       multiplayerState.discoveredSessions = Object.create(null);
@@ -97401,6 +98394,8 @@
       resetMultiplayerEndpointSessionTracking(true);
       resetMultiplayerTerminalControls(true);
       multiplayerState.role = "guest";
+      multiplayerState.transportKind = "nearby";
+      multiplayerState.dedicatedAuthority = false;
       multiplayerState.localEndpointId = endpointId;
       multiplayerState.endpointOperationIds[endpointId] = operationId;
       if (!multiplayerState.localPlayerId) multiplayerState.localPlayerId = createMultiplayerId("guest");
@@ -99491,6 +100486,7 @@
       try { Promise.resolve(plugin.stopDiscovery({ operationId: operationId })).catch(function () {}); } catch (err) {}
     }
     if (multiplayerLobby) setPanel(multiplayerLobby, false);
+    if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, false);
     if (multiplayerScoreboardToggle) {
       multiplayerScoreboardToggle.hidden = false;
       multiplayerScoreboardToggle.setAttribute("aria-expanded", "false");
@@ -99513,6 +100509,7 @@
     updateMultiplayerScoreboard();
     updateMultiplayerDeathUi();
     updateMultiplayerUpgradeUi();
+    syncMultiplayerModeCopy();
     updateModeClass();
   }
 
@@ -101652,17 +102649,27 @@
       returnMultiplayerMatchToLobby(true);
       return;
     }
-    if (multiplayerResultTitle) multiplayerResultTitle.textContent = "Waiting for Host";
-    if (multiplayerResultSummary) multiplayerResultSummary.textContent = "Asking the host to bring everyone back to the lobby…";
+    var online = multiplayerState.transportKind === "online";
+    if (multiplayerResultTitle) multiplayerResultTitle.textContent = online
+      ? tr("multiplayer.results.onlineWaitingTitle", "Waiting for Server")
+      : trText("Waiting for Host");
+    if (multiplayerResultSummary) multiplayerResultSummary.textContent = online
+      ? tr("multiplayer.results.onlineWaitingSummary", "Asking the server to bring everyone back to the room…")
+      : trText("Asking the host to bring everyone back to the lobby…");
     if (!beginMultiplayerReturnLobbyRequestRetry()) {
       if (multiplayerReturnLobbyBtn) multiplayerReturnLobbyBtn.disabled = false;
-      if (multiplayerResultTitle) multiplayerResultTitle.textContent = "Host Unavailable";
-      if (multiplayerResultSummary) multiplayerResultSummary.textContent = "The host could not be reached. You can still return to the main menu.";
+      if (multiplayerResultTitle) multiplayerResultTitle.textContent = online
+        ? tr("multiplayer.results.onlineUnavailableTitle", "Server Unavailable")
+        : trText("Host Unavailable");
+      if (multiplayerResultSummary) multiplayerResultSummary.textContent = online
+        ? tr("multiplayer.results.onlineUnavailableSummary", "The server could not be reached. You can still return to the main menu.")
+        : trText("The host could not be reached. You can still return to the main menu.");
     }
   }
 
   function returnMultiplayerMatchToLobby(broadcast, roster, hostPlayerId) {
     if (!multiplayerState.active || multiplayerState.phase !== "ended") return false;
+    var online = multiplayerState.transportKind === "online";
     releaseMultiplayerPlayerEntities();
     multiplayerState.phase = "lobby";
     resetMultiplayerMatchHistory();
@@ -101720,7 +102727,8 @@
     resetRun("menu");
     setPanel(menu, false);
     setPanel(gameOverPanel, false);
-    if (multiplayerLobby) setPanel(multiplayerLobby, true);
+    if (multiplayerLobby) setPanel(multiplayerLobby, !online);
+    if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, online);
     if (multiplayerDeathPanel) setPanel(multiplayerDeathPanel, false);
     if (multiplayerResultPanel) setPanel(multiplayerResultPanel, false);
     if (multiplayerScoreboard) {
@@ -101733,8 +102741,32 @@
     setMultiplayerUpgradeDrawerOpen(false);
     resetMultiplayerSpectatorState();
     if (multiplayerReturnLobbyBtn) multiplayerReturnLobbyBtn.disabled = false;
-    setMultiplayerLobbyStatus("Match finished. Mark yourself ready when you want to play again.");
-    renderMultiplayerLobbyPlayers();
+    if (online) {
+      var onlineRoster = getSerializableLobbyPlayers();
+      var existingRoom = onlineMultiplayerState.room || {};
+      onlineMultiplayerState.open = true;
+      onlineMultiplayerState.queued = true;
+      onlineMultiplayerState.room = Object.assign({}, existingRoom, {
+        id: existingRoom.id || "server-room",
+        revision: Math.max(0, Number(existingRoom.revision) || 0) + 1,
+        phase: "lobby",
+        players: onlineRoster,
+        playerCount: onlineRoster.length,
+        readyCount: onlineRoster.filter(function (entry) { return entry.ready; }).length,
+        minPlayers: existingRoom.minPlayers || (MULTIPLAYER_SHARED_PROTOCOL ? MULTIPLAYER_SHARED_PROTOCOL.MIN_PLAYERS : 2),
+        maxPlayers: existingRoom.maxPlayers || MULTIPLAYER_MAX_PLAYERS,
+        autoStartAt: 0,
+        serverNow: Date.now() + onlineMultiplayerState.serverClockOffsetMs,
+      });
+      onlineMultiplayerState.roomRevision = onlineMultiplayerState.room.revision;
+      refreshOnlineRoomStatus();
+      renderOnlineMultiplayerPlayers();
+      syncOnlineMultiplayerUi();
+    } else {
+      setMultiplayerLobbyStatus("Match finished. Mark yourself ready when you want to play again.");
+      renderMultiplayerLobbyPlayers();
+    }
+    syncMultiplayerModeCopy();
     updateModeClass();
     completeMultiplayerReturnLobbyRequest(multiplayerState.role === "guest");
 
@@ -114962,6 +115994,18 @@
     updateHud();
     updateActiveBossHud();
     if (gameI18n) gameI18n.refresh(document.body);
+    if (onlineMultiplayerState.open || multiplayerState.transportKind === "online") {
+      setOnlineConnectionState(onlineMultiplayerState.connectionState);
+      setOnlineMultiplayerStatus(
+        onlineMultiplayerState.statusKey,
+        onlineMultiplayerState.statusFallback,
+        onlineMultiplayerState.statusParams,
+        onlineMultiplayerState.statusError
+      );
+      renderOnlineMultiplayerPlayers();
+      updateOnlineMultiplayerCountdown(true);
+      syncMultiplayerModeCopy();
+    }
   }
 
   function createFallbackContractCard() {
@@ -116096,6 +117140,7 @@
   function isBlockingOverlayOpen() {
     var overlays = [
       multiplayerLobby,
+      onlineMultiplayerLobby,
       multiplayerDeathPanel,
       multiplayerResultPanel,
       gameGuide,
@@ -116133,6 +117178,7 @@
     }
     if (startBtn) startBtn.disabled = blocked || state.mode !== "menu" || multiplayerState.active;
     if (localMultiplayerBtn) localMultiplayerBtn.disabled = blocked || state.mode !== "menu" || multiplayerState.active;
+    if (onlineMultiplayerBtn) onlineMultiplayerBtn.disabled = blocked || state.mode !== "menu" || multiplayerState.active;
     if (contractsBtn) contractsBtn.disabled = blocked || state.mode !== "menu" || multiplayerState.active || !careerProgression;
     if (unlockShopBtn) unlockShopBtn.disabled = blocked || state.mode !== "menu" || multiplayerState.active || !careerProgression;
     if (wardrobeBtn) {
@@ -125012,6 +126058,209 @@
     multiplayerMockMatchSequence += 1;
     return "mock-match-" + multiplayerMockMatchSequence;
   }
+
+  function createDedicatedAuthorityTransport() {
+    return {
+      sendBytes: function (options) {
+        if (typeof window.__dustDedicatedServerEmit !== "function") {
+          return Promise.reject(new Error("Dedicated server bridge is unavailable."));
+        }
+        return Promise.resolve(window.__dustDedicatedServerEmit({
+          endpointId: String(options && options.endpointId || ""),
+          data: String(options && options.data || ""),
+          latestOnly: !!(options && options.latestOnly),
+          latestKind: String(options && options.latestKind || ""),
+          operationId: multiplayerState.transportOperationId,
+          connectionNonce: Math.max(0, Number(options && options.connectionNonce) || 0),
+        }));
+      },
+      stopAdvertising: function () { return Promise.resolve(); },
+      stopDiscovery: function () { return Promise.resolve(); },
+      stopAll: function () { return Promise.resolve(); },
+      disconnect: function () { return Promise.resolve(); },
+    };
+  }
+
+  function startDedicatedAuthoritySession(options) {
+    var settings = options && typeof options === "object" ? options : {};
+    var roster = Array.isArray(settings.players)
+      ? settings.players.slice(0, MULTIPLAYER_MAX_PLAYERS)
+      : [];
+    if (roster.length < 2) throw new Error("A dedicated match requires at least two players.");
+    var mapSeed = normalizeMapSeed(settings.mapSeed);
+    if (!mapSeed) throw new Error("A dedicated match requires a valid map seed.");
+
+    releaseMultiplayerPlayerEntities();
+    resetMultiplayerSessionState();
+    multiplayerState.plugin = createDedicatedAuthorityTransport();
+    multiplayerState.active = true;
+    multiplayerState.phase = "lobby";
+    multiplayerState.role = "host";
+    multiplayerState.transportKind = "dedicated";
+    multiplayerState.dedicatedAuthority = true;
+    multiplayerState.mapSeed = mapSeed;
+    multiplayerState.transportOperationId = Math.max(1, multiplayerState.transportOperationId || 0);
+    multiplayerState.localPlayerId = String(roster[0].id || "").slice(0, 80);
+    multiplayerState.hostPlayerId = multiplayerState.localPlayerId;
+    if (!multiplayerState.localPlayerId) throw new Error("Dedicated roster contains an invalid player id.");
+
+    var seenIds = Object.create(null);
+    var seenEndpoints = Object.create(null);
+    roster.forEach(function (entry, index) {
+      var id = String(entry && entry.id || "").slice(0, 80);
+      var endpointId = String(entry && (entry.endpointId || entry.id) || "").slice(0, 120);
+      if (!id || !endpointId || seenIds[id] || seenEndpoints[endpointId]) {
+        throw new Error("Dedicated roster contains duplicate or invalid identities.");
+      }
+      seenIds[id] = true;
+      seenEndpoints[endpointId] = true;
+      var networkPlayer = ensureMultiplayerPlayer(id, entry.name, endpointId, false);
+      // There is intentionally no local human on the authority page. The first
+      // roster entry owns state.player only so legacy world systems have their
+      // primary context; all players are advanced by validated remote input.
+      networkPlayer.local = false;
+      networkPlayer.ready = true;
+      networkPlayer.connected = true;
+      networkPlayer.careerUnlockProfile = entry.unlocks
+        ? buildCareerUnlockProfile(entry.unlocks)
+        : createFullCareerUnlockProfile();
+      networkPlayer.cosmetics = serializeCowboyCosmetics(entry.cosmetics);
+      multiplayerState.connectedEndpoints[endpointId] = true;
+      multiplayerState.endpointOperationIds[endpointId] = multiplayerState.transportOperationId;
+      multiplayerState.endpointConnectionNonces[endpointId] = index + 1;
+    });
+
+    if (MAP_SEED !== mapSeed) rebuildMapForSeed(mapSeed);
+    if (MAP_SEED !== mapSeed) throw new Error("Dedicated authority could not build the requested map.");
+    var startId = String(settings.startId || settings.matchId || createMultiplayerId("server-match")).slice(0, 100);
+    var startMessage = {
+      type: "start",
+      authority: "server",
+      startId: startId,
+      version: MULTIPLAYER_PROTOCOL_VERSION,
+      mapSeed: mapSeed,
+      hostPlayerId: multiplayerState.hostPlayerId,
+      players: getSerializableLobbyPlayers().map(function (entry) {
+        entry.ready = true;
+        return entry;
+      }),
+    };
+    beginMultiplayerMatch(startMessage);
+    if (multiplayerState.phase !== "match") throw new Error("Dedicated authority failed to enter the match.");
+    return {
+      ready: true,
+      protocolVersion: MULTIPLAYER_PROTOCOL_VERSION,
+      matchId: multiplayerState.matchId,
+      mapSeed: multiplayerState.mapSeed,
+      playerIds: multiplayerState.playerOrder.slice(),
+    };
+  }
+
+  function receiveDedicatedAuthorityWire(endpointId, data, latestKind) {
+    var id = String(endpointId || "");
+    if (!id || !isCurrentMultiplayerConnectedEndpoint(id) || typeof data !== "string") return false;
+    handleNearbyMessageEvent({
+      endpointId: id,
+      data: data,
+      latestKind: latestKind === "input" ? "input" : "",
+      operationId: multiplayerState.transportOperationId,
+      connectionNonce: getMultiplayerEndpointConnectionNonce(id),
+    });
+    return true;
+  }
+
+  function reconnectDedicatedAuthorityEndpoint(endpointId) {
+    var id = String(endpointId || "");
+    var playerId = multiplayerState.endpointToPlayerId[id];
+    var networkPlayer = getMultiplayerPlayer(playerId);
+    if (!id || !networkPlayer || multiplayerState.phase !== "match") return false;
+    multiplayerState.connectedEndpoints[id] = true;
+    multiplayerState.endpointOperationIds[id] = multiplayerState.transportOperationId;
+    multiplayerState.endpointConnectionNonces[id] = Math.max(
+      1,
+      getMultiplayerEndpointConnectionNonce(id) + 1
+    );
+    networkPlayer.connected = true;
+    networkPlayer.forceEnemyKeyframe = true;
+    networkPlayer.nextEnemyKeyframeAt = 0;
+    networkPlayer.lastSnapshotAck = -1;
+    networkPlayer.lastCombatAckProgressAt = state.time;
+    networkPlayer.lastSnapshotAckProgressAt = state.time;
+    return true;
+  }
+
+  window.__dustDedicatedServer = {
+    start: startDedicatedAuthoritySession,
+    receiveWire: receiveDedicatedAuthorityWire,
+    disconnect: function (endpointId) {
+      var id = String(endpointId || "");
+      if (!id || !isCurrentMultiplayerConnectedEndpoint(id)) return false;
+      handleMultiplayerEndpointDisconnected(id);
+      return true;
+    },
+    reconnect: reconnectDedicatedAuthorityEndpoint,
+    stop: function () {
+      releaseMultiplayerPlayerEntities();
+      resetMultiplayerSessionState();
+      return true;
+    },
+    getState: function () {
+      return {
+        active: multiplayerState.active,
+        phase: multiplayerState.phase,
+        role: multiplayerState.role,
+        transportKind: multiplayerState.transportKind,
+        dedicatedAuthority: multiplayerState.dedicatedAuthority,
+        protocolVersion: MULTIPLAYER_PROTOCOL_VERSION,
+        matchId: multiplayerState.matchId,
+        mapSeed: multiplayerState.mapSeed,
+        players: getSerializableLobbyPlayers(),
+        snapshotSequence: multiplayerState.snapshotSequence,
+      };
+    },
+  };
+
+  window.__dustOnlineTest = {
+    openLobby: openOnlineMultiplayerLobby,
+    closeLobby: closeOnlineMultiplayerLobby,
+    beginMatchmaking: beginOnlineMatchmaking,
+    cancelMatchmaking: cancelOnlineMatchmaking,
+    receiveEnvelope: handleOnlineMultiplayerMessage,
+    updateCountdown: function () { updateOnlineMultiplayerCountdown(true); },
+    expireReconnectGrace: function (phase) {
+      if (onlineMultiplayerState.reconnectTimer) {
+        window.clearTimeout(onlineMultiplayerState.reconnectTimer);
+        onlineMultiplayerState.reconnectTimer = 0;
+      }
+      multiplayerState.phase = String(phase || multiplayerState.phase || "lobby");
+      if (multiplayerState.phase === "match" && !multiplayerState.matchId) multiplayerState.matchId = "online-test-match";
+      onlineMultiplayerState.open = true;
+      onlineMultiplayerState.intentionalClose = false;
+      onlineMultiplayerState.shouldReconnect = true;
+      onlineMultiplayerState.reconnectStartedAt = Date.now() - onlineMultiplayerState.reconnectGraceMs - 1;
+      scheduleOnlineMultiplayerReconnect();
+      return this.getState();
+    },
+    getState: function () {
+      return {
+        open: onlineMultiplayerState.open,
+        connectionState: onlineMultiplayerState.connectionState,
+        desiredQueue: onlineMultiplayerState.desiredQueue,
+        queued: onlineMultiplayerState.queued,
+        sessionId: onlineMultiplayerState.sessionId,
+        playerId: onlineMultiplayerState.playerId,
+        searchCode: onlineMultiplayerState.searchCode,
+        room: onlineMultiplayerState.room,
+        readyPending: onlineMultiplayerState.readyPending,
+        pendingStartId: multiplayerState.pendingGuestStart
+          ? String(multiplayerState.pendingGuestStart.startId || "")
+          : "",
+        transportKind: multiplayerState.transportKind,
+        role: multiplayerState.role,
+        phase: multiplayerState.phase,
+      };
+    },
+  };
 
   window.__dustMultiplayerTest = {
     bindNearbyConnectionsForTest: function () {

@@ -1,0 +1,26 @@
+{$SITE_ADDRESS} {
+  encode zstd gzip
+
+  # Runtime metrics are useful to operators but should not be public.
+  @private_metrics path /metrics
+  respond @private_metrics 404
+
+  reverse_proxy game:8787 {
+    health_uri /healthz
+    health_interval 10s
+    health_timeout 3s
+
+    # Avoid reconnecting every client at once after a Caddy config reload.
+    stream_close_delay 5m
+  }
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+  }
+
+  log {
+    output stdout
+    format console
+  }
+}

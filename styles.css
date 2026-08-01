@@ -5684,7 +5684,8 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
 }
 
 .menu-panel__actions #start-btn,
-.menu-panel__actions #local-multiplayer-btn {
+.menu-panel__actions #local-multiplayer-btn,
+.menu-panel__actions #online-multiplayer-btn {
   width: 100%;
   min-width: 0;
   min-height: 56px;
@@ -5695,10 +5696,15 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   text-wrap: balance;
 }
 
+.menu-panel__play-actions > #online-multiplayer-btn {
+  grid-column: 1 / -1;
+}
+
 /* Narrow two-up row: shrink the primary labels just enough to stay on one line. */
 @media (min-width: 641px) and (max-width: 900px) {
   .menu-panel__actions #start-btn,
-  .menu-panel__actions #local-multiplayer-btn {
+  .menu-panel__actions #local-multiplayer-btn,
+  .menu-panel__actions #online-multiplayer-btn {
     font-size: 12px;
     letter-spacing: 0.04em;
   }
@@ -5895,6 +5901,66 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   background: rgba(12, 8, 4, 0.76);
 }
 
+.online-search-code-field > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.online-search-code-field > span small {
+  color: rgba(234, 197, 131, 0.6);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.online-search-code-field input {
+  font-family: Consolas, "Courier New", monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.online-search-code-help,
+.online-room-help {
+  margin: -2px 0 0 !important;
+  color: rgba(232, 202, 151, 0.68) !important;
+  font-size: 10px !important;
+  line-height: 1.4 !important;
+}
+
+.online-matchmaking-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.online-matchmaking-actions button {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 10px;
+  font-size: 11px;
+}
+
+.online-multiplayer-badge > span {
+  background: #63c7ff;
+  box-shadow: 0 0 0 3px rgba(73, 166, 226, 0.16), 0 0 12px rgba(99, 199, 255, 0.58);
+}
+
+.online-multiplayer-lobby.is-searching .online-multiplayer-badge > span,
+.online-multiplayer-lobby.is-reconnecting .online-multiplayer-badge > span {
+  animation: online-status-pulse 1.2s ease-in-out infinite;
+}
+
+.online-multiplayer-lobby.is-error .online-multiplayer-badge > span {
+  background: #f67e64;
+  box-shadow: 0 0 12px rgba(246, 87, 65, 0.55);
+}
+
+@keyframes online-status-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 .multiplayer-connect-actions,
 .multiplayer-room-actions {
   display: grid;
@@ -6067,6 +6133,46 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
 
 .multiplayer-player-row.is-disconnected {
   opacity: 0.52;
+}
+
+.multiplayer-player-row.is-auto-ready .multiplayer-player-row__state::before {
+  content: "\231B ";
+}
+
+.online-room-actions {
+  grid-template-columns: 1fr;
+}
+
+.online-multiplayer-countdown {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 7px;
+  align-items: baseline;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 205, 112, 0.3);
+  border-radius: 9px;
+  background: rgba(207, 125, 49, 0.13);
+  color: #f7d391;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.online-multiplayer-countdown[hidden] {
+  display: none;
+}
+
+.online-multiplayer-countdown strong {
+  color: #fff2cf;
+  font: 900 24px/1 var(--font-title);
+  font-variant-numeric: tabular-nums;
+}
+
+.online-multiplayer-countdown small {
+  color: rgba(247, 211, 145, 0.72);
+  font-size: 8px;
 }
 
 .multiplayer-connection-code {
@@ -6640,19 +6746,21 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   }
 
   .menu-panel__play-actions > #start-btn,
-  .menu-panel__play-actions > #local-multiplayer-btn {
+  .menu-panel__play-actions > #local-multiplayer-btn,
+  .menu-panel__play-actions > #online-multiplayer-btn {
     grid-column: 1;
   }
 
   /* Music toggle hugs the right edge of the stacked primary buttons. */
   .menu-panel__play-actions > .menu-music-btn {
-    grid-row: 1 / span 2;
+    grid-row: 1 / span 3;
     grid-column: 2;
     width: 44px;
   }
 
   .menu-panel__actions #start-btn,
-  .menu-panel__actions #local-multiplayer-btn {
+  .menu-panel__actions #local-multiplayer-btn,
+  .menu-panel__actions #online-multiplayer-btn {
     min-height: 44px;
   }
 
@@ -6677,7 +6785,8 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   }
 
   .menu-panel__actions #start-btn,
-  .menu-panel__actions #local-multiplayer-btn {
+  .menu-panel__actions #local-multiplayer-btn,
+  .menu-panel__actions #online-multiplayer-btn {
     min-height: 40px;
     padding: 10px 8px;
     font-size: 11px;
@@ -6740,6 +6849,22 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   .multiplayer-name-field input {
     height: 34px;
     font-size: 13px;
+  }
+
+  .online-search-code-help,
+  .online-room-help {
+    font-size: 8px !important;
+    line-height: 1.25 !important;
+  }
+
+  .online-multiplayer-countdown {
+    min-height: 30px;
+    padding: 5px 8px;
+    font-size: 8px;
+  }
+
+  .online-multiplayer-countdown strong {
+    font-size: 18px;
   }
 
   .multiplayer-connect-actions button,
