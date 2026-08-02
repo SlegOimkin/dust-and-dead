@@ -808,7 +808,10 @@ canvas {
     overflow-y: hidden;
     overscroll-behavior-x: contain;
     scroll-snap-type: x proximity;
-    touch-action: pan-x;
+    /* Both axes: pan-x alone swallowed vertical drags that started on a card,
+       so the shop only scrolled when a finger landed in the gap between two
+       cards. The browser still picks the axis from the gesture direction. */
+    touch-action: pan-x pan-y;
   }
 
   .unlock-card.unlock-playing-card {
@@ -908,7 +911,7 @@ canvas {
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   .unlock-shop__content[data-unlock-view="classes"] .unlock-card-row,
@@ -918,7 +921,7 @@ canvas {
 
   .unlock-card.unlock-playing-card {
     gap: 3px;
-    min-height: 182px;
+    min-height: 212px;
     aspect-ratio: auto;
     padding: 17px 7px 7px;
     border-radius: 6px;
@@ -975,8 +978,19 @@ canvas {
     font-size: 12px;
   }
 
+  /* The description is the only thing on the card that says what an unlock
+     actually does, so it is shown in full rather than dropped. No clamp and no
+     fixed min-height: a flex item with `min-height: auto` refuses to shrink
+     below its content, which is what keeps ru and hi copy from being cut off
+     inside the card's `overflow: hidden`. */
   .unlock-card.unlock-playing-card > .unlock-card__copy {
-    display: none;
+    display: block;
+    min-height: auto;
+    font-size: 7px;
+    line-height: 1.2;
+    /* 116px of card cannot hold a long ru/hi compound on one line. */
+    overflow-wrap: anywhere;
+    -webkit-line-clamp: none;
   }
 
   .unlock-playing-card .unlock-card__meta {
@@ -3405,6 +3419,30 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   scrollbar-gutter: stable;
 }
 
+/* The summary has to read at a glance on a phone: score, dust and the three
+   buttons must stay on screen. Column flex pins every fixed block and lets the
+   milestone roll - the only unbounded list here - shrink and scroll on its own
+   instead of pushing the actions past the bottom edge. */
+#game-over.game-over-panel.is-visible {
+  display: flex;
+  flex-direction: column;
+}
+
+#game-over .game-over__milestones {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#game-over .game-over__milestone-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(211, 132, 63, 0.64) rgba(15, 9, 5, 0.32);
+  scrollbar-width: thin;
+}
+
 .game-over__eyebrow,
 .pause-menu__confirm-eyebrow {
   display: block;
@@ -3800,6 +3838,19 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   background: #f0a64a;
   border-color: #f0a64a;
   color: #2b170d;
+}
+
+/* The editor only moves the on-screen stick and fire button, so it is dead
+   weight on a mouse-and-keyboard build. Mirror the media query that turns
+   .mobile-controls on so the two always agree. */
+#control-layout-btn {
+  display: none;
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 760px) {
+  #control-layout-btn {
+    display: block;
+  }
 }
 
 .control-layout-editor {
@@ -5319,19 +5370,27 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
     grid-template-columns: 1fr;
   }
 
+  /* Landscape phones are the shipping form factor (the APK is orientation
+     locked), so the whole summary is sized to land inside ~360px of height
+     without a scrollbar. */
   #game-over.game-over-panel {
     width: min(700px, calc(100vw - 20px));
     max-height: calc(100dvh - 20px);
-    padding: 12px;
+    padding: 10px 12px;
+  }
+
+  #game-over .game-over__eyebrow {
+    display: none;
   }
 
   #game-over.game-over-panel h2 {
-    font-size: 27px;
+    margin-bottom: 2px;
+    font-size: 22px;
   }
 
   #game-over .game-over__headline {
-    margin-bottom: 8px;
-    font-size: 9px;
+    margin-bottom: 6px;
+    font-size: 8px;
   }
 
   .game-over__stat-grid {
@@ -5339,26 +5398,73 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   }
 
   .game-over__stat {
-    min-height: 56px;
-    padding: 7px 8px;
+    min-height: 44px;
+    padding: 5px 7px;
   }
 
   .game-over__stat > span {
-    font-size: 7px;
+    font-size: 6.5px;
   }
 
   .game-over__stat strong {
-    font-size: 20px;
+    font-size: 17px;
+  }
+
+  .game-over__stat small,
+  .game-over__stat em {
+    font-size: 6px;
   }
 
   .game-over__milestones,
   .game-over__next-unlock {
-    margin-top: 7px;
-    padding: 8px 9px;
+    margin-top: 6px;
+    padding: 6px 8px;
+  }
+
+  .game-over__milestones h3 {
+    margin-bottom: 4px;
+    font-size: 8px;
+  }
+
+  .game-over__milestone-list {
+    gap: 4px 10px;
+  }
+
+  .game-over__milestone-list li {
+    font-size: 9.5px;
+  }
+
+  #game-over .game-over__empty {
+    font-size: 9px;
+  }
+
+  .game-over__next-unlock-head span {
+    font-size: 7.5px;
+  }
+
+  .game-over__next-unlock-head strong {
+    font-size: 10px;
+  }
+
+  .game-over__unlock-progress {
+    height: 5px;
+    margin-top: 5px;
+  }
+
+  #game-over .game-over__next-unlock p {
+    margin-top: 4px;
+    font-size: 7.5px;
   }
 
   .game-over__actions {
-    margin-top: 8px;
+    margin-top: 6px;
+    gap: 8px;
+  }
+
+  .game-over__actions button {
+    min-height: 40px;
+    padding: 9px 8px;
+    font-size: 11px;
   }
 
   .menu-panel {
@@ -11330,7 +11436,7 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
     padding-bottom: 3px;
     overflow-x: auto;
     overscroll-behavior-x: contain;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   .unlock-shop__footer {
@@ -11855,7 +11961,7 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
     grid-template-columns: repeat(5, minmax(92px, 1fr));
     gap: 6px;
     overflow-x: auto;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   .marked-deck__slot {
@@ -12080,7 +12186,20 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   }
 
   .unlock-card.unlock-playing-card {
-    min-height: 182px;
+    min-height: 212px;
+  }
+
+  /* Matches the specificity of the cards-view clamp defined above so the
+     natural-height treatment applies on every tab, not just classes. */
+  .unlock-shop__content[data-unlock-view]
+    .unlock-card.unlock-playing-card
+    > .unlock-card__copy {
+    display: block;
+    min-height: auto;
+    font-size: 7px;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+    -webkit-line-clamp: none;
   }
 
   .unlock-playing-card .unlock-card__meta {
@@ -14410,10 +14529,18 @@ html[data-locale="hi"] .wardrobe-preview__copy h3 {
   backdrop-filter: blur(10px);
 }
 
-#game-root.is-menu:not(.is-intro):not(.is-game-guide-open)
+#game-root.is-menu:not(.is-intro):not(.is-game-guide-open):not(.is-menu-settings-open):not(.is-layout-editing)
   .menu-panel.is-visible ~ .language-switcher {
   display: grid;
   animation: gameGuideLauncherEnter 320ms ease-out both;
+}
+
+/* The switcher lives above the menu chrome, so it would otherwise float over
+   the settings dialog and the control layout editor bar that open on top of
+   the main menu. Those views own the screen while they are up. */
+#game-root.is-menu-settings-open .language-switcher,
+#game-root.is-layout-editing .language-switcher {
+  display: none !important;
 }
 
 .language-switcher__button {
@@ -16532,9 +16659,123 @@ html[data-locale="hi"] .game-guide-launcher__copy small {
   display: flex;
 }
 
+/* is-paused is new here: the pause menu carries the standing readout now, so
+   the in-run badge would only duplicate it behind the dimmer. */
 #game-root.is-spectating .challenge-hud,
-#game-root.is-menu .challenge-hud {
+#game-root.is-menu .challenge-hud,
+#game-root.is-paused .challenge-hud {
   display: none !important;
+}
+
+/* The badge is a momentary alert rather than permanent furniture: it is only
+   unhidden for the fail/reset/completion window, so announce itself on entry. */
+#game-root.is-playing .challenge-hud:not([hidden]) {
+  animation: challengeHudFlash 260ms ease-out both;
+}
+
+@keyframes challengeHudFlash {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #game-root.is-playing .challenge-hud:not([hidden]) {
+    animation: none;
+  }
+}
+
+/* Pinned challenge readout inside the pause menu --------------------------- */
+
+.pause-challenge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border: 1px solid rgba(148, 214, 152, 0.42);
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(10, 16, 10, 0.72), rgba(20, 34, 20, 0.66));
+  text-align: left;
+}
+
+.pause-challenge[hidden] {
+  display: none;
+}
+
+.pause-challenge__pin {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(178, 232, 178, 0.85);
+  border-radius: 50%;
+  background: rgba(120, 210, 130, 0.65);
+  box-shadow: 0 0 8px rgba(126, 224, 138, 0.5);
+}
+
+.pause-challenge__copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pause-challenge__copy small {
+  color: rgba(186, 224, 186, 0.7);
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.pause-challenge__copy strong {
+  overflow: hidden;
+  color: #eef7e9;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pause-challenge__copy span {
+  color: rgba(198, 236, 198, 0.88);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
+
+.pause-challenge.is-waiting {
+  border-color: rgba(196, 189, 160, 0.4);
+  background: linear-gradient(90deg, rgba(14, 13, 10, 0.72), rgba(28, 26, 20, 0.66));
+}
+
+.pause-challenge.is-waiting .pause-challenge__pin {
+  border-color: rgba(214, 205, 170, 0.7);
+  background: rgba(168, 158, 122, 0.5);
+  box-shadow: none;
+}
+
+.pause-challenge.is-waiting .pause-challenge__copy span {
+  color: rgba(219, 211, 182, 0.82);
+}
+
+.pause-challenge.is-failed {
+  border-color: rgba(236, 120, 108, 0.58);
+  background: linear-gradient(90deg, rgba(18, 8, 8, 0.74), rgba(46, 16, 14, 0.68));
+}
+
+.pause-challenge.is-failed .pause-challenge__pin {
+  border-color: rgba(255, 154, 140, 0.85);
+  background: rgba(224, 84, 70, 0.72);
+  box-shadow: 0 0 8px rgba(244, 108, 92, 0.55);
+}
+
+.pause-challenge.is-failed .pause-challenge__copy span {
+  color: rgba(255, 186, 176, 0.9);
 }
 
 .challenge-hud__pin {

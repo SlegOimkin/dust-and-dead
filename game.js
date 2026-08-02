@@ -1584,6 +1584,9 @@
   var challengeHud = document.getElementById("challenge-hud");
   var challengeHudName = document.getElementById("challenge-hud-name");
   var challengeHudStatus = document.getElementById("challenge-hud-status");
+  var pauseChallenge = document.getElementById("pause-challenge");
+  var pauseChallengeName = document.getElementById("pause-challenge-name");
+  var pauseChallengeStatus = document.getElementById("pause-challenge-status");
   var progressionToastStack = document.getElementById("progression-toast-stack");
   var progressionToastTemplate = document.getElementById("progression-toast-template");
   var progressionOutputs = Array.prototype.slice.call(document.querySelectorAll("[data-progression-output]"));
@@ -1838,6 +1841,13 @@
     catchUpLimited: false,
   };
   var rng = mulberry32(7331);
+  // The gameplay stream keeps its constant seed so specs stay reproducible,
+  // but boss order must not be reproducible: drawing it from that one fixed
+  // stream dealt every fresh launch the same wave 5 / 10 / 15 line-up. The
+  // rotation gets its own stream, reseeded per run, and an explicit
+  // ?bossSeed=/?mapSeed= pins it back down for tests.
+  var PINNED_BOSS_ROTATION_SEED = createPinnedBossRotationSeed();
+  var bossRotationRng = mulberry32(PINNED_BOSS_ROTATION_SEED || createRandomMapSeed());
   var wave10BossOverride = null;
   var MAP_SEED = createMapSeed();
   var SOLO_MAP_SEED = isLocalMultiplayerLaunchRequested() ? createRandomMapSeed() : MAP_SEED;
@@ -6337,6 +6347,7 @@
       hud: {
         flashUntil: 0,
         flashChallengeId: "",
+        flashKind: "",
       },
     };
   }
@@ -6345,7 +6356,11 @@
   // Declared with the runtime, not the HUD helpers: updateHud runs during the
   // boot resetRun long before the challenge UI section is reached.
   var challengeHudCache = { hidden: null, name: "", status: "", stateClass: "" };
+  var pauseChallengeCache = { hidden: null, name: "", status: "", stateClass: "" };
   var challengeHudEntryCache = { id: "", title: "", target: 1 };
+  // Long enough to read a two-word verdict mid-fight without parking a banner
+  // on the play field for the rest of the run.
+  var CHALLENGE_HUD_FLASH_DURATION = 2.6;
   var CHALLENGE_BOSS_KIND_BY_ID = {
     "boss.hordeheart.heartbeat": "hordeheart",
     "boss.landEater.untouched": "landEater",
@@ -6378,12 +6393,15 @@
   function grantChallengeCompletion(id) {
     if (!isChallengeTrackingActive() || isChallengeCompletedInCareer(id)) return false;
     var result = careerProgression.recordChallengeCompleted(id);
-    return !!(result && result.accepted);
+    var accepted = !!(result && result.accepted);
+    if (accepted) flashChallengeHud(id, "completed");
+    return accepted;
   }
 
-  function flashChallengeHud(challengeId) {
-    challengeRuntime.hud.flashUntil = state.time + 1.1;
+  function flashChallengeHud(challengeId, kind) {
+    challengeRuntime.hud.flashUntil = state.time + CHALLENGE_HUD_FLASH_DURATION;
     challengeRuntime.hud.flashChallengeId = String(challengeId || "");
+    challengeRuntime.hud.flashKind = kind === "completed" ? "completed" : "failed";
   }
 
   function resetChallengeBossFight() {
@@ -9756,6 +9774,7 @@
     state.bossRotationRemaining = BOSS_ROTATION_KINDS.slice();
     state.bossRotationLastKind = "";
     state.bossRotationCycle = 1;
+    reseedBossRotationRng();
     state.score = 0;
     state.kills = 0;
     state.shotsFired = 0;
@@ -28054,7 +28073,9 @@
         return kind !== previousKind && isBossKindAllowedForWave(kind, state.wave);
       });
     }
-    var selected = candidates[Math.floor(rng() * candidates.length)] || candidates[0] || BOSS_ROTATION_KINDS[0];
+    var selected = candidates[Math.floor(bossRotationRng() * candidates.length)] ||
+      candidates[0] ||
+      BOSS_ROTATION_KINDS[0];
     var selectedIndex = remaining.indexOf(selected);
     if (selectedIndex >= 0) remaining.splice(selectedIndex, 1);
     state.bossRotationRemaining = remaining;
@@ -111455,6 +111476,7 @@
       if (showExitConfirm) pauseMenuDialog.setAttribute("aria-describedby", "pause-exit-confirm-description");
       else pauseMenuDialog.removeAttribute("aria-describedby");
     }
+    if (normalizedView === "main") updatePauseChallengePanel();
     if (showSettings) {
       updatePauseVolumeControls();
       updateGraphicsSettingsUi();
@@ -114939,6 +114961,9 @@
     challengeHudEntryCache.id = "";
     challengeHudCache.name = "";
     challengeHudCache.status = "";
+    pauseChallengeCache.name = "";
+    pauseChallengeCache.status = "";
+    updatePauseChallengePanel();
     updateMenuMusicButton();
     syncSoloCareerChoiceButtons();
     refreshProgressionUi();
@@ -115289,51 +115314,103 @@
         status = Math.min(state.wave, CHALLENGE_ONE_GUN_WAVE) + " / " + CHALLENGE_ONE_GUN_WAVE;
       }
     }
-    var flashFailed = challengeRuntime.hud.flashUntil > state.time &&
-      challengeRuntime.hud.flashChallengeId === pinnedId;
-    if (flashFailed && stateClass !== "failed") {
-      stateClass = "failed";
-      status = tr("hud.challenge.reset", "Reset");
-    }
     return { name: entry.title, status: status, stateClass: stateClass };
   }
 
-  function updateChallengeHud() {
-    if (!challengeHud) return;
-    var view = null;
+  function resolveTrackedChallengeId() {
     if (
-      careerProgression &&
-      typeof careerProgression.getPinnedChallengeId === "function" &&
-      state.mode === "playing" &&
-      !multiplayerState.active &&
-      !isLocalMultiplayerSpectator()
-    ) {
-      var pinnedId = careerProgression.getPinnedChallengeId();
-      if (pinnedId && !careerProgression.isChallengeCompleted(pinnedId)) {
-        view = buildChallengeHudView(pinnedId);
-      }
-    }
+      !careerProgression ||
+      typeof careerProgression.getPinnedChallengeId !== "function" ||
+      multiplayerState.active ||
+      isLocalMultiplayerSpectator()
+    ) return "";
+    return careerProgression.getPinnedChallengeId() || "";
+  }
+
+  function buildCompletedChallengeView(challengeId) {
+    var entry = getChallengeHudEntry(challengeId);
+    if (!entry) return null;
+    return {
+      name: entry.title,
+      status: tr("hud.challenge.completed", "Completed"),
+      stateClass: "holding",
+    };
+  }
+
+  // The standing readout lives in the pause menu now. On the play field the
+  // badge is a momentary alert: it surfaces only for the seconds after the
+  // pinned challenge is failed, reset or completed, then gets out of the way.
+  function buildChallengeFlashView() {
+    var flash = challengeRuntime.hud;
+    if (!flash.flashChallengeId || flash.flashUntil <= state.time) return null;
+    if (state.mode !== "playing") return null;
+    if (flash.flashChallengeId !== resolveTrackedChallengeId()) return null;
+    if (flash.flashKind === "completed") return buildCompletedChallengeView(flash.flashChallengeId);
+    var entry = getChallengeHudEntry(flash.flashChallengeId);
+    if (!entry) return null;
+    var standing = careerProgression.isChallengeCompleted(flash.flashChallengeId)
+      ? null
+      : buildChallengeHudView(flash.flashChallengeId);
+    return {
+      name: entry.title,
+      status: standing && standing.stateClass === "failed"
+        ? standing.status
+        : tr("hud.challenge.reset", "Reset"),
+      stateClass: "failed",
+    };
+  }
+
+  function buildPinnedChallengePanelView() {
+    if (state.mode !== "playing") return null;
+    var pinnedId = resolveTrackedChallengeId();
+    if (!pinnedId) return null;
+    if (careerProgression.isChallengeCompleted(pinnedId)) return buildCompletedChallengeView(pinnedId);
+    return buildChallengeHudView(pinnedId);
+  }
+
+  function syncChallengeReadout(element, cache, nameElement, statusElement, view) {
+    if (!element) return;
     var hidden = !view;
-    if (challengeHudCache.hidden !== hidden) {
-      challengeHudCache.hidden = hidden;
-      challengeHud.hidden = hidden;
-      challengeHud.setAttribute("aria-hidden", hidden ? "true" : "false");
+    if (cache.hidden !== hidden) {
+      cache.hidden = hidden;
+      element.hidden = hidden;
+      element.setAttribute("aria-hidden", hidden ? "true" : "false");
     }
     if (!view) return;
-    if (challengeHudCache.name !== view.name) {
-      challengeHudCache.name = view.name;
-      if (challengeHudName) challengeHudName.textContent = view.name;
+    if (cache.name !== view.name) {
+      cache.name = view.name;
+      if (nameElement) nameElement.textContent = view.name;
     }
-    if (challengeHudCache.status !== view.status) {
-      challengeHudCache.status = view.status;
-      if (challengeHudStatus) challengeHudStatus.textContent = view.status;
+    if (cache.status !== view.status) {
+      cache.status = view.status;
+      if (statusElement) statusElement.textContent = view.status;
     }
-    if (challengeHudCache.stateClass !== view.stateClass) {
-      challengeHudCache.stateClass = view.stateClass;
-      challengeHud.classList.toggle("is-holding", view.stateClass === "holding");
-      challengeHud.classList.toggle("is-failed", view.stateClass === "failed");
-      challengeHud.classList.toggle("is-waiting", view.stateClass === "waiting");
+    if (cache.stateClass !== view.stateClass) {
+      cache.stateClass = view.stateClass;
+      element.classList.toggle("is-holding", view.stateClass === "holding");
+      element.classList.toggle("is-failed", view.stateClass === "failed");
+      element.classList.toggle("is-waiting", view.stateClass === "waiting");
     }
+  }
+
+  function updateChallengeHud() {
+    syncChallengeReadout(
+      challengeHud,
+      challengeHudCache,
+      challengeHudName,
+      challengeHudStatus,
+      buildChallengeFlashView()
+    );
+  }
+
+  function updatePauseChallengePanel() {
+    syncChallengeReadout(
+      pauseChallenge,
+      pauseChallengeCache,
+      pauseChallengeName,
+      pauseChallengeStatus,
+      buildPinnedChallengePanelView()
+    );
   }
 
   function showProgressionToast(title, detail, kind) {
@@ -118482,6 +118559,22 @@
 
   function createRandomMapSeed() {
     return ((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0) || 7331;
+  }
+
+  // Returns 0 when the run is free to shuffle its own boss order.
+  function createPinnedBossRotationSeed() {
+    var params = new URLSearchParams(window.location.search || "");
+    var keys = ["bossSeed", "mapSeed"];
+    for (var i = 0; i < keys.length; i++) {
+      if (!params.has(keys[i])) continue;
+      var explicit = normalizeMapSeed(params.get(keys[i]));
+      if (explicit) return explicit;
+    }
+    return 0;
+  }
+
+  function reseedBossRotationRng() {
+    bossRotationRng = mulberry32(PINNED_BOSS_ROTATION_SEED || createRandomMapSeed());
   }
 
   function createDistinctMapSeed(previousSeed, additionalSeed) {
@@ -123239,6 +123332,7 @@
         lastKind: state.bossRotationLastKind || "",
         remaining: normalizeBossRotationRemaining(state.bossRotationRemaining),
         pool: BOSS_ROTATION_KINDS.slice(),
+        pinnedSeed: PINNED_BOSS_ROTATION_SEED,
       };
     },
     forceActiveBossDefeat: function (skipRender) {
