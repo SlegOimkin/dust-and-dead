@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Land Eater sculpt review</title>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #d9a257; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #label {
+      position: fixed; left: 18px; bottom: 16px; padding: 7px 10px;
+      color: #fff1d3; background: rgba(36, 14, 11, .72);
+      border: 1px solid rgba(255, 221, 165, .38); border-radius: 3px;
+      font: 700 12px/1.25 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <div id="label"></div>
+  <script src="../../../vendor/three.min.js"></script>
+  <script src="../../../land-eater-model.js?v=land-eater-model-v11-20260724"></script>
+  <script>
+    (function () {
+      "use strict";
+      const params = new URLSearchParams(location.search);
+      const pass = params.get("pass") || "blockout";
+      const view = params.get("view") || "reference";
+      const pose = params.get("pose") || "idle";
+      const suppliedProgress = Number(params.get("progress"));
+      const suppliedTime = Number(params.get("time"));
+      const suppliedTelegraph = Number(params.get("telegraph"));
+      const suppliedHurt = Number(params.get("hurt"));
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.04;
+      document.body.prepend(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xd9a257);
+      scene.fog = new THREE.Fog(0xd9a257, 72, 130);
+      const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.1, 150);
+      const presets = {
+        reference: { position: [34, 23, 51], target: [-8.5, 1.65, 0] },
+        side: { position: [-7, 12, 50], target: [-8.5, 1.4, 0] },
+        front: { position: [36, 11, 3], target: [6.2, 2.2, 0] },
+        top: { position: [-5, 51, 18], target: [-8.5, 0.8, 0] },
+      };
+      const preset = presets[view] || presets.reference;
+      camera.position.fromArray(preset.position);
+      camera.lookAt(new THREE.Vector3().fromArray(preset.target));
+
+      const hemisphere = new THREE.HemisphereLight(0xffe4b6, 0x523427, 1.25);
+      scene.add(hemisphere);
+      const key = new THREE.DirectionalLight(0xffe5ba, 2.55);
+      key.position.set(-11, 20, 13);
+      key.castShadow = true;
+      key.shadow.mapSize.set(2048, 2048);
+      key.shadow.camera.left = -34;
+      key.shadow.camera.right = 34;
+      key.shadow.camera.top = 28;
+      key.shadow.camera.bottom = -28;
+      key.shadow.bias = -0.00025;
+      scene.add(key);
+
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(95, 95),
+        new THREE.MeshStandardMaterial({ color: 0xb9763f, roughness: 0.96, metalness: 0 }),
+      );
+      ground.rotation.x = -Math.PI * 0.5;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      const model = createLandEaterModel({ reviewPass: pass });
+      model.rotation.y = -0.08;
+      scene.add(model);
+
+      const stats = { nodes: 0, meshes: 0, triangles: 0, vertices: 0, materials: 0, geometries: 0 };
+      const materialIds = new Set();
+      const geometryIds = new Set();
+      model.traverse((node) => {
+        stats.nodes += 1;
+        if (!node.isMesh) return;
+        stats.meshes += 1;
+        if (node.geometry) {
+          geometryIds.add(node.geometry.uuid);
+          const positions = node.geometry.getAttribute("position");
+          const instanceCount = node.isInstancedMesh ? node.count : 1;
+          if (positions) stats.vertices += positions.count * instanceCount;
+          stats.triangles += (node.geometry.index
+            ? node.geometry.index.count / 3
+            : (positions ? positions.count / 3 : 0)) * instanceCount;
+        }
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach((material) => { if (material) materialIds.add(material.uuid); });
+      });
+      stats.triangles = Math.round(stats.triangles);
+      stats.materials = materialIds.size;
+      stats.geometries = geometryIds.size;
+      document.documentElement.dataset.modelStats = JSON.stringify(stats);
+      document.documentElement.dataset.optimization = JSON.stringify(model.userData.optimization || {});
+      const defaultProgress = pose === "devour"
+        ? 0.58
+        : pose === "hunt"
+          ? 0.52
+        : pose === "burrow"
+          ? 0.54
+        : pose === "emerge"
+          ? 0.72
+          : pose === "recovery"
+            ? 0.45
+            : pose === "zigzag"
+              ? 0.46
+              : pose === "hurt"
+                ? 0.18
+                : pose === "death"
+                  ? 0.65
+                  : 0;
+      const fixedProgress = Number.isFinite(suppliedProgress)
+        ? THREE.MathUtils.clamp(suppliedProgress, 0, 1)
+        : defaultProgress;
+      const fixedTelegraph = Number.isFinite(suppliedTelegraph)
+        ? THREE.MathUtils.clamp(suppliedTelegraph, 0, 1)
+        : 1;
+      const fixedHurt = Number.isFinite(suppliedHurt)
+        ? THREE.MathUtils.clamp(suppliedHurt, 0, 1)
+        : 0;
+      document.getElementById("label").textContent =
+        `Land Eater · ${pass} · ${view} · ${pose} ${fixedProgress.toFixed(2)}`;
+      window.__LAND_EATER_REVIEW__ = { model, renderer, scene, camera, pass, view, pose, stats };
+
+      function frame(now) {
+        const time = Number.isFinite(suppliedTime) ? suppliedTime : now * 0.001;
+        model.userData.animate(time, {
+          mode: pose,
+          progress: fixedProgress,
+          telegraphProgress: fixedTelegraph,
+          motionProgress: fixedProgress,
+          hurtAmount: fixedHurt,
+          phase: 2,
+        });
+        renderer.render(scene, camera);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+      setTimeout(() => { window.__LAND_EATER_PREVIEW_READY__ = true; }, 350);
+      addEventListener("resize", () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+    })();
+  </script>
+</body>
+</html>

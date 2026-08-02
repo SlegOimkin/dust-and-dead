@@ -1,48 +1,96 @@
-# Сборка APK
+# Сборка Android APK
 
-Игра остается обычным статическим сайтом: `index.html`, `styles.css`, `game.js` и `vendor/three.min.js` запускаются напрямую через браузер без сервера. APK собирается как Android-обертка Capacitor вокруг этих файлов.
+Репозиторий содержит всё необходимое для продолжения разработки на другом устройстве: исходники игры, локализации, процедурные модели, тесты, Capacitor-конфигурацию, нативный Android-код и скрипты сборки. Скопированные web-ресурсы, Gradle output и готовые APK намеренно не публикуются — они создаются заново командами ниже.
 
-## Окружение
+## Требования
 
-Все локальные инструменты лежат внутри проекта:
+Для сборки на Windows нужны:
 
-- Node.js: `.tools\node\extracted\node-v22.22.3-win-x64`
-- JDK 21: `.tools\jdk\extracted\jdk-21.0.11+10`
-- Android SDK: `.tools\android-sdk`
+- Git;
+- PowerShell 5.1 или новее;
+- Node.js 22 и npm;
+- JDK 21;
+- Android SDK с Platform 36, Build Tools 36.0.0, Platform Tools и Command-line Tools.
 
-Чтобы открыть PowerShell с готовым `PATH`, запустите из корня проекта:
+Android SDK можно установить через Android Studio. Для системных установок задайте `JAVA_HOME` и `ANDROID_HOME` (или `ANDROID_SDK_ROOT`) и добавьте Node.js в `PATH`.
+
+Скрипт `dev-shell.ps1` также распознаёт необязательное локальное окружение, если оно расположено так:
+
+```text
+.tools/node/extracted/node-v*-win-x64
+.tools/jdk/extracted/jdk-*
+.tools/android-sdk
+```
+
+Каталог `.tools` не хранится в Git. Это только удобная локальная альтернатива системным установкам.
+
+## Подготовка чистого клона
+
+```powershell
+git clone https://github.com/SlegOimkin/dust-and-dead.git
+cd dust-and-dead
+npm ci
+npx playwright install chromium
+npm run sync:android
+```
+
+`sync:android` создаёт `www`, копирует актуальные web-ресурсы, выполняет `cap sync android` и сверяет SHA-256 исходных и упаковываемых файлов.
+
+Чтобы открыть интерактивный PowerShell с найденными инструментами разработки:
 
 ```powershell
 .\dev-shell.cmd
 ```
 
-Разовый запуск команд также работает через npm-скрипты, потому что они сами используют `-ExecutionPolicy Bypass`.
-
 ## Проверки
+
+После синхронизации выполните:
 
 ```powershell
 npm run check
 npm test
-npm run verify:apk
 ```
 
-`npm test` запускает синтаксическую проверку JavaScript и Playwright smoke-тест через `file://`.
+`check` проверяет синтаксис JavaScript и совпадение синхронизированных ресурсов. `test` дополнительно запускает Playwright-набор; браузер Chromium устанавливается отдельной командой на этапе подготовки.
 
-## Сборка
+## Сборка APK
 
-Из корня проекта `C:\MyProjects\TestProject`:
+Обычная debug-сборка:
 
 ```powershell
-npm run sync:android
 npm run build:apk
 ```
 
-`npm run build:apk` синхронизирует `index.html`, `styles.css`, `game.js` и `vendor\three.min.js` в `www`, выполняет `cap sync android`, собирает debug APK через Gradle, копирует результат в `DustAndDead-debug.apk` и проверяет подпись.
+Результат: `DustAndDead-debug.apk` в корне проекта.
 
-## Ручная проверка подписи
+Одновременная сборка обычного и playtest-варианта с разблокированным тестовым доступом:
+
+```powershell
+npm run build:apks
+```
+
+Результаты:
+
+- `DustAndDead-debug.apk`;
+- `DustAndDead-playtest.apk`.
+
+Скрипты выполняют чистую Gradle-сборку и автоматически проверяют package id, версию, build profile, содержимое APK и debug-подпись. Текущие параметры Android-приложения: `versionCode 43`, `versionName 1.42`, package id `com.testproject.dustanddead`.
+
+Повторная проверка уже собранных файлов:
 
 ```powershell
 npm run verify:apk
+npm run verify:apks
 ```
 
-`DustAndDead-debug.apk` нужен только для локальной проверки и установки на телефон. В GitHub он не добавляется.
+## Что восстанавливается автоматически
+
+В репозиторий не включаются:
+
+- `node_modules` — восстанавливается через `npm ci`;
+- `www` и `android/app/src/main/assets/public` — через `npm run sync:android`;
+- `.gradle`, Android `build` и сгенерированные Capacitor-файлы — через Capacitor/Gradle;
+- Chromium для Playwright — через `npx playwright install chromium`;
+- APK, тестовые отчёты, временные каталоги и локальные SDK/JDK/Node toolchains.
+
+При переносе проекта достаточно клонировать репозиторий, установить перечисленные инструменты и выполнить команды подготовки чистого клона.
