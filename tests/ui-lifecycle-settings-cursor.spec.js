@@ -107,7 +107,9 @@ test("main-menu gear opens the shared settings view without starting or pausing 
   await expect(page.locator("#pause-menu")).toBeVisible();
   await expect(page.locator("#pause-settings-panel")).toHaveClass(/is-visible/);
   await expect(page.locator("#pause-main-panel")).not.toHaveClass(/is-visible/);
-  await expect(page.locator("#control-layout-btn")).toBeVisible();
+  // The editor only moves the on-screen stick and fire button, so a desktop
+  // pointer build has no use for it.
+  await expect(page.locator("#control-layout-btn")).toBeHidden();
   await expect(page.locator(".pause-menu__panel")).toHaveAttribute(
     "aria-labelledby",
     "pause-settings-title"
@@ -620,7 +622,9 @@ test("graphics and accessibility settings switch from the main menu and persist"
 });
 
 test("control layout editor opens from the main-menu settings and returns to them", async ({ page }) => {
-  await openMainMenu(page);
+  // Touch-sized viewport: the entry point is offered only where the on-screen
+  // controls it edits actually exist.
+  await openMainMenu(page, { width: 740, height: 380 });
 
   await page.locator("#menu-settings-btn").click();
   await expect(page.locator("#pause-settings-panel")).toHaveClass(/is-visible/);

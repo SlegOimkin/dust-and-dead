@@ -1637,6 +1637,7 @@
   put("hud.challenge.waitingBoss", localized("Waiting for the boss", "Ожидание босса", "बॉस का इंतज़ार"));
   put("hud.challenge.armTrap", localized("Waiting for a trap", "Ожидание ловушки", "फंदे का इंतज़ार"));
   put("hud.challenge.reset", localized("Reset", "Сброс", "रीसेट"));
+  put("hud.challenge.completed", localized("Completed", "Выполнено", "पूरा हुआ"));
 
   put("dev.preview.iconShowcase", localized("Icon Showcase", "Витрина значков", "चिह्न प्रदर्शनी"));
   put("dev.preview.breachOne", localized("Display only · Breach Marshal · I", "Только показ · Штурмовой маршал · I", "केवल प्रदर्शन · धावा मार्शल · I"));
@@ -2171,7 +2172,7 @@
   }
 
   function assertPack() {
-    var expectedKeyCount = 577;
+    var expectedKeyCount = 578;
     var expectedPatternCount = 95;
     var referenceKeys = Object.keys(messages.en).sort();
     if (referenceKeys.length !== expectedKeyCount) {

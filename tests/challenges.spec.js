@@ -241,7 +241,7 @@ test("mobile challenge cards keep every pin control inside the card", async ({ p
   }
 });
 
-test("pinned indicator tracks a boss feat live and turns red on failure", async ({ page }) => {
+test("the pause menu tracks a pinned boss feat live while the play field stays clear", async ({ page }) => {
   await openGame(page);
   await page.evaluate(() => {
     window.DustAndDeadProgression.setPinnedChallenge("rare.silverGhost");
@@ -249,10 +249,19 @@ test("pinned indicator tracks a boss feat live and turns red on failure", async 
   await startHunt(page);
 
   const hud = page.locator("#challenge-hud");
-  // Before any boss is up the pinned feat waits.
+  const pausePin = page.locator("#pause-challenge");
+
+  // Nothing has happened to the feat yet, so the play field carries no badge.
   await page.evaluate(() => window.advanceTime(100));
-  await expect(hud).toBeVisible();
-  await expect(hud).toHaveClass(/is-waiting/);
+  await expect(hud).toBeHidden();
+
+  // The standing readout lives in the pause menu instead.
+  await page.locator("#pause-menu-btn").click();
+  await expect(pausePin).toBeVisible();
+  await expect(pausePin).toHaveClass(/is-waiting/);
+  await expect(page.locator("#pause-challenge-name")).toHaveText("Silver Ghost");
+  await page.locator("#pause-continue-btn").click();
+  await expect(page.locator("#pause-menu")).toBeHidden();
 
   await page.evaluate(() => {
     const game = window.__dustAndDeadTest;
@@ -260,8 +269,11 @@ test("pinned indicator tracks a boss feat live and turns red on failure", async 
     game.setLandEaterAiEnabled(false);
     window.advanceTime(100);
   });
-  await expect(hud).toHaveClass(/is-holding/);
-  await expect(page.locator("#challenge-hud-name")).toHaveText("Silver Ghost");
+  await expect(hud).toBeHidden();
+  await page.locator("#pause-menu-btn").click();
+  await expect(pausePin).toHaveClass(/is-holding/);
+  await page.locator("#pause-continue-btn").click();
+  await expect(page.locator("#pause-menu")).toBeHidden();
 
   const beforeDamage = await page.evaluate(() => window.__dustAndDeadTest.getChallengeDiagnostics());
   expect(beforeDamage.trackingActive).toBe(true);
@@ -273,7 +285,13 @@ test("pinned indicator tracks a boss feat live and turns red on failure", async 
   });
   const afterDamage = await page.evaluate(() => window.__dustAndDeadTest.getChallengeDiagnostics());
   expect(afterDamage.bossFight).toMatchObject({ kind: "landEater", tookDamage: true });
+
+  // Failure is the one thing that surfaces in-run, and only for a moment.
+  await expect(hud).toBeVisible();
   await expect(hud).toHaveClass(/is-failed/);
+  await expect(page.locator("#challenge-hud-name")).toHaveText("Silver Ghost");
+  await page.evaluate(() => window.advanceTime(3200));
+  await expect(hud).toBeHidden();
 
   // The run continues: the mode stays "playing" after the failure.
   expect(await page.evaluate(() => JSON.parse(window.render_game_to_text()).mode)).toBe("playing");
