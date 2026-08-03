@@ -7330,8 +7330,32 @@ html:not(.no-local-multiplayer) .menu-panel__play-actions > .menu-contracts-btn 
   pointer-events: none;
 }
 
+/* The in-match menu is the only way out of a match before it ends, so the
+   button stays reachable. It opens an overlay without pausing — the match runs
+   on regardless, which the panel says out loud.
+
+   In a match it stands beside the scoreboard toggle, so it borrows that
+   button's metrics: the solo HUD's 48px square sat 4px lower and 4px taller
+   than its neighbour, and the pair read as two mismatched buttons. */
 #game-root.is-multiplayer-match .pause-menu-btn {
-  display: none;
+  top: max(12px, env(safe-area-inset-top));
+  /* The scoreboard toggle is centred and the ammo panel is right-anchored, so
+     on a narrow window this button is squeezed between them — at 730px the
+     48px square actually overlapped the toggle by 2px. A tighter offset splits
+     the remaining room evenly on both sides. */
+  right: calc(var(--combat-hud-right) + var(--ammo-hud-width) + 6px);
+  display: grid;
+  width: 44px;
+  height: 44px;
+  font-size: 21px;
+}
+
+.pause-menu__match-hint {
+  margin: -2px 0 0;
+  color: rgba(255, 214, 150, 0.92);
+  font-size: 13px;
+  line-height: 1.45;
+  text-wrap: pretty;
 }
 
 @keyframes multiplayerUpgradeBadgePulse {

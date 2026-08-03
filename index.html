@@ -11,7 +11,7 @@
         }
       } catch (error) {}
     </script>
-    <link rel="stylesheet" href="styles.css?v=menu-layout-v3-20260803">
+    <link rel="stylesheet" href="styles.css?v=match-menu-v3-20260803">
   </head>
   <body>
     <main id="game-root" class="is-intro" aria-label="Dust and Dead game">
@@ -1404,7 +1404,8 @@
           <button id="pause-close-btn" class="pause-menu__close" type="button" aria-label="Close menu" title="Close">&times;</button>
 
           <div id="pause-main-panel" class="pause-menu__view is-visible">
-            <h2 id="pause-menu-title">Paused</h2>
+            <h2 id="pause-menu-title" data-i18n="pause.title">Paused</h2>
+            <p id="pause-match-hint" class="pause-menu__match-hint" data-i18n="pause.multiplayerHint" hidden aria-hidden="true">The match keeps running while this menu is open.</p>
             <div id="pause-challenge" class="pause-challenge" hidden aria-hidden="true">
               <span class="pause-challenge__pin" aria-hidden="true"></span>
               <span class="pause-challenge__copy">
@@ -1478,7 +1479,7 @@
             aria-labelledby="pause-exit-confirm-title"
             aria-describedby="pause-exit-confirm-description"
           >
-            <span class="pause-menu__confirm-eyebrow" data-i18n="pause.exitConfirm.eyebrow">End Current Hunt</span>
+            <span id="pause-exit-confirm-eyebrow" class="pause-menu__confirm-eyebrow" data-i18n="pause.exitConfirm.eyebrow">End Current Hunt</span>
             <h2 id="pause-exit-confirm-title" data-i18n="pause.exitConfirm.title">Exit to main menu?</h2>
             <p id="pause-exit-confirm-description" data-i18n="pause.exitConfirm.body">This hunt will end and cannot be resumed.</p>
             <div class="pause-menu__actions pause-menu__confirm-actions">
@@ -1780,6 +1781,6 @@
     <script src="hordeheart-model.js?v=hordeheart-model-v15-20260726"></script>
     <script src="land-eater-model.js?v=land-eater-model-v11-20260724"></script>
     <script src="progression.js?v=dust-rewards-v2-20260730"></script>
-    <script src="game.js?v=menu-layout-v1-20260803"></script>
+    <script src="game.js?v=match-menu-v1-20260803"></script>
   </body>
 </html>

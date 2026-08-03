@@ -1710,6 +1710,11 @@
   var pauseExitBtn = document.getElementById("pause-exit-btn");
   var pauseExitCancelBtn = document.getElementById("pause-exit-cancel-btn");
   var pauseExitConfirmBtn = document.getElementById("pause-exit-confirm-btn");
+  var pauseMenuTitle = document.getElementById("pause-menu-title");
+  var pauseMenuMatchHint = document.getElementById("pause-match-hint");
+  var pauseExitConfirmEyebrow = document.getElementById("pause-exit-confirm-eyebrow");
+  var pauseExitConfirmTitle = document.getElementById("pause-exit-confirm-title");
+  var pauseExitConfirmBody = document.getElementById("pause-exit-confirm-description");
   var controlLayoutBtn = document.getElementById("control-layout-btn");
   var controlLayoutEditor = document.getElementById("control-layout-editor");
   var controlLayoutApplyBtn = document.getElementById("control-layout-apply-btn");
@@ -1893,6 +1898,10 @@
   var lastMobileAim = { x: 0, z: -1 };
   var lastFrame = performance.now();
   var mainMenuSettingsOpen = false;
+  // The same overlay serves a running multiplayer match, where it must NOT set
+  // state.paused: the other players keep going, so freezing this client would
+  // only make it fall behind the authority.
+  var multiplayerMenuOpen = false;
   var pauseMenuView = "main";
   var applicationSuspended = false;
   var applicationAudioWasRunning = false;
@@ -10638,7 +10647,7 @@
     // same settings panel opened through the main-menu gear.
     if (!canOpenPauseMenu() && !mainMenuSettingsOpen) return;
     clearActiveInput();
-    if (canOpenPauseMenu()) state.paused = true;
+    if (canOpenPauseMenu() && !isMultiplayerMenuMatch()) state.paused = true;
     controlLayoutState.editing = true;
     controlLayoutState.drag = null;
     controlLayoutState.draft = cloneControlLayout(controlLayoutState.saved) || getDefaultControlLayout();
@@ -98838,6 +98847,7 @@
   }
 
   function closeLocalMultiplayerLobby() {
+    multiplayerMenuOpen = false;
     if (multiplayerState.transportKind === "online" || onlineMultiplayerState.open) {
       closeOnlineMultiplayerLobby();
       return;
@@ -103650,6 +103660,12 @@
 
   function finishMultiplayerMatch(winnerIds, reason, broadcast) {
     if (!multiplayerState.active || multiplayerState.matchEnded) return;
+    // The results panel owns the screen from here; an in-match menu left open
+    // would stack on top of it and its "leave the match" copy would be a lie.
+    if (multiplayerMenuOpen) {
+      multiplayerMenuOpen = false;
+      syncPauseMenuUi();
+    }
     var finalReason = reason || "finished";
     var finalWinnerIds = winnerIds && winnerIds.length ? winnerIds.slice() : getMultiplayerPointLeaders();
     var finalTransmissions = [];
@@ -113181,8 +113197,18 @@
     updateModeClass();
   }
 
+  function isMultiplayerMenuMatch() {
+    return !!(multiplayerState.active && multiplayerState.phase === "match");
+  }
+
+  // Both variants of the overlay answer to one question everywhere the code
+  // used to read state.paused directly: is the menu covering the game?
+  function isPauseMenuOpen() {
+    return !!state.paused || multiplayerMenuOpen;
+  }
+
   function canOpenPauseMenu() {
-    return state.mode === "playing" && !isIntroActive() && !(multiplayerState.active && multiplayerState.phase === "match");
+    return state.mode === "playing" && !isIntroActive();
   }
 
   function clearActiveInput() {
@@ -113430,10 +113456,11 @@
   }
 
   function syncPauseMenuUi() {
-    var open = !!state.paused || mainMenuSettingsOpen;
+    var open = isPauseMenuOpen() || mainMenuSettingsOpen;
     if (pauseMenu) {
       pauseMenu.classList.toggle("is-visible", open);
       pauseMenu.classList.toggle("is-main-menu-settings", mainMenuSettingsOpen);
+      pauseMenu.classList.toggle("is-multiplayer-menu", multiplayerMenuOpen);
       pauseMenu.setAttribute("aria-hidden", open ? "false" : "true");
     }
     if (pauseMenuBtn) pauseMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
@@ -113443,15 +113470,22 @@
 
   function setPauseMenuOpen(open) {
     var restoreMenuSettingsFocus = mainMenuSettingsOpen && !open;
-    var wasPaused = !!state.paused;
+    var wasPaused = isPauseMenuOpen();
     mainMenuSettingsOpen = false;
     var shouldOpen = !!open && canOpenPauseMenu();
     if (!shouldOpen && controlLayoutState.editing) finishControlLayoutEdit(false);
-    state.paused = shouldOpen;
+    // In a live match only the overlay opens. The simulation keeps advancing,
+    // and clearActiveInput below plus the keydown gate stop this player from
+    // acting while they read it — they stand still and stay vulnerable, which
+    // is the honest cost of opening a menu mid-match.
+    var duringMatch = shouldOpen && isMultiplayerMenuMatch();
+    multiplayerMenuOpen = duringMatch;
+    state.paused = shouldOpen && !duringMatch;
     clearActiveInput();
     if (shouldOpen) {
       showPauseMenuView("main");
       updatePauseVolumeControls();
+      syncPauseMenuModeCopy();
     }
     syncPauseMenuUi();
     if (shouldOpen) focusPauseControl(pauseContinueBtn);
@@ -113463,7 +113497,47 @@
     else if (!shouldOpen && wasPaused) focusPauseControl(pauseMenuBtn);
   }
 
+  // "Paused" and "this hunt will end and cannot be resumed" are both wrong in a
+  // match that keeps running without you, so the overlay swaps to the keys that
+  // say so. Swapping data-i18n (not textContent) keeps a later language change
+  // correct — refresh re-reads the attribute we just set.
+  function syncPauseMenuModeCopy() {
+    var inMatch = multiplayerMenuOpen;
+    var entries = [
+      [pauseMenuTitle, inMatch ? "pause.multiplayerTitle" : "pause.title"],
+      [pauseMenuMatchHint, "pause.multiplayerHint"],
+      [pauseExitConfirmEyebrow, inMatch ? "pause.exitConfirm.multiplayerEyebrow" : "pause.exitConfirm.eyebrow"],
+      [pauseExitConfirmTitle, inMatch ? "pause.exitConfirm.multiplayerTitle" : "pause.exitConfirm.title"],
+      [pauseExitConfirmBody, inMatch ? "pause.exitConfirm.multiplayerBody" : "pause.exitConfirm.body"],
+    ];
+    for (var i = 0; i < entries.length; i++) {
+      var element = entries[i][0];
+      if (!element) continue;
+      element.setAttribute("data-i18n", entries[i][1]);
+      if (gameI18n && typeof gameI18n.refresh === "function") gameI18n.refresh(element);
+    }
+    if (pauseMenuMatchHint) {
+      pauseMenuMatchHint.hidden = !inMatch;
+      pauseMenuMatchHint.setAttribute("aria-hidden", inMatch ? "false" : "true");
+    }
+  }
+
+  function exitFromPauseMenu() {
+    if (multiplayerMenuOpen) {
+      // Leaving mid-match is a real departure: closeLocalMultiplayerLobby sends
+      // match.leave online (or drops the Nearby link), releases the seat and
+      // rebuilds a fresh solo map before showing the menu.
+      multiplayerMenuOpen = false;
+      state.paused = false;
+      syncPauseMenuUi();
+      closeLocalMultiplayerLobby();
+      return;
+    }
+    exitToMainMenu();
+  }
+
   function exitToMainMenu() {
+    multiplayerMenuOpen = false;
     settleSoloCareerMastery();
     setPauseMenuOpen(false);
     closeGameGuide(false);
@@ -117625,7 +117699,7 @@
     }
     if (pauseExitConfirmBtn) {
       pauseExitConfirmBtn.addEventListener("click", function () {
-        exitToMainMenu();
+        exitFromPauseMenu();
         focusPauseControl(startBtn);
       });
     }
@@ -117744,7 +117818,7 @@
           setPauseMenuOpen(false);
           return;
         }
-        if (state.paused) {
+        if (isPauseMenuOpen()) {
           event.preventDefault();
           if (pauseMenuView === "exit-confirm") {
             returnFromPauseSubmenu(pauseExitBtn);
@@ -117764,7 +117838,10 @@
         }
       }
       if (mainMenuSettingsOpen && trapPauseMenuFocus(event)) return;
-      if (state.paused) {
+      if (isPauseMenuOpen()) {
+        // Swallow gameplay keys for the multiplayer overlay too — the match is
+        // still advancing behind it, so an unfiltered WASD would walk the
+        // player around while they are reading the menu.
         if (trapPauseMenuFocus(event)) return;
         if (pauseMenuDialog && event.target && pauseMenuDialog.contains(event.target)) return;
         event.preventDefault();
@@ -118081,7 +118158,10 @@
     root.classList.toggle("is-intro", isIntroActive());
     root.classList.toggle("is-menu", state.mode === "menu");
     root.classList.toggle("is-playing", state.mode === "playing");
-    root.classList.toggle("is-paused", !!state.paused);
+    // The multiplayer overlay counts as paused for presentation only: it hides
+    // the button behind itself and dims the HUD, without the simulation ever
+    // stopping (state.paused stays false there).
+    root.classList.toggle("is-paused", isPauseMenuOpen());
     root.classList.toggle("is-menu-settings-open", mainMenuSettingsOpen);
     root.classList.toggle("is-app-suspended", applicationSuspended);
     root.classList.toggle("is-multiplayer-match", !!(multiplayerState.active && multiplayerState.phase === "match"));
