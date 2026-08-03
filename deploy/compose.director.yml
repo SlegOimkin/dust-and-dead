@@ -1,0 +1,59 @@
+name: dust-and-dead-director
+
+# The region director is a separate deployment from the regional matchmaking
+# servers, and normally runs on its own small host (or several, behind one
+# anycast/GeoDNS name). It holds no match state, so replacing it never
+# interrupts a running match.
+
+services:
+  director:
+    image: dust-and-dead-director:local
+    build:
+      context: ..
+      dockerfile: server/director/Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DIRECTOR_HOST: "0.0.0.0"
+      DIRECTOR_PORT: "8686"
+      TRUST_PROXY: "1"
+      # Shared secret every region presents on its heartbeat. Without it the
+      # director refuses all registrations and can only serve REGIONS.
+      DIRECTOR_TOKEN: "${DIRECTOR_TOKEN:?Generate DIRECTOR_TOKEN in .env}"
+      # Optional JSON array pre-seeding the region list before the first
+      # heartbeat, e.g. [{"id":"eu","label":"Europe","url":"wss://eu.example.com/online"}]
+      REGIONS: "${REGIONS:-}"
+      REGION_TTL_MS: "${REGION_TTL_MS:-45000}"
+      REGION_HEARTBEAT_INTERVAL_MS: "${REGION_HEARTBEAT_INTERVAL_MS:-10000}"
+      REGIONS_CACHE_TTL_MS: "${REGIONS_CACHE_TTL_MS:-30000}"
+      ROUTE_CLAIM_TTL_MS: "${ROUTE_CLAIM_TTL_MS:-90000}"
+      MAX_ROUTE_CLAIMS: "${MAX_ROUTE_CLAIMS:-4096}"
+      MAX_REGIONS: "${MAX_REGIONS:-64}"
+      DIRECTOR_RATE_PER_SECOND: "${DIRECTOR_RATE_PER_SECOND:-20}"
+      DIRECTOR_RATE_BURST: "${DIRECTOR_RATE_BURST:-60}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    expose:
+      - "8686"
+    stop_grace_period: 15s
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      director:
+        condition: service_healthy
+    environment:
+      DIRECTOR_SITE_ADDRESS: "${DIRECTOR_SITE_ADDRESS:?Set DIRECTOR_SITE_ADDRESS in .env}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.director:/etc/caddy/Caddyfile:ro
+      - caddy_director_data:/data
+      - caddy_director_config:/config
+    stop_grace_period: 15s
+
+volumes:
+  caddy_director_data:
+  caddy_director_config:

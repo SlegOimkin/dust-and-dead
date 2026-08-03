@@ -58,7 +58,12 @@ function createStaticHandler(options) {
     }
     if (parsed.pathname === "/readyz") {
       const readiness = getReadiness();
-      writeJson(response, readiness.ready ? 200 : 503, readiness);
+      // Only the two flags a health gate needs. Match counts and browser state
+      // stay in /metrics, which the edge deliberately hides from the internet.
+      writeJson(response, readiness.ready ? 200 : 503, {
+        ready: !!readiness.ready,
+        acceptingConnections: !!readiness.acceptingConnections,
+      });
       return;
     }
     if (parsed.pathname === "/metrics") {

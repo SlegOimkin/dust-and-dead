@@ -8,6 +8,17 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $SyncQuiet = $Quiet
 . (Join-Path $ProjectRoot "dev-shell.ps1") -Quiet
 
+# An Android build serves its bundle from https://localhost, so it can never
+# resolve the online server same-origin: without an explicit address the shipped
+# APK has no working online multiplayer at all. Catch that here rather than in a
+# store review.
+$onlineConfigText = Get-Content -Raw -LiteralPath (Join-Path $ProjectRoot "online-config.js")
+$hasDirectorUrl = $onlineConfigText -match 'directorUrl\s*:\s*"(?<value>[^"]+)"'
+$hasDirectUrl = $onlineConfigText -match '(?m)^\s*url\s*:\s*"(?<value>[^"]+)"'
+if (-not ($hasDirectorUrl -or $hasDirectUrl)) {
+  throw "online-config.js has neither directorUrl nor url set. An Android build cannot reach the online server without one; set at least one before syncing."
+}
+
 New-Item -ItemType Directory -Path (Join-Path $ProjectRoot "www\vendor") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $ProjectRoot "www\locales") -Force | Out-Null
 

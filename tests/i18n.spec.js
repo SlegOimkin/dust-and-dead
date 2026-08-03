@@ -3,7 +3,7 @@ const { expect, test } = require("@playwright/test");
 
 const LOCALES = ["en", "ru", "hi"];
 const LOCALE_STORAGE_KEY = "dustAndDead.locale.v1";
-const CATALOG_KEY_COUNT = 1335;
+const CATALOG_KEY_COUNT = 1341;
 const CONTRACT_COUNT = 72;
 const UPGRADE_COUNT = 86;
 const CLASS_COUNT = 4;

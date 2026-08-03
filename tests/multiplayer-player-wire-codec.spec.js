@@ -2,7 +2,7 @@ const path = require("node:path");
 const { gzipSync } = require("node:zlib");
 const { expect, test } = require("@playwright/test");
 
-const CURRENT_PROTOCOL = 46;
+const CURRENT_PROTOCOL = 47;
 const NATIVE_GZIP_PREFIX_BYTES = 4;
 
 function fileUrl(relativePath) {
@@ -27,7 +27,7 @@ async function openGame(page) {
   ));
 }
 
-test("protocol 46 player codec round-trips local and remote state without changing standalone snapshot semantics", async ({ page, context }) => {
+test("protocol 47 player codec round-trips local and remote state without changing standalone snapshot semantics", async ({ page, context }) => {
   await openGame(page);
   const guest = await context.newPage();
   await openGame(guest);

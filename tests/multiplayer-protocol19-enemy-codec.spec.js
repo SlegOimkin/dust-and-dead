@@ -353,7 +353,7 @@ function makeWideFallbackSnapshot() {
     },
     snapshot: {
       type: "snapshot",
-      version: 46,
+      version: 47,
       matchId: "codec-wide-fallback",
       sequence: 1,
       time: 1,
@@ -398,7 +398,7 @@ function makeReservedEnemyTypeSnapshot() {
   bytes.push(128);
   return {
     type: "snapshot",
-    version: 46,
+    version: 47,
     matchId: "codec-reserved-type",
     sequence: 1,
     time: 1,
@@ -425,7 +425,7 @@ function makeReservedEnemyTypeSnapshot() {
   };
 }
 
-test("protocol 46 format 2 round-trips exact quantized enemy state for negative coordinates, every type, a spitter and gapped ids", async ({ page }) => {
+test("protocol 47 format 2 round-trips exact quantized enemy state for negative coordinates, every type, a spitter and gapped ids", async ({ page }) => {
   test.setTimeout(90_000);
   await openGame(page);
 
@@ -463,7 +463,7 @@ test("protocol 46 format 2 round-trips exact quantized enemy state for negative 
     return { relevantIds, expected, wire };
   });
 
-  expect(fixture.wire.version).toBe(46);
+  expect(fixture.wire.version).toBe(47);
   expect(fixture.wire.enemyDelta.v).toBe(2);
   const decoded = decodeEnemySection(fixture.wire.enemyDelta);
   expect(decoded.format).toBe(2);
@@ -512,7 +512,7 @@ test("protocol 46 format 2 round-trips exact quantized enemy state for negative 
   }
 });
 
-test("protocol 46 keeps the exact int16 fallback outside a signed 12-bit section origin", async ({ page }) => {
+test("protocol 47 keeps the exact int16 fallback outside a signed 12-bit section origin", async ({ page }) => {
   await openGame(page);
   const fixture = makeWideFallbackSnapshot();
   const decoded = decodeEnemySection(fixture.snapshot.enemyDelta);
@@ -553,7 +553,7 @@ test("protocol 46 keeps the exact int16 fallback outside a signed 12-bit section
   expect(applied.rendered[0].spitWindup).toBeCloseTo(fixture.expected.windup, 2);
 });
 
-test("protocol 46 keeps removed enemy type code 6 reserved and decodes it safely", async ({ page }) => {
+test("protocol 47 keeps removed enemy type code 6 reserved and decodes it safely", async ({ page }) => {
   await openGame(page);
   const snapshot = makeReservedEnemyTypeSnapshot();
   const enemies = await page.evaluate((wire) => {
@@ -567,7 +567,7 @@ test("protocol 46 keeps removed enemy type code 6 reserved and decodes it safely
   expect(enemies[0]).toMatchObject({ id: 9061, type: "walker", targetX: -3, targetZ: 4 });
 });
 
-test("corrupt protocol 46 bitmap, count and trailing bytes never partially apply or explicitly ACK a keyframe chunk", async ({ page }) => {
+test("corrupt protocol 47 bitmap, count and trailing bytes never partially apply or explicitly ACK a keyframe chunk", async ({ page }) => {
   await openGame(page, true);
   const valid = await page.evaluate(() => {
     const multiplayer = window.__dustMultiplayerTest;

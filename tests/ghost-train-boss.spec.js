@@ -2553,7 +2553,7 @@ test("a compact keyframe reconstructs the train, rails, and detached wagon on a 
 
   expect(pageErrors).toEqual([]);
   expect(result.bossBytes).toBeLessThanOrEqual(80);
-  expect(result.wireVersion).toBe(46);
+  expect(result.wireVersion).toBe(47);
   expect(result.hasLegacy).toBe(false);
   expect(result.decoded).toMatchObject({
     kind: "ghostTrain",

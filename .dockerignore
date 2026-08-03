@@ -5,6 +5,8 @@
 
 !server/
 !server/*.js
+!server/director/
+!server/director/*.js
 
 !index.html
 !styles.css

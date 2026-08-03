@@ -660,7 +660,7 @@ test("the final hit is acknowledged before results and matchEnd applies its fina
   expect(result.matchEndIndex).toBeGreaterThan(result.finalStateSnapshotIndex);
   expect(result.actualMatchEnd).toMatchObject({
     type: "matchEnd",
-    version: 46,
+    version: 47,
     winnerIds: ["mock-player-1"],
     reason: "lastSurvivorLeads",
   });

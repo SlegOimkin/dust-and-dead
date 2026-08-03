@@ -21,7 +21,7 @@ async function openGame(page) {
 
 test.describe.configure({ mode: "serial" });
 
-test("protocol 46 reports accepted and rejected shots separately and repeats results until acknowledged", async ({ page }) => {
+test("protocol 47 reports accepted and rejected shots separately and repeats results until acknowledged", async ({ page }) => {
   await openGame(page);
 
   const result = await page.evaluate(() => {
@@ -53,7 +53,7 @@ test("protocol 46 reports accepted and rejected shots separately and repeats res
 
   expect(result.firstQueued).toBe(true);
   expect(result.secondQueued).toBe(true);
-  expect(result.protocol).toBe(46);
+  expect(result.protocol).toBe(47);
   expect(result.state).toMatchObject({
     lastProcessedFireActionSequence: 2,
     pendingFireActions: 0,

@@ -206,7 +206,10 @@ class MatchRoom {
     this.clearAutoStart();
     this.revision += 1;
     this.onState(this, "start_requested");
-    Promise.resolve(this.onStartRequested(this, {
+    // Deferred so a synchronous throw from the callback becomes a rejection this
+    // .catch can absorb. Calling it inline would let the throw escape all the way
+    // out of the socket handler that triggered readiness.
+    Promise.resolve().then(() => this.onStartRequested(this, {
       reason: this.startReason,
       forcedPlayerIds: Array.isArray(forcedPlayerIds) ? forcedPlayerIds.slice() : [],
     })).catch((error) => {

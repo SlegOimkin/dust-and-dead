@@ -38,6 +38,13 @@ function player(id) {
   return { id, name: id, connected: true };
 }
 
+// requestStart hands the room to its owner on a microtask so a throw from that
+// callback cannot escape the socket handler that triggered readiness. The phase
+// flip is still synchronous; only the callback needs a tick to land.
+function flushStartCallback() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function createRoom(options) {
   const settings = options || {};
   const clock = settings.clock || createFakeClock();
@@ -55,7 +62,7 @@ function createRoom(options) {
   return { room, clock, starts };
 }
 
-test("all connected players ready starts immediately without a player host", () => {
+test("all connected players ready starts immediately without a player host", async () => {
   const { room, starts } = createRoom();
   room.addPlayer(player("one"));
   room.addPlayer(player("two"));
@@ -67,12 +74,13 @@ test("all connected players ready starts immediately without a player host", () 
   room.setReady("two", true);
   assert.equal(room.phase, "preparing");
   assert.equal(room.autoStartAt, 0);
+  await flushStartCallback();
   assert.equal(starts.length, 1);
   assert.equal(starts[0].details.reason, "all_ready");
   assert.deepEqual(starts[0].details.forcedPlayerIds, []);
 });
 
-test("exactly one unready player is included after exactly forty seconds", () => {
+test("exactly one unready player is included after exactly forty seconds", async () => {
   const { room, clock, starts } = createRoom();
   room.addPlayer(player("one"));
   room.addPlayer(player("two"));
@@ -88,6 +96,7 @@ test("exactly one unready player is included after exactly forty seconds", () =>
 
   clock.advance(1);
   assert.equal(room.phase, "preparing");
+  await flushStartCallback();
   assert.equal(starts.length, 1);
   assert.equal(starts[0].details.reason, "countdown");
   assert.deepEqual(starts[0].details.forcedPlayerIds, ["three"]);

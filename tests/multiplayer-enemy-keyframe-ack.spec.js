@@ -84,7 +84,7 @@ function latestInput(entries) {
   return entries.filter((entry) => entry.message?.type === "input").at(-1)?.message || null;
 }
 
-test("protocol 46 advances an enemy keyframe only after the guest applies and explicitly acknowledges its exact chunk", async ({ page, context }) => {
+test("protocol 47 advances an enemy keyframe only after the guest applies and explicitly acknowledges its exact chunk", async ({ page, context }) => {
   test.setTimeout(120_000);
   await openGame(page);
   const guestPage = await context.newPage();
@@ -104,7 +104,7 @@ test("protocol 46 advances an enemy keyframe only after the guest applies and ex
     };
   });
 
-  expect(hostBootstrap.first.version).toBe(46);
+  expect(hostBootstrap.first.version).toBe(47);
   expect(hostBootstrap.first.enemyDelta.k).toBe(1);
   expect(hostBootstrap.first.enemyDelta.m).toBeGreaterThan(1);
   expect(hostBootstrap.first.enemyDelta.i).toBe(0);

@@ -674,7 +674,7 @@ test("a proximity repulse packet drives guest visuals but never guest-side damag
   }
 });
 
-test("protocol 46 round-trips colossal attack radii and persistent hazards without semantic drift", async ({ page }) => {
+test("protocol 47 round-trips colossal attack radii and persistent hazards without semantic drift", async ({ page }) => {
   await startHunt(page);
 
   const result = await page.evaluate(() => {
@@ -709,7 +709,7 @@ test("protocol 46 round-trips colossal attack radii and persistent hazards witho
   });
 
   expect(result.packed).toMatchObject({
-    protocolVersion: 46,
+    protocolVersion: 47,
     typeCode: 5,
     kind: "hordeheart",
     phase: "quarters",

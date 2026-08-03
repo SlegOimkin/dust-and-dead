@@ -19,6 +19,26 @@ const DEFAULT_MAX_CONNECTIONS = 256;
 const DEFAULT_MAX_CONNECTIONS_PER_IP = 32;
 const DEFAULT_MAX_SESSIONS = 512;
 const DEFAULT_IDLE_LOBBY_TTL_MS = 10 * 60 * 1000;
+// One extra token per 16 KiB of frame, so the per-connection budget bounds bytes
+// as well as message count. Normal gameplay frames stay at a cost of one.
+const RATE_LIMIT_BYTES_PER_TOKEN = 16 * 1024;
+// The authority retransmits its terminal control messages until acknowledged, so
+// a room that has already returned to the lobby has to keep absorbing the acks
+// for the match it just finished instead of answering them with an error.
+const POST_MATCH_GRACE_MS = 20000;
+// Returning to the lobby after a match is player-driven (a click on the results
+// screen). Players who idle there would otherwise hold the room in "ended" and
+// its match worker — a whole Chromium context — forever. After this long the
+// server returns the room on its own; a real click just gets there sooner.
+const DEFAULT_POST_MATCH_AUTO_RETURN_MS = 90000;
+
+// Every profile is echoed to all players inside startPrepare/start, so its
+// serialized size must leave room for MAX_PLAYERS of them plus the rest of the
+// message inside one wire frame. Enforcing it at ingestion is what keeps
+// encodeGameMessage from throwing later, on a synchronous path where the throw
+// would escape the socket handler and take the whole process down.
+const MAX_PROFILE_BYTES = Math.floor(protocol.MAX_WIRE_BYTES / (protocol.MAX_PLAYERS * 4));
+const FORBIDDEN_PROFILE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 const CLIENT_GAME_TYPES = new Set([
   "hello",
@@ -53,16 +73,32 @@ function sanitizeProfile(value) {
     if (!isPlainObject(entry)) return false;
     const keys = Object.keys(entry);
     return keys.length <= 256 && keys.every((key) => (
-      key.length <= 96 && visit(entry[key], depth + 1)
+      key.length <= 96 && !FORBIDDEN_PROFILE_KEYS.has(key) && visit(entry[key], depth + 1)
     ));
   }
-  return visit(value, 0) ? value : null;
+  if (!visit(value, 0)) return null;
+  let serialized;
+  try {
+    serialized = JSON.stringify(value);
+  } catch (error) {
+    return null;
+  }
+  if (!serialized || Buffer.byteLength(serialized) > MAX_PROFILE_BYTES) return null;
+  return value;
 }
 
-function getClientAddress(request, trustProxy) {
+// X-Forwarded-For grows left-to-right, so the leftmost entry is the one a client
+// can write freely. With `hops` trusted proxies in front, the honest entry is the
+// hops-th from the right; anything shorter than that means the header did not
+// come through the expected chain and the real peer address is used instead.
+function getClientAddress(request, trustProxy, trustedHops) {
   if (trustProxy) {
-    const forwarded = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
-    if (forwarded) return forwarded.slice(0, 80);
+    const hops = Math.max(1, Number(trustedHops) || 1);
+    const parts = String(request.headers["x-forwarded-for"] || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (parts.length >= hops) return parts[parts.length - hops].slice(0, 80);
   }
   return String(request.socket && request.socket.remoteAddress || "unknown").slice(0, 80);
 }
@@ -141,12 +177,16 @@ class OutboundQueue {
     if (item.key) {
       this.latest.set(item.key, item);
     } else {
-      this.reliable.push(item);
-      this.reliableBytes += item.bytes;
-      if (this.reliableBytes > MAX_RELIABLE_QUEUE_BYTES) {
+      // Checked before appending, and the queue is closed rather than merely
+      // signalled: onSlowClient only starts a close handshake, which a stalled
+      // peer can drag out while further messages keep piling up behind it.
+      if (this.reliableBytes + item.bytes > MAX_RELIABLE_QUEUE_BYTES) {
+        this.close();
         this.onSlowClient();
         return false;
       }
+      this.reliable.push(item);
+      this.reliableBytes += item.bytes;
     }
     this.pump();
     return true;
@@ -216,6 +256,7 @@ class OnlineMultiplayerServer {
     this.peerBySocket = new WeakMap();
     this.pendingStarts = new Map();
     this.returnTimers = new Map();
+    this.recentMatches = new Map();
     this.ipAdmissionBuckets = new Map();
     this.activeConnectionsByIp = new Map();
     this.idleLobbyTimers = new Map();
@@ -229,6 +270,7 @@ class OnlineMultiplayerServer {
       matchStartFailures: 0,
       reconnects: 0,
       idleLobbyExpirations: 0,
+      pingsAnswered: 0,
     };
     this.sessionStore = settings.sessionStore || new SessionStore({
       secret: this.config.resumeTokenSecret,
@@ -254,12 +296,20 @@ class OnlineMultiplayerServer {
   }
 
   isOriginAllowed(request) {
-    const allowed = Array.isArray(this.config.allowedOrigins) ? this.config.allowedOrigins : [];
+    const configured = Array.isArray(this.config.allowedOrigins) ? this.config.allowedOrigins : [];
+    // An unset ALLOWED_ORIGINS narrows to the deployment's own origin rather than
+    // opening the server to every site on the internet. With neither set (tests
+    // and local development) there is nothing to enforce.
+    const allowed = configured.length
+      ? configured
+      : (this.config.publicOrigin ? [String(this.config.publicOrigin)] : []);
     if (!allowed.length) return true;
     const origin = String(request.headers.origin || "");
-    // Non-browser WebSocket clients do not send Origin. Authentication still
-    // happens through the rotating resume token, so native/test clients remain
-    // usable while browser origins stay allowlisted.
+    // Origin is a browser-supplied header: a native or scripted client can omit
+    // it, and one that omits it could equally well forge an allowed value. The
+    // allowlist therefore only keeps *browsers* on other sites from connecting;
+    // it is not an authentication boundary, and nothing downstream treats it
+    // as one.
     return !origin || allowed.includes(origin);
   }
 
@@ -301,7 +351,7 @@ class OnlineMultiplayerServer {
     const forbidden = !this.isOriginAllowed(request);
     const unavailable = this.draining || this.closed;
     const missing = pathname !== this.path;
-    const clientAddress = getClientAddress(request, this.config.trustProxy === true);
+    const clientAddress = getClientAddress(request, this.config.trustProxy === true, this.config.trustProxyHops);
     const globalCapacityLimited = !forbidden && !unavailable && !missing &&
       this.peers.size >= this.getMaxConnections();
     const ipCapacityLimited = !forbidden && !unavailable && !missing &&
@@ -336,7 +386,7 @@ class OnlineMultiplayerServer {
   }
 
   handleConnection(socket, request) {
-    const clientAddress = getClientAddress(request, this.config.trustProxy === true);
+    const clientAddress = getClientAddress(request, this.config.trustProxy === true, this.config.trustProxyHops);
     const peer = {
       socket,
       request,
@@ -344,6 +394,7 @@ class OnlineMultiplayerServer {
       alive: true,
       closed: false,
       superseded: false,
+      retired: false,
       clientAddress,
       rate: new TokenBucket(
         this.config.connectionRatePerSecond || 90,
@@ -374,6 +425,8 @@ class OnlineMultiplayerServer {
       type: "server.hello",
       protocolVersion: protocol.VERSION,
       reconnectGraceMs: this.config.reconnectGraceMs || protocol.RECONNECT_GRACE_MS,
+      regionId: String(this.config.regionId || ""),
+      regionLabel: String(this.config.regionLabel || ""),
       serverNow: Date.now(),
     });
   }
@@ -402,7 +455,13 @@ class OnlineMultiplayerServer {
 
   handleMessage(peer, data, isBinary) {
     if (!peer || peer.closed) return;
-    if (!peer.rate.take(1)) {
+    // A retired peer's session has already been destroyed elsewhere; frames that
+    // were sitting in the socket buffer must not resurrect it as a room member.
+    if (peer.retired) return;
+    // Weighted by size before parsing: a flat one-token charge would let a peer
+    // push MAX_ENVELOPE_BYTES frames at the full message budget.
+    const frameBytes = Buffer.isBuffer(data) ? data.length : Buffer.byteLength(String(data || ""));
+    if (!peer.rate.take(1 + Math.floor(frameBytes / RATE_LIMIT_BYTES_PER_TOKEN))) {
       this.sendError(peer, "rate_limited");
       safeCloseSocket(peer.socket, 1008, "rate_limited");
       return;
@@ -416,6 +475,20 @@ class OnlineMultiplayerServer {
       return;
     }
     this.metricsState.messagesReceived += 1;
+    // Answered before a session exists so a client can measure application-level
+    // round trip against several regions and only then commit to one of them.
+    if (message.type === "session.ping") {
+      this.metricsState.pingsAnswered += 1;
+      if (peer.session) peer.session.lastSeenAt = Date.now();
+      this.send(peer, {
+        type: "session.pong",
+        nonce: typeof message.nonce === "string" ? message.nonce.slice(0, 64) : "",
+        clientTime: Number.isFinite(Number(message.clientTime)) ? Number(message.clientTime) : 0,
+        regionId: String(this.config.regionId || ""),
+        serverNow: Date.now(),
+      });
+      return;
+    }
     if (!peer.session) {
       if (message.type !== "session.join") {
         this.sendError(peer, "session_required");
@@ -436,7 +509,10 @@ class OnlineMultiplayerServer {
     } else if (message.type === "match.leave") {
       this.leaveActiveMatch(peer);
     } else {
+      // An unknown type is a broken or hostile client, not a recoverable state:
+      // answering forever would let it hold the connection open for free.
       this.sendError(peer, "unsupported_message");
+      safeCloseSocket(peer.socket, 1008, "unsupported_message");
     }
   }
 
@@ -450,10 +526,22 @@ class OnlineMultiplayerServer {
     const matchId = room.matchId;
     this.removePlayerFromRoom(session, room, "match_left", true);
     this.send(peer, { type: "match.left", matchId, serverNow: Date.now() });
-    peer.superseded = true;
-    this.sessionStore.delete(session.id);
+    this.retireSession(peer, session);
     safeCloseSocket(peer.socket, 1000, "match_left");
     return true;
+  }
+
+  // Destroying a session while the peer still points at it lets any frame already
+  // buffered on the socket act as that player again — most damagingly by joining
+  // a fresh room that no session can ever be resolved back to, which then sits in
+  // public matchmaking forever. Retiring detaches both directions at once.
+  retireSession(peer, session) {
+    if (peer) {
+      peer.superseded = true;
+      peer.retired = true;
+      peer.session = null;
+    }
+    if (session) this.sessionStore.delete(session.id);
   }
 
   removePlayerFromRoom(session, room, reason, disconnectWorker) {
@@ -530,6 +618,7 @@ class OnlineMultiplayerServer {
     peer.session = session;
     if (peer.joinTimer) clearTimeout(peer.joinTimer);
     peer.joinTimer = null;
+    const room = this.matchmaker.getRoomForPlayer(session.playerId);
     this.send(peer, {
       type: "session.welcome",
       protocolVersion: protocol.VERSION,
@@ -539,10 +628,12 @@ class OnlineMultiplayerServer {
       connectionEpoch: session.connectionEpoch,
       reconnectGraceMs: this.config.reconnectGraceMs || protocol.RECONNECT_GRACE_MS,
       resumed,
+      // Lets a resumed client distinguish "your room is coming" from "you have
+      // no room" without waiting on a room.state that would never arrive.
+      roomId: resumed && room ? room.id : "",
       serverNow: Date.now(),
     });
 
-    let room = this.matchmaker.getRoomForPlayer(session.playerId);
     if (resumed && room) {
       const roomPlayer = room.players.get(session.playerId);
       if (roomPlayer) {
@@ -553,15 +644,57 @@ class OnlineMultiplayerServer {
       room.setConnected(session.playerId, true);
       session.roomId = room.id;
       if (room.phase === "match" && room.matchId) {
+        // A client that still holds this match's state names it in session.join;
+        // one that reloaded cannot. The fresh page needs its counters reset on
+        // the authority and the start sequence replayed, or it would sit in the
+        // lobby watching a match it can no longer enter.
+        const continuing = String(message.resumeMatchId || "") === room.matchId;
         const worker = this.workerManager.get(room.matchId);
-        if (worker) Promise.resolve(worker.reconnect(session.playerId)).catch(() => {});
+        if (worker) Promise.resolve(worker.reconnect(session.playerId, !continuing)).catch(() => {});
+        if (!continuing) this.replayMatchStart(peer, room);
       }
       this.metricsState.reconnects += 1;
       this.broadcastRoom(room);
       return;
     }
     session.roomId = "";
-    this.joinQueue(peer, message.searchCode);
+    // Only a NEW session is auto-queued (the client undoes it if the player
+    // canceled mid-handshake). A resumed session with no room is a reloaded
+    // page sitting in the lobby — throwing it into the public queue would
+    // matchmake a player who never asked.
+    if (!resumed) this.joinQueue(peer, message.searchCode);
+  }
+
+  // Re-sends the committed match's startPrepare/start pair to one rejoining
+  // peer. The legacy guest flow rebuilds the map from the same seed, answers
+  // with a startAck (absorbed by acceptStartAck as a rejoin ack), and the
+  // worker's forced keyframe then fills the world back in.
+  replayMatchStart(peer, room) {
+    if (!room || room.phase !== "match" || !room.matchId) return false;
+    const base = {
+      authority: "server",
+      startId: room.matchId,
+      version: protocol.VERSION,
+      mapSeed: room.mapSeed,
+      hostPlayerId: Array.from(room.players.keys())[0] || "",
+      players: publicRoster(room),
+    };
+    let prepare;
+    let start;
+    try {
+      prepare = encodeGameMessage(Object.assign({ type: "startPrepare" }, base));
+      start = encodeGameMessage(Object.assign({ type: "start" }, base));
+    } catch (error) {
+      this.log("warn", "match_replay_encode_failed", {
+        roomId: room.id,
+        matchId: room.matchId,
+        error: error && error.message || "unknown",
+      });
+      return false;
+    }
+    this.send(peer, { type: "game", data: prepare, latestKind: "" });
+    this.send(peer, { type: "game", data: start, latestKind: "" });
+    return true;
   }
 
   createPlayerForSession(session) {
@@ -740,10 +873,9 @@ class OnlineMultiplayerServer {
         fatal: true,
         serverNow: now,
       });
-      peer.superseded = true;
     }
     this.removePlayerFromRoom(session, room, "idle_lobby_timeout", false);
-    this.sessionStore.delete(session.id);
+    this.retireSession(peer, session);
     if (peer) safeCloseSocket(peer.socket, 1008, "idle_lobby_timeout");
     this.metricsState.idleLobbyExpirations += 1;
     this.log("info", "idle_lobby_expired", { roomId, playerId });
@@ -753,8 +885,9 @@ class OnlineMultiplayerServer {
   handleRoomRemoved(room, reason) {
     if (!room) return;
     this.clearIdleLobbyTimer(room.id);
+    this.recentMatches.delete(room.id);
     const returnTimer = this.returnTimers.get(room.id);
-    if (returnTimer) clearTimeout(returnTimer);
+    if (returnTimer) clearTimeout(returnTimer.timer);
     this.returnTimers.delete(room.id);
     const matchIds = new Set();
     if (room.matchId) matchIds.add(room.matchId);
@@ -768,7 +901,9 @@ class OnlineMultiplayerServer {
     for (const matchId of matchIds) {
       Promise.resolve(this.workerManager.closeMatch(matchId)).catch(() => {});
     }
-    this.log("info", "room_removed", {
+    // A room is removed every time its last player leaves, so at info level a
+    // client cycling queue.join/queue.leave would write the disk full for free.
+    this.log(room.matchId ? "info" : "debug", "room_removed", {
       roomId: room.id,
       matchId: room.matchId || "",
       reason: String(reason || "room_removed"),
@@ -824,7 +959,15 @@ class OnlineMultiplayerServer {
       hostPlayerId: pending.hostPlayerId,
       players: publicRoster(room),
     };
-    const data = encodeGameMessage(prepareMessage);
+    let data;
+    try {
+      data = encodeGameMessage(prepareMessage);
+    } catch (error) {
+      // A roster too large to encode is a bad room, not a bad server: fail the
+      // start instead of letting the throw unwind into the socket handler.
+      this.abortPreparation(room, error && error.message || "match_payload_too_large");
+      return false;
+    }
     for (const player of players) this.sendGameToPlayer(room, player.id, data, "");
     const timeoutMs = Math.max(1000, Number(this.config.startAckTimeoutMs) || protocol.START_ACK_TIMEOUT_MS);
     pending.timer = setTimeout(() => this.abortPreparation(room, "start_ack_timeout"), timeoutMs);
@@ -878,6 +1021,10 @@ class OnlineMultiplayerServer {
       this.acceptStartAck(peer, room, message);
       return;
     }
+    // A late ack for the match this room just finished is expected traffic, not a
+    // client error: swallow it quietly instead of pushing the lobby into an
+    // error state the player never caused.
+    if (POST_MATCH_GAME_TYPES.has(message.type) && this.isRecentMatch(room.id, message.matchId)) return;
     const canRouteRunning = room.phase === "match";
     const canRoutePostMatch = room.phase === "ended" && POST_MATCH_GAME_TYPES.has(message.type);
     if ((!canRouteRunning && !canRoutePostMatch) || !room.matchId) {
@@ -898,6 +1045,9 @@ class OnlineMultiplayerServer {
     const session = peer.session;
     const pending = this.pendingStarts.get(room.id);
     if (!pending || room.phase !== "preparing" || message.startId !== pending.startId) {
+      // A rejoining client acknowledges the replayed start of the match that is
+      // already running; that is expected traffic, not a protocol violation.
+      if (room.phase === "match" && String(message.startId || "") === room.matchId) return true;
       this.sendError(peer, "start_not_pending");
       return false;
     }
@@ -922,11 +1072,27 @@ class OnlineMultiplayerServer {
     if (pending.playerIds.every((playerId) => pending.acks.has(playerId))) {
       this.commitMatch(room, pending).catch((error) => {
         this.log("error", "match_start_failed", { roomId: room.id, error: error && error.message });
-        if (room.phase === "preparing") {
+        // Only this invocation's own preparation may be torn down. A newer
+        // attempt can already own the room by the time an old commit rejects.
+        if (this.pendingStarts.get(room.id) === pending && room.phase === "preparing") {
           this.abortPreparation(room, error && error.message || "match_start_failed");
+        } else if (room.matchId === pending.matchId) {
+          // The failure landed after the room was already committed, so there is
+          // no preparation left to abort — retire the match instead of leaving
+          // the room wedged with a live worker nobody is talking to.
+          this.failCommittedMatch(room, pending.matchId, error && error.message || "match_start_failed");
         }
       });
     }
+    return true;
+  }
+
+  failCommittedMatch(room, matchId, reason) {
+    if (!room || room.matchId !== matchId) return false;
+    this.metricsState.matchStartFailures += 1;
+    this.log("error", "match_commit_failed", { roomId: room.id, matchId, reason: String(reason || "") });
+    if (room.phase === "match") room.markMatchEnded();
+    this.scheduleReturnToLobby(room, matchId);
     return true;
   }
 
@@ -965,12 +1131,14 @@ class OnlineMultiplayerServer {
         return !player || player.connected === false;
       })
     ) {
-      await this.workerManager.closeMatch(pending.matchId).catch(() => {});
-      if (room.phase === "preparing") this.abortPreparation(room, "roster_changed");
+      await Promise.resolve(this.workerManager.closeMatch(pending.matchId)).catch(() => {});
+      // Abort only if this invocation still owns the room's preparation: a newer
+      // attempt may already have replaced it while createMatch was in flight.
+      if (this.pendingStarts.get(room.id) === pending && room.phase === "preparing") {
+        this.abortPreparation(room, "roster_changed");
+      }
       return false;
     }
-    this.pendingStarts.delete(room.id);
-    room.markMatchStarted(pending.matchId, pending.mapSeed);
     const startMessage = {
       type: "start",
       authority: "server",
@@ -980,7 +1148,17 @@ class OnlineMultiplayerServer {
       hostPlayerId: pending.hostPlayerId,
       players: publicRoster(room),
     };
-    const data = encodeGameMessage(startMessage);
+    // Encoded before the room is committed so an oversized roster fails the start
+    // cleanly instead of stranding a started match nobody was told about.
+    let data;
+    try {
+      data = encodeGameMessage(startMessage);
+    } catch (error) {
+      this.abortPreparation(room, error && error.message || "match_payload_too_large");
+      return false;
+    }
+    this.pendingStarts.delete(room.id);
+    room.markMatchStarted(pending.matchId, pending.mapSeed);
     for (const playerId of pending.playerIds) this.sendGameToPlayer(room, playerId, data, "");
     this.metricsState.matchesStarted += 1;
     this.broadcastRoom(room);
@@ -1015,6 +1193,10 @@ class OnlineMultiplayerServer {
     const sent = this.sendGameToPlayer(room, String(packet.endpointId), packet.data, latestKind);
     if (message.type === "matchEnd" && room.phase === "match") {
       room.markMatchEnded();
+      // Fallback so players idling on the results screen cannot hold the room in
+      // "ended" and its Chromium worker forever. A real return click replaces
+      // this with the short timer.
+      this.scheduleReturnToLobby(room, matchId, this.getPostMatchAutoReturnMs());
       this.broadcastRoom(room);
     } else if (message.type === "returnLobby") {
       this.scheduleReturnToLobby(room, matchId);
@@ -1030,25 +1212,37 @@ class OnlineMultiplayerServer {
       matchId,
       error: error && error.message || "unknown",
     });
-    const matchEnd = encodeGameMessage({
-      type: "matchEnd",
-      version: protocol.VERSION,
-      mapSeed: room.mapSeed,
-      matchId,
-      winnerIds: [],
-      reason: "serverError",
-    });
-    const returnLobby = encodeGameMessage({
-      type: "returnLobby",
-      version: protocol.VERSION,
-      mapSeed: room.mapSeed,
-      matchId,
-      hostPlayerId: Array.from(room.players.keys())[0] || "",
-      players: publicRoster(room),
-    });
+    // This runs from a worker callback, so an encode failure here must never
+    // escape: the room is already broken, and the players still need telling.
+    let matchEnd = "";
+    let returnLobby = "";
+    try {
+      matchEnd = encodeGameMessage({
+        type: "matchEnd",
+        version: protocol.VERSION,
+        mapSeed: room.mapSeed,
+        matchId,
+        winnerIds: [],
+        reason: "serverError",
+      });
+      returnLobby = encodeGameMessage({
+        type: "returnLobby",
+        version: protocol.VERSION,
+        mapSeed: room.mapSeed,
+        matchId,
+        hostPlayerId: Array.from(room.players.keys())[0] || "",
+        players: publicRoster(room),
+      });
+    } catch (encodeError) {
+      this.log("error", "match_teardown_encode_failed", {
+        roomId,
+        matchId,
+        error: encodeError && encodeError.message || "unknown",
+      });
+    }
     for (const player of room.players.values()) {
-      this.sendGameToPlayer(room, player.id, matchEnd, "");
-      this.sendGameToPlayer(room, player.id, returnLobby, "");
+      if (matchEnd) this.sendGameToPlayer(room, player.id, matchEnd, "");
+      if (returnLobby) this.sendGameToPlayer(room, player.id, returnLobby, "");
       const session = this.sessionStore.getByPlayerId(player.id);
       const peer = session && session.socket ? this.peerBySocket.get(session.socket) : null;
       if (peer) this.sendError(peer, "match_failed");
@@ -1057,14 +1251,40 @@ class OnlineMultiplayerServer {
     this.scheduleReturnToLobby(room, matchId);
   }
 
-  scheduleReturnToLobby(room, matchId) {
-    if (!room || this.returnTimers.has(room.id)) return;
+  // A later call with an earlier deadline replaces the pending timer, so the
+  // slow post-match fallback never delays a player who actually clicked return.
+  scheduleReturnToLobby(room, matchId, delayMs) {
+    if (!room) return;
+    const delay = Math.max(25, Number(delayMs) || RETURN_TO_LOBBY_DELAY_MS);
+    const firesAt = Date.now() + delay;
+    const existing = this.returnTimers.get(room.id);
+    if (existing) {
+      if (existing.firesAt <= firesAt) return;
+      clearTimeout(existing.timer);
+      this.returnTimers.delete(room.id);
+    }
     const timer = setTimeout(() => {
       this.returnTimers.delete(room.id);
       this.returnRoomToLobby(room, matchId).catch(() => {});
-    }, RETURN_TO_LOBBY_DELAY_MS);
+    }, delay);
     if (timer && typeof timer.unref === "function") timer.unref();
-    this.returnTimers.set(room.id, timer);
+    this.returnTimers.set(room.id, { timer, firesAt });
+  }
+
+  getPostMatchAutoReturnMs() {
+    return Math.max(1000, Number(this.config.postMatchAutoReturnMs) || DEFAULT_POST_MATCH_AUTO_RETURN_MS);
+  }
+
+  isRecentMatch(roomId, matchId) {
+    const id = String(matchId || "");
+    if (!id) return false;
+    const entry = this.recentMatches.get(String(roomId || ""));
+    if (!entry) return false;
+    if (entry.until <= Date.now()) {
+      this.recentMatches.delete(String(roomId || ""));
+      return false;
+    }
+    return entry.matchId === id;
   }
 
   async returnRoomToLobby(room, matchId) {
@@ -1077,7 +1297,8 @@ class OnlineMultiplayerServer {
       }
     }
     if (!room.size) return true;
-    await this.workerManager.closeMatch(matchId).catch(() => {});
+    await Promise.resolve(this.workerManager.closeMatch(matchId)).catch(() => {});
+    this.recentMatches.set(room.id, { matchId, until: Date.now() + POST_MATCH_GRACE_MS });
     room.returnToLobby();
     this.broadcastRoom(room);
     return true;
@@ -1132,9 +1353,13 @@ class OnlineMultiplayerServer {
       peer.alive = false;
       try { peer.socket.ping(); } catch (error) { try { peer.socket.terminate(); } catch (ignored) {} }
     }
-    const staleBefore = Date.now() - 2 * 60 * 1000;
+    const now = Date.now();
+    const staleBefore = now - 2 * 60 * 1000;
     for (const [address, bucket] of this.ipAdmissionBuckets) {
       if (bucket.updatedAt < staleBefore) this.ipAdmissionBuckets.delete(address);
+    }
+    for (const [roomId, entry] of this.recentMatches) {
+      if (entry.until <= now) this.recentMatches.delete(roomId);
     }
   }
 
@@ -1144,6 +1369,41 @@ class OnlineMultiplayerServer {
       ready: !this.draining && !this.closed && worker.ready !== false,
       acceptingConnections: !this.draining && !this.closed,
     });
+  }
+
+  // Codes of rooms that a newcomer could still be placed into. The director uses
+  // this as ground truth for search-code stickiness, so two friends typing the
+  // same code always land in the same region even when their latency differs.
+  openSearchCodes(limit) {
+    const maximum = Math.max(1, Number(limit) || 512);
+    const codes = new Set();
+    for (const room of this.matchmaker.rooms.values()) {
+      if (codes.size >= maximum) break;
+      if (!room.searchCode || !room.canJoin()) continue;
+      codes.add(room.searchCode);
+    }
+    return Array.from(codes);
+  }
+
+  playerCount() {
+    let total = 0;
+    for (const room of this.matchmaker.rooms.values()) total += room.size;
+    return total;
+  }
+
+  regionSnapshot() {
+    const worker = this.workerManager.readiness();
+    return {
+      protocolVersion: protocol.VERSION,
+      ready: !this.closed && worker.ready !== false,
+      accepting: !this.draining && !this.closed,
+      activeMatches: Number(worker.activeMatches) || 0,
+      maxMatches: Number(worker.maxMatches) || 0,
+      connections: this.peers.size,
+      maxConnections: this.getMaxConnections(),
+      players: this.playerCount(),
+      codes: this.openSearchCodes(),
+    };
   }
 
   metrics() {
@@ -1167,8 +1427,9 @@ class OnlineMultiplayerServer {
     this.httpServer.removeListener("upgrade", this.upgradeHandler);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
-    for (const timer of this.returnTimers.values()) clearTimeout(timer);
+    for (const entry of this.returnTimers.values()) clearTimeout(entry.timer);
     this.returnTimers.clear();
+    this.recentMatches.clear();
     for (const entry of this.idleLobbyTimers.values()) {
       if (entry.timer) clearTimeout(entry.timer);
     }

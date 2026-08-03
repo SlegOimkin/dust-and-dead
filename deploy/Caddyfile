@@ -6,9 +6,15 @@
   respond @private_metrics 404
 
   reverse_proxy game:8787 {
-    health_uri /healthz
+    # /readyz, not /healthz: the latter is pure liveness and stays 200 while the
+    # server drains or its Chromium is gone.
+    health_uri /readyz
     health_interval 10s
     health_timeout 3s
+
+    # Pin the forwarded address to the real peer. Without this a client could
+    # send its own X-Forwarded-For and evade the per-IP connection cap.
+    header_up X-Forwarded-For {remote_host}
 
     # Avoid reconnecting every client at once after a Caddy config reload.
     stream_close_delay 5m

@@ -6256,6 +6256,42 @@ html.local-multiplayer-boot #local-multiplayer-lobby {
   grid-template-columns: 1fr;
 }
 
+.online-multiplayer-region {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(120, 176, 214, 0.26);
+  border-radius: 9px;
+  background: rgba(46, 92, 122, 0.16);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.online-multiplayer-region[hidden] {
+  display: none;
+}
+
+.online-multiplayer-region__label {
+  color: rgba(190, 220, 240, 0.68);
+}
+
+.online-multiplayer-region__value {
+  color: #cfe7f8;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* A pinned region was forced by a search code rather than won on latency. */
+.online-multiplayer-region__value.is-pinned {
+  color: #f7d391;
+}
+
 .online-multiplayer-countdown {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

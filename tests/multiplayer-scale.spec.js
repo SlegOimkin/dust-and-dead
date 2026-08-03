@@ -66,7 +66,7 @@ test("four-player interest snapshots keep a 1200-enemy world bounded without hid
 
   expect(errors).toEqual([]);
   expect(result.spawned.active).toBe(1200);
-  expect(result.budget.protocol).toBe(46);
+  expect(result.budget.protocol).toBe(47);
   expect(result.diagnostics).toHaveLength(4);
   for (const diagnostic of result.diagnostics) {
     expect(diagnostic.total).toBe(1200);

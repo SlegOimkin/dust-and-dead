@@ -5,43 +5,11 @@ const path = require("node:path");
 
 const defaultConfig = require("./config.js");
 const { GameWorkerManager } = require("./game-worker.js");
+const { NodeGameWorkerManager } = require("./node-game-worker.js");
 const { OnlineMultiplayerServer } = require("./online-server.js");
+const { RegionHeartbeat } = require("./region-heartbeat.js");
 const { createStaticHandler } = require("./static-handler.js");
-
-function listen(server, port, host) {
-  return new Promise((resolve, reject) => {
-    const onError = (error) => {
-      server.removeListener("listening", onListening);
-      reject(error);
-    };
-    const onListening = () => {
-      server.removeListener("error", onError);
-      resolve(server.address());
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(port, host);
-  });
-}
-
-function closeHttpServer(server) {
-  if (!server.listening) return Promise.resolve();
-  return new Promise((resolve) => {
-    server.close(() => resolve());
-    if (typeof server.closeIdleConnections === "function") server.closeIdleConnections();
-  });
-}
-
-function defaultLogger(level, event, details) {
-  const record = Object.assign({
-    time: new Date().toISOString(),
-    level: String(level || "info"),
-    event: String(event || "server_event"),
-  }, details || {});
-  const line = JSON.stringify(record) + "\n";
-  if (record.level === "error" || record.level === "warn") process.stderr.write(line);
-  else process.stdout.write(line);
-}
+const { closeHttpServer, defaultLogger, listen } = require("./http-util.js");
 
 function createOnlineApplication(options) {
   const settings = options || {};
@@ -55,6 +23,19 @@ function createOnlineApplication(options) {
   let ownsWorkerManager = !workerManager;
   let started = false;
   let closing = false;
+  const heartbeat = settings.regionHeartbeat === false ? null : new RegionHeartbeat({
+    directorUrl: config.directorUrl,
+    token: config.directorToken,
+    regionId: config.regionId,
+    regionLabel: config.regionLabel || config.regionId,
+    regionUrl: config.regionPublicUrl,
+    priority: config.regionPriority,
+    intervalMs: config.regionHeartbeatIntervalMs,
+    log,
+    getState() {
+      return onlineServer ? onlineServer.regionSnapshot() : { ready: false, accepting: false };
+    },
+  });
 
   const handler = createStaticHandler({
     root,
@@ -84,20 +65,48 @@ function createOnlineApplication(options) {
     async start() {
       if (started) return this.address();
       if (closing) throw new Error("application_closing");
+      // A shipped image runs with NODE_ENV=production, so these two misconfigs
+      // fail loudly at boot instead of silently degrading every player's session.
+      if (process.env.NODE_ENV === "production") {
+        if (!config.resumeTokenSecretConfigured) {
+          throw new Error("RESUME_TOKEN_SECRET must be set to at least 32 characters in production");
+        }
+        if (!config.publicOrigin && !(config.allowedOrigins || []).length) {
+          throw new Error("Set PUBLIC_ORIGIN or ALLOWED_ORIGINS so browser origins are enforced");
+        }
+      } else if (!config.resumeTokenSecretConfigured) {
+        log("warn", "resume_secret_ephemeral", {
+          detail: "RESUME_TOKEN_SECRET is unset; reconnect tokens die with this process",
+        });
+      }
       const requestedPort = Number.isInteger(Number(settings.port))
         ? Number(settings.port)
         : Number(config.port);
       const host = settings.host != null ? String(settings.host) : String(config.host || "0.0.0.0");
       if (!workerManager) {
-        workerManager = new GameWorkerManager({
-          // The actual ephemeral/listening port is assigned immediately after
-          // the upgrade handler is installed below.
-          baseUrl: "http://127.0.0.1:1",
-          maxMatches: config.maxMatches,
-          startupTimeoutMs: config.workerStartupTimeoutMs,
-          shutdownTimeoutMs: config.workerShutdownTimeoutMs,
-          logLevel: config.logLevel,
-        });
+        workerManager = config.matchRuntime === "browser"
+          ? new GameWorkerManager({
+            // The actual ephemeral/listening port is assigned immediately after
+            // the upgrade handler is installed below.
+            baseUrl: "http://127.0.0.1:1",
+            maxMatches: config.maxMatches,
+            startupTimeoutMs: config.workerStartupTimeoutMs,
+            shutdownTimeoutMs: config.workerShutdownTimeoutMs,
+            logLevel: config.logLevel,
+            launchArgs: config.workerLaunchArgs,
+          })
+          : new NodeGameWorkerManager({
+            // The node runtime reads the game straight from disk: matches load
+            // the exact files the static handler serves to real clients.
+            root,
+            maxMatches: config.maxMatches,
+            matchesPerWorker: config.matchesPerWorker,
+            startupTimeoutMs: config.workerStartupTimeoutMs,
+            shutdownTimeoutMs: config.workerShutdownTimeoutMs,
+            logLevel: config.logLevel,
+            workerMaxOldHeapMb: config.workerMaxOldHeapMb,
+            warmSpareThreads: config.warmSpareThreads,
+          });
         ownsWorkerManager = true;
       }
       try {
@@ -110,16 +119,27 @@ function createOnlineApplication(options) {
         const address = await listen(httpServer, requestedPort, host);
         const internalHost = String(address.address).includes(":") ? "[::1]" : "127.0.0.1";
         if (ownsWorkerManager) {
-          workerManager.baseUrl = "http://" + internalHost + ":" + address.port;
+          if (config.matchRuntime === "browser") {
+            workerManager.baseUrl = "http://" + internalHost + ":" + address.port;
+          }
+          // Warmed here rather than on the first match so a host that cannot
+          // run matches (no Chromium / unreadable game bundle) fails at boot,
+          // and /readyz never reports ready before matches can actually start.
+          if (settings.warmBrowser !== false) await workerManager.ensureBrowser();
         }
         started = true;
         log("info", "server_started", {
           host,
           port: address.port,
           protocolVersion: require("../multiplayer-protocol.js").VERSION,
+          regionId: config.regionId || "",
+          matchRuntime: config.matchRuntime,
         });
+        // Started last so the first beat already reports a listening server.
+        if (heartbeat) heartbeat.start();
         return this.address();
       } catch (error) {
+        if (heartbeat) await heartbeat.stop();
         if (onlineServer) await onlineServer.close().catch(() => {});
         onlineServer = null;
         if (ownsWorkerManager && workerManager) await workerManager.close().catch(() => {});
@@ -144,9 +164,11 @@ function createOnlineApplication(options) {
     metrics() {
       return onlineServer ? onlineServer.metrics() : { activeConnections: 0, ready: false };
     },
+    get regionHeartbeat() { return heartbeat; },
     async close() {
       if (closing) return;
       closing = true;
+      if (heartbeat) await heartbeat.stop();
       if (onlineServer) await onlineServer.close();
       onlineServer = null;
       if (workerManager && (ownsWorkerManager || settings.closeWorkerManager !== false)) {

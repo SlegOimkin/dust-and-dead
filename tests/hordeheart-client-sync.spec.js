@@ -43,7 +43,7 @@ function maxOf(values) {
   return values.length ? Math.max(...values) : 0;
 }
 
-test("protocol 46 rejects malformed Hordeheart topology instead of spawning phantom fragments", async ({ page }) => {
+test("protocol 47 rejects malformed Hordeheart topology instead of spawning phantom fragments", async ({ page }) => {
   await startHunt(page);
 
   const result = await page.evaluate(() => {

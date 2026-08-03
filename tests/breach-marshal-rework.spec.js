@@ -184,7 +184,7 @@ test("Double Tap, Last Word, Breach Step, and full-Momentum contact push use the
   expect(result.fullBonebreaker.impactPoints).toBe(3);
 });
 
-test("protocol 46 round-trips every movement-critical Breach state to the owning client", async ({ page, context }) => {
+test("protocol 47 round-trips every movement-critical Breach state to the owning client", async ({ page, context }) => {
   await openGame(page);
   const guest = await context.newPage();
   await openGame(guest);
@@ -223,7 +223,7 @@ test("protocol 46 round-trips every movement-critical Breach state to the owning
     };
   }, wire);
 
-  expect(replica.protocol).toBe(46);
+  expect(replica.protocol).toBe(47);
   expect(replica.progression).toMatchObject({
     playerClass: "marshal",
     marshalUpgrade: "breachMarshal",

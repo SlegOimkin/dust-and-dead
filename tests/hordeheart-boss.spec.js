@@ -615,7 +615,7 @@ test("packed host snapshots preserve the Hordeheart phase and every independentl
     expect(wireBodies).toEqual(hostBodies);
 
     expect(host.packed).toMatchObject({
-      protocolVersion: 46,
+      protocolVersion: 47,
       typeCode: 5,
       kind: "hordeheart",
       phase: "halves",

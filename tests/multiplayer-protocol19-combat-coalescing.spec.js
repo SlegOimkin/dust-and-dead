@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { expect, test } = require("@playwright/test");
 
-const CURRENT_PROTOCOL = 46;
+const CURRENT_PROTOCOL = 47;
 
 function fileUrl(relativePath) {
   const absolute = path.resolve(__dirname, "..", relativePath).replace(/\\/g, "/");

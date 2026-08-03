@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 
+# Matches run in Node worker threads (MATCH_RUNTIME=node, the default), so this
+# image needs no browser at all. The Playwright base is kept only because
+# MATCH_RUNTIME=browser remains available as a rollback; when that path is
+# retired this can become a plain node:22-slim and the image shrinks by ~1 GB.
 # Keep this tag equal to the Playwright version locked in package-lock.json.
-# The image supplies Chromium and its Linux runtime libraries; npm supplies the
-# project's JavaScript packages.
 FROM mcr.microsoft.com/playwright:v1.60.0-noble
 
 ENV NODE_ENV=production \

@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { expect, test } = require("@playwright/test");
 
-const MULTIPLAYER_PROTOCOL_VERSION = 46;
+const MULTIPLAYER_PROTOCOL_VERSION = 47;
 
 function fileUrl(relativePath) {
   const absolute = path.resolve(__dirname, "..", relativePath).replace(/\\/g, "/");
@@ -619,7 +619,7 @@ test("Nearby operation tokens isolate host discovery host sessions", async ({ pa
   await page.evaluate(({ oldOperationId }) => {
     const message = {
       type: "hello",
-      version: 46,
+      version: 47,
       playerId: "current-player",
       name: "Current player",
     };

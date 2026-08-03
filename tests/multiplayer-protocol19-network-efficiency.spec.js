@@ -2,7 +2,7 @@ const path = require("node:path");
 const { gzipSync } = require("node:zlib");
 const { expect, test } = require("@playwright/test");
 
-const CURRENT_PROTOCOL = 46;
+const CURRENT_PROTOCOL = 47;
 const SNAPSHOT_HZ = 12;
 const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_HZ;
 const MEASURED_FRAMES = SNAPSHOT_HZ * 2;

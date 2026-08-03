@@ -48,7 +48,7 @@ function voidCellIds(diagnostics) {
     .sort((left, right) => left - right);
 }
 
-test("protocol 46 type 6 round-trips the full cell mask and rejects truncation", async ({ page }) => {
+test("protocol 47 type 6 round-trips the full cell mask and rejects truncation", async ({ page }) => {
   await startHunt(page);
 
   const result = await page.evaluate(() => {
@@ -84,7 +84,7 @@ test("protocol 46 type 6 round-trips the full cell mask and rejects truncation",
   });
 
   expect(result.packed).toMatchObject({
-    protocolVersion: 46,
+    protocolVersion: 47,
     typeCode: 6,
     kind: "landEater",
   });
@@ -637,7 +637,7 @@ test("burrow replicas keep the locked target and consume delayed clocks without 
     }, host);
 
     expect(host.delayed.packed).toMatchObject({
-      protocolVersion: 46,
+      protocolVersion: 47,
       typeCode: 6,
       kind: "landEater",
       decoded: {

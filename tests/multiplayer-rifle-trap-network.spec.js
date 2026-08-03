@@ -16,7 +16,7 @@ async function openGame(page) {
   await page.waitForFunction(() => Boolean(window.__dustMultiplayerTest));
 }
 
-test("protocol 46 compacts and ACK-streams the maximum trap field without losing a replica", async ({ page }) => {
+test("protocol 47 compacts and ACK-streams the maximum trap field without losing a replica", async ({ page }) => {
   await openGame(page);
 
   const result = await page.evaluate(() => {

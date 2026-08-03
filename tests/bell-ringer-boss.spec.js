@@ -1187,7 +1187,7 @@ test("the ground-smash action round-trips through the compact boss packet withou
     return { version: wire.version, bossBytes: wire.bossState.length, decoded, guest };
   });
 
-  expect(result.version).toBe(46);
+  expect(result.version).toBe(47);
   expect(result.bossBytes).toBeLessThan(160);
   expect(result.decoded).toMatchObject({ action: "groundSlam", actionSeq: 1 });
   expect(result.decoded.actionTimeLeft).toBeCloseTo(1.55, 1);
@@ -1763,7 +1763,7 @@ test("Bell Ringer snapshots preserve the three churches and clear the guest repl
   expect(result.host.churches.map((church) => church.chainEnabled)).toEqual([false, true, true]);
   expect(result.host.churches.every((church) => church.chainAttached)).toBe(true);
   expect(result.host.churches[0].chainVisible).toBe(false);
-  expect(result.wireVersion).toBe(46);
+  expect(result.wireVersion).toBe(47);
   expect(result.wireHasLegacyBoss).toBe(false);
 
   for (const snapshotBoss of [result.raw, result.wire]) {

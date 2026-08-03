@@ -99,7 +99,7 @@ test("the WebView bridge applies only the newest cumulative realtime message per
     const beforeReliable = multiplayer.getIncomingRealtimeDiagnostics();
     capture.emitReliable({
       type: "decision",
-      version: 46,
+      version: 47,
       action: "noop",
       playerId: "mock-player-1",
     });
@@ -257,7 +257,7 @@ test("a four-player wave-10 sized session does not accumulate snapshot, ACK, or 
 
   const report = JSON.stringify(metrics, null, 2);
   console.log(`long-match replication metrics\n${report}`);
-  expect(metrics.protocol, report).toBe(46);
+  expect(metrics.protocol, report).toBe(47);
   expect(metrics.bootstrapFrames, report).toBeGreaterThan(0);
   expect(metrics.skippedSnapshots, report).toBe(80);
   expect(metrics.finalSequence, report).toBeGreaterThan(LONG_RUN_FRAMES);

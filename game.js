@@ -1,6 +1,22 @@
 (function () {
   "use strict";
 
+  // Computed before anything else: the very first renderer is created long
+  // before the old declaration site executed, so a later assignment would leave
+  // the flag undefined exactly when createGameRenderer needs it. On a Node host
+  // there is no WebGL at all, which turns that ordering mistake fatal.
+  var dedicatedServerHeadless = false;
+  try {
+    dedicatedServerHeadless = new URLSearchParams(window.location.search).get("dedicatedServer") === "1";
+  } catch (headlessFlagError) {
+    dedicatedServerHeadless = false;
+  }
+  if (dedicatedServerHeadless) {
+    // Nobody looks at this page; hiding it keeps layout intact while paint
+    // collapses to solid-color tiles the compositor stores for free.
+    try { document.documentElement.style.visibility = "hidden"; } catch (headlessHideError) {}
+  }
+
   var gameI18n = window.DustAndDeadI18n || null;
   function tr(key, fallback, params) {
     return gameI18n ? gameI18n.t(key, params || null, fallback) : String(fallback == null ? key : fallback);
@@ -27,6 +43,56 @@
   }
 
   var THREE = window.THREE;
+
+  // Dedicated authority: nothing is ever drawn (render() is skipped and the
+  // renderer is a stub), but the scene graph itself must stay real — boss
+  // mechanics read Object3D world matrices (Oil Baron cane muzzle, Hordeheart
+  // split anchors, Land Eater body collider). What IS dead weight headless is
+  // the vertex data inside parametric geometries: thousands of world/prop/rig
+  // meshes each allocating position/normal/uv/index buffers nobody samples
+  // (audited: no gameplay path reads mesh vertices; the one Box3.setFromObject
+  // degrades to an empty box whose consumer skips it). Replace the parametric
+  // geometry classes IN PLACE on the THREE namespace — the boss model files
+  // captured this same namespace object at load, so they build identical
+  // hierarchies around zero-vertex buffers. Full BufferGeometry semantics are
+  // kept (empty position/normal/uv attributes plus an empty index) because
+  // several merge/deform helpers read attributes without guards, and the
+  // BatchedMesh factories key off summed position counts (0 → they return
+  // null and take their existing no-batch fallback).
+  if (dedicatedServerHeadless) {
+    (function installHeadlessGeometryStubs() {
+      var sharedPosition = new THREE.Float32BufferAttribute(new Float32Array(0), 3);
+      var sharedNormal = new THREE.Float32BufferAttribute(new Float32Array(0), 3);
+      var sharedUv = new THREE.Float32BufferAttribute(new Float32Array(0), 2);
+      var stubNames = [
+        "BoxGeometry", "CapsuleGeometry", "CircleGeometry", "ConeGeometry",
+        "CylinderGeometry", "DodecahedronGeometry", "ExtrudeGeometry",
+        "IcosahedronGeometry", "LatheGeometry", "OctahedronGeometry",
+        "PlaneGeometry", "RingGeometry", "ShapeGeometry", "SphereGeometry",
+        "TetrahedronGeometry", "TorusGeometry", "TorusKnotGeometry",
+        "TubeGeometry",
+      ];
+      stubNames.forEach(function (name) {
+        if (typeof THREE[name] !== "function") return;
+        THREE[name] = (function (typeName) {
+          return class extends THREE.BufferGeometry {
+            constructor() {
+              super();
+              this.type = typeName;
+              // No game code reads constructor parameters back (audited);
+              // the empty object only keeps the property shape familiar.
+              this.parameters = {};
+              this.setAttribute("position", sharedPosition);
+              this.setAttribute("normal", sharedNormal);
+              this.setAttribute("uv", sharedUv);
+              this.setIndex(new THREE.Uint16BufferAttribute(new Uint16Array(0), 1));
+            }
+          };
+        })(name);
+      });
+    })();
+  }
+
   var CITY_W = 60;
   var CITY_D = 42;
   var OUTSKIRT_MARGIN = 28;
@@ -1691,6 +1757,8 @@
   var onlineMultiplayerReadyBtn = document.getElementById("online-multiplayer-ready-btn");
   var onlineMultiplayerCountdown = document.getElementById("online-multiplayer-countdown");
   var onlineMultiplayerCountdownValue = document.getElementById("online-multiplayer-countdown-value");
+  var onlineMultiplayerRegion = document.getElementById("online-multiplayer-region");
+  var onlineMultiplayerRegionValue = document.getElementById("online-multiplayer-region-value");
   var onlineMultiplayerLobbyBackBtn = document.getElementById("online-multiplayer-lobby-back-btn");
   var multiplayerScoreboardToggle = document.getElementById("multiplayer-scoreboard-toggle");
   var multiplayerScoreboard = document.getElementById("multiplayer-scoreboard");
@@ -2674,6 +2742,11 @@
   // WebGL queue, or render without advancing gameplay, so a shared headless GPU
   // is not mistaken for a host-side simulation stall.
   var automaticFrameLoopModeForTest = "full";
+  // dedicatedServerHeadless is declared at the very top of this closure: the
+  // dedicated match server loads this page with ?dedicatedServer=1, nobody ever
+  // looks at it, and skipping the draw is what lets the authority simulate at
+  // full rate (measured: SwiftShader drawing cost over 99% of the frame budget
+  // and held the authority at ~11 fps).
   // Monotonic only for the real animation loop. Test/diagnostic render calls
   // do not advance it, which lets staged GPU submissions guarantee at most one
   // actual draw item per displayed RAF.
@@ -5579,6 +5652,16 @@
   var ONLINE_SERVER_ENDPOINT_ID = "online-server";
   var ONLINE_SESSION_STORAGE_KEY = "dustAndDeadOnlineSessionV1";
   var ONLINE_RECONNECT_MAX_DELAY_MS = 4000;
+  // Region discovery. The probe opens the very socket the match will use, so a
+  // won probe costs nothing extra; the losers are closed as soon as one wins.
+  var ONLINE_REGION_PROBE_LIMIT = 4;
+  var ONLINE_REGION_PROBE_TIMEOUT_MS = 2500;
+  var ONLINE_REGION_DIRECTORY_TIMEOUT_MS = 4000;
+  var ONLINE_REGION_PING_SAMPLES = 3;
+  var ONLINE_REGION_PING_SPACING_MS = 40;
+  // A fully loaded region has to be this much faster to still win, so players
+  // spread across regions instead of piling onto the single closest one.
+  var ONLINE_REGION_LOAD_PENALTY_MS = 30;
   var onlineMultiplayerState = {
     open: false,
     socket: null,
@@ -5612,6 +5695,17 @@
     statusError: false,
     helloAttempted: false,
     resumeAttempted: false,
+    // Region selection. regionUrl is sticky for the whole session: a reconnect
+    // must return to the region that owns the session, never re-race the probe.
+    regionId: "",
+    regionLabel: "",
+    regionUrl: "",
+    regionPingMs: -1,
+    regionPinned: false,
+    regionSearchCode: "",
+    regionSelectionPending: false,
+    regionSelectionGeneration: 0,
+    adoptedProbe: null,
   };
 
   var careerProgression = window.DustAndDeadProgression || null;
@@ -7564,7 +7658,93 @@
     syncTransientFlashMaterials();
   }
 
+  // The dedicated authority never draws a frame, yet a real WebGLRenderer would
+  // still create a software-GL context: measured on the deployment image, that
+  // kept a SwiftShader GPU process holding ~540 MB for four matches. This stub
+  // carries the full surface game code touches outside render(), reports
+  // "no WebGL2, no instancing" so every GPU-dependent path takes its existing
+  // fallback, and never allocates a GL context at all.
+  function createHeadlessAuthorityRenderer() {
+    function noop() {}
+    var canvas = document.createElement("canvas");
+    // Answers the capability probes exactly like a modest WebGL1 device, so the
+    // game keeps its cheap instanced visual paths instead of falling back to
+    // per-entity meshes (measured: the fallback costs ~35 MB of heap per match).
+    // Shader "compilation" always succeeds; nothing is ever drawn with it.
+    var fakeShaderHandle = {};
+    var fakeProgramHandle = {};
+    var fakeContext = {
+      isContextLost: function () { return false; },
+      getExtension: function (name) {
+        return name === "ANGLE_instanced_arrays" ? {} : null;
+      },
+      getParameter: function () { return 16; },
+      createShader: function () { return fakeShaderHandle; },
+      shaderSource: noop,
+      compileShader: noop,
+      getShaderParameter: function () { return true; },
+      getShaderInfoLog: function () { return ""; },
+      createProgram: function () { return fakeProgramHandle; },
+      attachShader: noop,
+      linkProgram: noop,
+      getProgramParameter: function () { return true; },
+      getProgramInfoLog: function () { return ""; },
+      deleteShader: noop,
+      deleteProgram: noop,
+      getError: function () { return 0; },
+    };
+    return {
+      isHeadlessAuthorityStub: true,
+      domElement: canvas,
+      shadowMap: { enabled: false, type: 0, autoUpdate: false, needsUpdate: false },
+      capabilities: {
+        isWebGL2: false,
+        precision: "highp",
+        maxTextures: 8,
+        getMaxAnisotropy: function () { return 1; },
+      },
+      properties: { get: function () { return {}; }, remove: noop },
+      info: {
+        render: { calls: 0, triangles: 0, lines: 0, points: 0, frame: 0 },
+        memory: { geometries: 0, textures: 0 },
+        programs: [],
+        reset: noop,
+      },
+      outputColorSpace: "",
+      toneMapping: 0,
+      toneMappingExposure: 1,
+      setPixelRatio: noop,
+      getPixelRatio: function () { return 1; },
+      setSize: noop,
+      getSize: function (target) {
+        if (target && typeof target.set === "function") target.set(1, 1);
+        return target;
+      },
+      render: noop,
+      compile: noop,
+      compileAsync: function () { return Promise.resolve(); },
+      setRenderTarget: noop,
+      getRenderTarget: function () { return null; },
+      setScissor: noop,
+      setScissorTest: noop,
+      getScissor: function (target) { return target; },
+      setViewport: noop,
+      getViewport: function (target) { return target; },
+      getContext: function () { return fakeContext; },
+      setClearColor: noop,
+      clear: noop,
+      resetState: noop,
+      forceContextLoss: noop,
+      dispose: noop,
+    };
+  }
+
   function createGameRenderer() {
+    if (dedicatedServerHeadless) {
+      var stub = createHeadlessAuthorityRenderer();
+      configureRenderer(stub);
+      return stub;
+    }
     var instance = new THREE.WebGLRenderer({
       antialias: true,
       powerPreference: "high-performance",
@@ -7718,6 +7898,12 @@
   }
 
   function initMenuScene() {
+    // The dedicated authority never shows a menu and nobody sees its pixels.
+    // Skipping the diorama (~470 objects: mesas, facades, cowboy, zombies,
+    // dust planes) is safe: every consumer of menuState.cowboy/crate/zombies
+    // is null-guarded or menu-mode-only, and updateMenuScene bails on the
+    // missing cowboy.
+    if (dedicatedServerHeadless) return;
     menuState.mats = {
       mesa: material(0x8e5536, 0.96, 0.01),
       mesaDark: material(0x6f3d28, 0.98, 0.01),
@@ -10561,6 +10747,10 @@
 
   function ensureAudioContext() {
     if (audioState.ctx) return audioState.ctx;
+    // Headless authority: there is no AudioContext in the worker, and the
+    // no-context fallback below writes to the DOM — which would otherwise run
+    // on EVERY sound attempt (each shot, each zombie hit) all match long.
+    if (dedicatedServerHeadless) return null;
     var AudioContextCtor = getAudioContextConstructor();
     if (!AudioContextCtor) {
       updateMenuMusicButton();
@@ -31013,6 +31203,18 @@
 
   function updateBossShaderFxBackgroundPrewarm() {
     if (!bossShaderFxPrewarm.pending || bossShaderFxPrewarm.completed || renderDiagnostics.contextLost) return;
+    // The stub renderer compiles nothing, so the throwaway proxy scene this
+    // machine builds (full Bell Ringer + Oil Baron models, spectral chains,
+    // bribe chest, telegraphs) would be allocated and then torn down for no
+    // effect. Report completion immediately; the authored-geometry prewarm the
+    // coordinator gates behind this flag still runs, because live encounters
+    // take their pooled models (and their sim-read anchors) from it.
+    if (dedicatedServerHeadless) {
+      bossShaderFxPrewarm.pending = false;
+      bossShaderFxPrewarm.completed = true;
+      bossShaderFxPrewarm.completedRaf = renderRafSequence;
+      return;
+    }
     // The coordinator never admits this work during populated combat. In its
     // enemy-free window, let several cheap proxy-build slices share the same
     // already-budgeted job while the four-millisecond elapsed guard remains the
@@ -74300,6 +74502,15 @@
   }
 
   function refreshZombieInstancingActive(enemyCount) {
+    // The headless authority renders nothing: instanced batching would only
+    // burn CPU composing matrices nobody uploads. Holding the flag false
+    // keeps every reader (the group.visible writers, the batch-sync guard,
+    // the prewarm predicate, diagnostics) on the one coherent non-instanced
+    // path — the same branch a small-population client takes.
+    if (dedicatedServerHeadless) {
+      zombieInstancingActive = false;
+      return false;
+    }
     var count = Math.max(0, Math.floor(Number(enemyCount) || 0));
     // Instanced and individual zombies use the same source meshes, materials,
     // transforms and triangles. Keep batching active until only a small group
@@ -74381,19 +74592,28 @@
     zombieInstanceBatchPrewarm.gpuError = "";
     zombieInstanceBatchPrewarm.gpuOffscreenPasses = 0;
     zombieInstanceBatchPrewarm.gpuCanvasPasses = 0;
-    Object.keys(zombiePools).forEach(function (type) {
-      var zombie = zombiePools[type] && zombiePools[type][0];
-      var meshes = zombie && zombie.group && zombie.group.userData
-        ? zombie.group.userData.zombieInstanceMeshes
-        : null;
-      if (!Array.isArray(meshes)) return;
-      for (var i = 0; i < meshes.length; i++) {
-        var key = getZombieInstanceBatchKey(meshes[i]);
-        if (!key || seen[key]) continue;
-        seen[key] = true;
-        zombieInstanceBatchPrewarm.sources.push(meshes[i]);
-      }
-    });
+    // Headless authority: register no sources at all. Instancing never
+    // activates there (refreshZombieInstancingActive holds false), and the
+    // gate must sit HERE, at the source level: the heavy-prewarm scheduler
+    // runs one job per frame and skips the 'zombies' job only through its
+    // pending predicate — a no-op inside the job body would keep the
+    // predicate true and burn the idle-window slots forever, starving the
+    // doppelganger/boss/trap/acid prewarms behind it in the round-robin.
+    if (!dedicatedServerHeadless) {
+      Object.keys(zombiePools).forEach(function (type) {
+        var zombie = zombiePools[type] && zombiePools[type][0];
+        var meshes = zombie && zombie.group && zombie.group.userData
+          ? zombie.group.userData.zombieInstanceMeshes
+          : null;
+        if (!Array.isArray(meshes)) return;
+        for (var i = 0; i < meshes.length; i++) {
+          var key = getZombieInstanceBatchKey(meshes[i]);
+          if (!key || seen[key]) continue;
+          seen[key] = true;
+          zombieInstanceBatchPrewarm.sources.push(meshes[i]);
+        }
+      });
+    }
     zombieInstanceBatchPrewarm.complete = zombieInstanceBatchPrewarm.sources.length === 0;
     refreshZombieInstanceBatchGpuPrewarmCompletion();
   }
@@ -83106,7 +83326,15 @@
         // Armor break-off is gameplay-visible state with authored debris and
         // RNG. Keep miners on the original per-step path so catch-up batching
         // cannot reorder those effects relative to damage and simulation.
-        if (deferRuntimeEnemyVisualSync && e.type !== "armoredMiner") {
+        if (isHeadlessAuthorityFrame() && e.type !== "armoredMiner") {
+          // Nobody renders the authority's rigs: per-enemy skeletal animation
+          // and health-bar posing are pure CPU here, and no rig state travels
+          // on the wire (guests rebuild every pose locally from replicated
+          // position/angle/hp/fx). Miners are exempt above all else: their
+          // armor pieces spawn seeded-RNG debris whose interleave with damage
+          // must stay byte-identical, and damageEnemy's direct armor sync
+          // alone would skip the catch-up for a miner damaged off-screen.
+        } else if (deferRuntimeEnemyVisualSync && e.type !== "armoredMiner") {
           requestEnemyVisualPresentationSync(e);
         }
         else syncEnemyVisualPresentation(e);
@@ -97024,6 +97252,9 @@
         sessionId: String(value.sessionId),
         playerId: String(value.playerId || ""),
         resumeToken: String(value.resumeToken),
+        regionUrl: String(value.regionUrl || ""),
+        regionId: String(value.regionId || ""),
+        regionLabel: String(value.regionLabel || ""),
       };
     } catch (error) {
       return null;
@@ -97039,6 +97270,11 @@
         sessionId: onlineMultiplayerState.sessionId,
         playerId: onlineMultiplayerState.playerId,
         resumeToken: onlineMultiplayerState.resumeToken,
+        // The session only exists on the region that issued it: a reloaded page
+        // must come back here, never re-race the latency probe.
+        regionUrl: onlineMultiplayerState.regionUrl,
+        regionId: onlineMultiplayerState.regionId,
+        regionLabel: onlineMultiplayerState.regionLabel,
       }));
     } catch (error) {}
   }
@@ -97063,6 +97299,15 @@
         if ((url.pathname === "/" || !url.pathname) && configuredPath) url.pathname = configuredPath;
       } else {
         if (window.location.protocol !== "http:" && window.location.protocol !== "https:") return "";
+        // A Capacitor WebView serves the bundle from https://localhost, so
+        // same-origin resolution silently produces wss://localhost/online — an
+        // address that exists on no device. Report "not configured" instead, so
+        // the player is told to update the build rather than left retrying.
+        if (
+          window.Capacitor &&
+          typeof window.Capacitor.isNativePlatform === "function" &&
+          window.Capacitor.isNativePlatform()
+        ) return "";
         url = new URL(configuredPath, window.location.href);
       }
       if (url.protocol === "http:") url.protocol = "ws:";
@@ -97071,6 +97316,364 @@
     } catch (error) {
       return "";
     }
+  }
+
+  function getOnlineDirectorUrl() {
+    var config = window.DustAndDeadOnlineConfig || {};
+    var raw = String(config.directorUrl || "").trim();
+    if (!raw) return "";
+    try {
+      var url = new URL(raw, window.location.href);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+      return url.origin + url.pathname.replace(/\/+$/, "");
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function normalizeOnlineRegionUrl(value) {
+    var raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      var url = new URL(raw, window.location.href);
+      if (url.protocol === "http:") url.protocol = "ws:";
+      if (url.protocol === "https:") url.protocol = "wss:";
+      if (url.protocol !== "ws:" && url.protocol !== "wss:") return "";
+      if (!url.pathname || url.pathname === "/") {
+        url.pathname = String((window.DustAndDeadOnlineConfig || {}).path || "/online");
+      }
+      return url.toString();
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function onlineProbeClock() {
+    return (window.performance && typeof window.performance.now === "function")
+      ? window.performance.now()
+      : Date.now();
+  }
+
+  function fetchOnlineRegionDirectory(directorUrl, searchCode) {
+    if (typeof window.fetch !== "function") return Promise.resolve(null);
+    var target = directorUrl + "/v1/regions";
+    if (searchCode) target += "?code=" + encodeURIComponent(searchCode);
+    var controller = typeof window.AbortController === "function" ? new window.AbortController() : null;
+    var timer = window.setTimeout(function () {
+      if (controller) {
+        try { controller.abort(); } catch (error) {}
+      }
+    }, ONLINE_REGION_DIRECTORY_TIMEOUT_MS);
+    return window.fetch(target, {
+      method: "GET",
+      cache: "no-store",
+      credentials: "omit",
+      signal: controller ? controller.signal : undefined,
+    }).then(function (response) {
+      return response.ok ? response.json() : null;
+    }).catch(function () {
+      return null;
+    }).then(function (directory) {
+      window.clearTimeout(timer);
+      if (!directory || !Array.isArray(directory.regions)) return null;
+      // A director on another protocol version would hand out servers this build
+      // cannot talk to, so its whole answer is discarded.
+      if (directory.protocolVersion != null && Number(directory.protocolVersion) !== MULTIPLAYER_PROTOCOL_VERSION) return null;
+      return directory;
+    });
+  }
+
+  function pickOnlineRegionCandidates(directory) {
+    var regions = directory && Array.isArray(directory.regions) ? directory.regions : [];
+    var usable = [];
+    regions.forEach(function (entry) {
+      var url = normalizeOnlineRegionUrl(entry && entry.url);
+      if (!url) return;
+      usable.push({
+        id: String(entry && entry.id || ""),
+        label: String(entry && entry.label || entry && entry.id || ""),
+        url: url,
+        healthy: !!(entry && entry.healthy),
+        load: Math.max(0, Math.min(1, Number(entry && entry.load) || 0)),
+      });
+    });
+    var healthy = usable.filter(function (entry) { return entry.healthy; });
+    // Every region reporting itself unhealthy is still better than refusing to
+    // play: the probe below is the real gate, and it will reject dead hosts.
+    return healthy.length ? healthy : usable;
+  }
+
+  // The probe opens the exact socket the match would use and measures the
+  // application round trip on it. The winner is then promoted to the live
+  // connection, so a correct choice costs no extra handshake.
+  function probeOnlineRegion(candidate, timeoutMs) {
+    return new Promise(function (resolve) {
+      var url = candidate && candidate.url;
+      if (!url || typeof window.WebSocket !== "function") {
+        resolve(null);
+        return;
+      }
+      var socket = null;
+      var settled = false;
+      var startedAt = onlineProbeClock();
+      var helloAt = 0;
+      var hello = null;
+      var samples = [];
+      var pendingPingAt = 0;
+      var pingsSent = 0;
+      var spacingTimer = 0;
+      var deadline = 0;
+
+      function detach() {
+        if (deadline) window.clearTimeout(deadline);
+        deadline = 0;
+        if (spacingTimer) window.clearTimeout(spacingTimer);
+        spacingTimer = 0;
+        if (!socket) return;
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+      }
+
+      function finish(succeeded) {
+        if (settled) return;
+        settled = true;
+        detach();
+        if (!succeeded) {
+          if (socket) {
+            try { socket.close(1000, "probe_failed"); } catch (error) {}
+          }
+          resolve(null);
+          return;
+        }
+        var sorted = samples.slice().sort(function (left, right) { return left - right; });
+        var connectMs = Math.max(0, helloAt - startedAt);
+        resolve({
+          candidate: candidate,
+          url: url,
+          socket: socket,
+          hello: hello,
+          pinned: false,
+          connectMs: connectMs,
+          // Without a pong the connect time still orders regions correctly: it is
+          // a small multiple of the round trip on every path.
+          pingMs: sorted.length ? sorted[Math.floor(sorted.length / 2)] : connectMs,
+        });
+      }
+
+      function sendPing() {
+        if (settled || !socket || socket.readyState !== 1 || pingsSent >= ONLINE_REGION_PING_SAMPLES) return;
+        pingsSent += 1;
+        pendingPingAt = onlineProbeClock();
+        try {
+          socket.send(JSON.stringify({
+            type: "session.ping",
+            nonce: "probe" + pingsSent,
+            clientTime: Date.now(),
+          }));
+        } catch (error) {
+          finish(helloAt > 0);
+        }
+      }
+
+      deadline = window.setTimeout(function () {
+        deadline = 0;
+        finish(helloAt > 0);
+      }, Math.max(200, Number(timeoutMs) || ONLINE_REGION_PROBE_TIMEOUT_MS));
+
+      try {
+        socket = new window.WebSocket(url);
+      } catch (error) {
+        window.clearTimeout(deadline);
+        resolve(null);
+        return;
+      }
+      socket.onerror = function () { finish(false); };
+      socket.onclose = function () { finish(false); };
+      socket.onmessage = function (event) {
+        var message = null;
+        try {
+          message = JSON.parse(typeof event.data === "string" ? event.data : "");
+        } catch (parseError) {
+          return;
+        }
+        if (!message || typeof message.type !== "string") return;
+        if (message.type === "server.hello") {
+          if (Number(message.protocolVersion) !== MULTIPLAYER_PROTOCOL_VERSION) {
+            finish(false);
+            return;
+          }
+          hello = message;
+          helloAt = onlineProbeClock();
+          if (message.regionId && !candidate.id) candidate.id = String(message.regionId);
+          if (message.regionLabel && !candidate.label) candidate.label = String(message.regionLabel);
+          sendPing();
+          return;
+        }
+        if (message.type === "session.pong") {
+          if (pendingPingAt) samples.push(Math.max(0, onlineProbeClock() - pendingPingAt));
+          pendingPingAt = 0;
+          if (pingsSent >= ONLINE_REGION_PING_SAMPLES) {
+            finish(true);
+            return;
+          }
+          spacingTimer = window.setTimeout(function () {
+            spacingTimer = 0;
+            sendPing();
+          }, ONLINE_REGION_PING_SPACING_MS);
+        }
+      };
+    });
+  }
+
+  function scoreOnlineProbe(result) {
+    var load = result && result.candidate ? Math.max(0, Math.min(1, Number(result.candidate.load) || 0)) : 0;
+    return Math.max(0, Number(result && result.pingMs) || 0) + load * ONLINE_REGION_LOAD_PENALTY_MS;
+  }
+
+  function closeOnlineProbe(result) {
+    if (!result || !result.socket) return;
+    try { result.socket.close(1000, "probe_done"); } catch (error) {}
+    result.socket = null;
+  }
+
+  function describeOnlineRegionChoice(candidate, probe) {
+    return {
+      candidate: candidate,
+      url: candidate.url,
+      socket: probe ? probe.socket : null,
+      hello: probe ? probe.hello : null,
+      pingMs: probe ? probe.pingMs : -1,
+      pinned: false,
+    };
+  }
+
+  function claimOnlineRegionForCode(directorUrl, searchCode, regionId) {
+    if (!directorUrl || !searchCode || !regionId || typeof window.fetch !== "function") {
+      return Promise.resolve(regionId);
+    }
+    return window.fetch(directorUrl + "/v1/route/claim", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: searchCode, regionId: regionId }),
+    }).then(function (response) {
+      return response.ok ? response.json() : null;
+    }).then(function (body) {
+      return body && body.regionId ? String(body.regionId) : regionId;
+    }).catch(function () {
+      return regionId;
+    });
+  }
+
+  function selectOnlineRegion(directorUrl, searchCode) {
+    var config = window.DustAndDeadOnlineConfig || {};
+    var probeLimit = Math.max(1, Math.min(8, Math.floor(Number(config.regionProbeLimit) || ONLINE_REGION_PROBE_LIMIT)));
+    var probeTimeout = Math.max(400, Math.min(10000, Math.floor(
+      Number(config.regionProbeTimeoutMs) || ONLINE_REGION_PROBE_TIMEOUT_MS
+    )));
+    return fetchOnlineRegionDirectory(directorUrl, searchCode).then(function (directory) {
+      var candidates = pickOnlineRegionCandidates(directory);
+      if (!candidates.length) return null;
+      var pinnedId = directory ? String(directory.pinnedRegionId || "") : "";
+      var pinned = null;
+      candidates.forEach(function (entry) {
+        if (!pinned && pinnedId && entry.id === pinnedId) pinned = entry;
+      });
+      // A code whose room already exists somewhere outranks latency entirely:
+      // the whole point of the code is that both friends reach the same room.
+      if (pinned) {
+        return probeOnlineRegion(pinned, probeTimeout).then(function (result) {
+          var choice = describeOnlineRegionChoice(pinned, result);
+          choice.pinned = true;
+          return choice;
+        });
+      }
+      var probed = candidates.slice(0, probeLimit);
+      return Promise.all(probed.map(function (entry) {
+        return probeOnlineRegion(entry, probeTimeout);
+      })).then(function (results) {
+        var winner = null;
+        results.forEach(function (result) {
+          if (!result) return;
+          if (!winner || scoreOnlineProbe(result) < scoreOnlineProbe(winner)) winner = result;
+        });
+        function settle(finalProbe, finalCandidate, isPinned) {
+          results.forEach(function (result) {
+            if (result && result !== finalProbe) closeOnlineProbe(result);
+          });
+          var choice = describeOnlineRegionChoice(finalCandidate, finalProbe);
+          choice.pinned = !!isPinned;
+          return choice;
+        }
+        // Nothing answered in time. Handing back the first advertised region
+        // still gives the player one honest attempt instead of a dead end.
+        if (!winner) return settle(null, candidates[0], false);
+        if (!searchCode) return settle(winner, winner.candidate, false);
+        return claimOnlineRegionForCode(directorUrl, searchCode, winner.candidate.id).then(function (claimedId) {
+          if (!claimedId || claimedId === winner.candidate.id) return settle(winner, winner.candidate, false);
+          var claimedProbe = null;
+          results.forEach(function (result) {
+            if (result && result.candidate.id === claimedId) claimedProbe = result;
+          });
+          if (claimedProbe) return settle(claimedProbe, claimedProbe.candidate, true);
+          var listed = null;
+          candidates.forEach(function (entry) {
+            if (entry.id === claimedId) listed = entry;
+          });
+          return listed ? settle(null, listed, true) : settle(winner, winner.candidate, false);
+        });
+      });
+    });
+  }
+
+  function clearOnlineRegionSelection() {
+    onlineMultiplayerState.regionSelectionGeneration += 1;
+    onlineMultiplayerState.regionSelectionPending = false;
+    onlineMultiplayerState.regionId = "";
+    onlineMultiplayerState.regionLabel = "";
+    onlineMultiplayerState.regionUrl = "";
+    onlineMultiplayerState.regionPingMs = -1;
+    onlineMultiplayerState.regionPinned = false;
+    onlineMultiplayerState.regionSearchCode = "";
+  }
+
+  function applyOnlineRegionChoice(choice) {
+    if (!choice || !choice.candidate) return;
+    onlineMultiplayerState.regionId = String(choice.candidate.id || "");
+    onlineMultiplayerState.regionLabel = String(choice.candidate.label || choice.candidate.id || "");
+    onlineMultiplayerState.regionUrl = String(choice.url || "");
+    onlineMultiplayerState.regionPingMs = Number(choice.pingMs) >= 0 ? Math.round(Number(choice.pingMs)) : -1;
+    onlineMultiplayerState.regionPinned = !!choice.pinned;
+  }
+
+  function renderOnlineRegionStatus() {
+    if (!onlineMultiplayerRegion) return;
+    var hasDirector = !!getOnlineDirectorUrl();
+    onlineMultiplayerRegion.hidden = !hasDirector;
+    if (!hasDirector || !onlineMultiplayerRegionValue) return;
+    onlineMultiplayerRegionValue.removeAttribute("data-i18n");
+    onlineMultiplayerRegionValue.classList.toggle("is-pinned", !!onlineMultiplayerState.regionPinned);
+    if (onlineMultiplayerState.regionSelectionPending) {
+      onlineMultiplayerRegionValue.textContent = tr(
+        "multiplayer.online.region.searching",
+        "Measuring latency to the game regions…"
+      );
+      return;
+    }
+    if (!onlineMultiplayerState.regionId) {
+      onlineMultiplayerRegionValue.textContent = tr("multiplayer.online.region.unknown", "Not selected yet");
+      return;
+    }
+    var label = onlineMultiplayerState.regionLabel || onlineMultiplayerState.regionId;
+    onlineMultiplayerRegionValue.textContent = onlineMultiplayerState.regionPingMs >= 0
+      ? tr("multiplayer.online.region.value", "{region} · {ping} ms", {
+        region: label,
+        ping: onlineMultiplayerState.regionPingMs,
+      })
+      : label;
   }
 
   function setOnlineConnectionState(nextState) {
@@ -97318,7 +97921,13 @@
     if (force || seconds !== onlineMultiplayerState.lastCountdownSecond) {
       onlineMultiplayerState.lastCountdownSecond = seconds;
       if (onlineMultiplayerCountdownValue) onlineMultiplayerCountdownValue.textContent = String(seconds);
-      if (onlineMultiplayerState.connectionState !== "reconnecting") {
+      // This runs from the render loop, so it must never overwrite a one-shot
+      // error or reconnect notice the player has not had time to read.
+      if (
+        onlineMultiplayerState.connectionState !== "reconnecting" &&
+        onlineMultiplayerState.connectionState !== "error" &&
+        !onlineMultiplayerState.statusError
+      ) {
         setOnlineMultiplayerStatus(
           "multiplayer.online.status.countdown",
           "One player is not ready. The server starts the match in {seconds} seconds.",
@@ -97373,6 +97982,7 @@
     }
     if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.disabled = busy || hasRoom;
     if (onlineMultiplayerSearchCode) onlineMultiplayerSearchCode.disabled = busy || hasRoom;
+    renderOnlineRegionStatus();
     renderOnlineMultiplayerPlayers();
     updateOnlineMultiplayerCountdown(false);
   }
@@ -97392,6 +98002,16 @@
     if (hasResume) {
       message.sessionId = onlineMultiplayerState.sessionId;
       message.resumeToken = onlineMultiplayerState.resumeToken;
+      // Names the match this page still holds in memory. A freshly reloaded
+      // page cannot name one, which is how the server knows to reset this
+      // player's counters and replay the start instead of assuming continuity.
+      if (
+        multiplayerState.transportKind === "online" &&
+        (multiplayerState.phase === "match" || multiplayerState.phase === "ended") &&
+        multiplayerState.matchId
+      ) {
+        message.resumeMatchId = multiplayerState.matchId;
+      }
     }
     return sendOnlineEnvelope(message);
   }
@@ -97452,6 +98072,13 @@
     if (onlineMultiplayerState.readyPending && localEntry && !!localEntry.ready === onlineMultiplayerState.readyTarget) {
       onlineMultiplayerState.readyPending = false;
     }
+    // The relay owns the match lifecycle. If it says the room is back in the
+    // lobby while this client still believes it is playing, the local match is
+    // forced down here — otherwise the player is stranded in a match nobody else
+    // is in, with every gameplay message answered by match_not_running.
+    if (message.phase === "lobby" && multiplayerState.phase === "match") {
+      finishMultiplayerMatch([], "serverEnded", false);
+    }
     if (multiplayerState.phase === "ended" && message.phase === "lobby") {
       returnMultiplayerMatchToLobby(false, players, players.length ? players[0].id : "");
       return;
@@ -97466,6 +98093,14 @@
       });
     }
     refreshOnlineRoomStatus();
+    // A failed start (most often the server being at match capacity) is reported
+    // on the room, not as a session error. Without this the readiness silently
+    // resets and the player is never told why the match did not begin.
+    var roomError = String(message.error || "");
+    if (roomError) {
+      var copy = getOnlineErrorCopy(roomError);
+      setOnlineMultiplayerStatus(copy[0], copy[1], null, true);
+    }
     renderOnlineMultiplayerPlayers();
     syncOnlineMultiplayerUi();
   }
@@ -97508,7 +98143,30 @@
     onlineMultiplayerState.readyPending = false;
     if (message && message.fatal) onlineMultiplayerState.shouldReconnect = false;
     if (/version|protocol/i.test(code)) onlineMultiplayerState.shouldReconnect = false;
-    setOnlineConnectionState("error");
+    // The server refuses to release a room that has already locked in. Cancel
+    // optimistically wiped the local intent, so it has to be put back or the
+    // player finishes the match with reconnect disabled.
+    if (code === "room_locked") {
+      onlineMultiplayerState.desiredQueue = true;
+      onlineMultiplayerState.queued = true;
+      onlineMultiplayerState.shouldReconnect = (window.DustAndDeadOnlineConfig || {}).reconnect !== false;
+      // The server only locks a room that is preparing or already in a match, so
+      // the honest state is "starting" until the next snapshot says otherwise.
+      setOnlineConnectionState("starting");
+      setOnlineMultiplayerStatus(
+        "multiplayer.online.status.allReady",
+        "Everyone is ready. The server is starting the match…"
+      );
+      if (onlineMultiplayerState.room) refreshOnlineRoomStatus();
+      syncOnlineMultiplayerUi();
+      return;
+    }
+    // A recoverable error while a live room is still on screen must not relabel
+    // the whole lobby as broken; only the status line reports it.
+    var keepRoomState = !(message && message.fatal) &&
+      !!onlineMultiplayerState.room &&
+      onlineMultiplayerState.connectionState !== "error";
+    if (!keepRoomState) setOnlineConnectionState("error");
     setOnlineMultiplayerStatus(copy[0], copy[1], null, true);
     syncOnlineMultiplayerUi();
   }
@@ -97530,8 +98188,16 @@
       if (Number.isFinite(Number(message.reconnectGraceMs))) {
         onlineMultiplayerState.reconnectGraceMs = Math.max(1000, Number(message.reconnectGraceMs));
       }
+      // Without a director the region is only known from the greeting, which is
+      // what lets a single-region deployment still name itself in the lobby.
+      if (message.regionId && !onlineMultiplayerState.regionId) {
+        onlineMultiplayerState.regionId = String(message.regionId);
+        onlineMultiplayerState.regionLabel = String(message.regionLabel || message.regionId);
+        renderOnlineRegionStatus();
+      }
       return;
     }
+    if (message.type === "session.pong") return;
     if (message.type === "session.welcome") {
       if (!message.sessionId || !message.playerId || !message.resumeToken) {
         handleOnlineMultiplayerError({ code: "invalid_session", fatal: true });
@@ -97550,8 +98216,20 @@
       storeOnlineSession();
       markOnlineMultiplayerBridgeConnected();
       if (message.resumed) {
-        setOnlineConnectionState(onlineMultiplayerState.room ? "room" : "searching");
-        setOnlineMultiplayerStatus("multiplayer.online.status.reconnected", "Reconnected to the server room.");
+        if (message.roomId) {
+          setOnlineConnectionState(onlineMultiplayerState.room ? "room" : "searching");
+          setOnlineMultiplayerStatus("multiplayer.online.status.reconnected", "Reconnected to the server room.");
+        } else if (onlineMultiplayerState.desiredQueue) {
+          // The room dissolved while this page was away; the player still wants
+          // to play, so re-enter the queue explicitly.
+          sendOnlineJoin();
+        } else {
+          setOnlineConnectionState("idle");
+          setOnlineMultiplayerStatus(
+            "multiplayer.online.status.initial",
+            "Enter an optional code or search the public queue."
+          );
+        }
       } else if (onlineMultiplayerState.desiredQueue) {
         setOnlineConnectionState("searching");
         setOnlineMultiplayerStatus(
@@ -97643,6 +98321,10 @@
     if (now - onlineMultiplayerState.reconnectStartedAt >= onlineMultiplayerState.reconnectGraceMs) {
       onlineMultiplayerState.shouldReconnect = false;
       onlineMultiplayerState.desiredQueue = false;
+      // Spent budget is cleared here rather than at each caller, so a later retry
+      // gets a whole fresh grace window instead of one single attempt.
+      onlineMultiplayerState.reconnectAttempt = 0;
+      onlineMultiplayerState.reconnectStartedAt = 0;
       if (multiplayerState.phase === "match" || multiplayerState.phase === "ended") {
         if (multiplayerMatchStatus) {
           multiplayerMatchStatus.textContent = tr(
@@ -97653,6 +98335,10 @@
         closeOnlineMultiplayerLobby();
         return;
       }
+      // The server-side grace has expired with us: the session is gone, and a
+      // region that stopped answering must not stay sticky for the next try.
+      clearStoredOnlineSession();
+      clearOnlineRegionSelection();
       setOnlineConnectionState("error");
       setOnlineMultiplayerStatus(
         "multiplayer.online.error.unavailable",
@@ -97677,14 +98363,38 @@
     syncOnlineMultiplayerUi();
   }
 
-  function connectOnlineMultiplayerSocket() {
-    if (!onlineMultiplayerState.open) return false;
-    if (onlineMultiplayerState.socket && (
-      onlineMultiplayerState.socket.readyState === 0 ||
-      onlineMultiplayerState.socket.readyState === 1
-    )) return true;
-    var url = resolveOnlineMultiplayerUrl();
-    if (!url || typeof window.WebSocket !== "function") {
+  function beginOnlineHandshake() {
+    var stored = readStoredOnlineSession();
+    if (!onlineMultiplayerState.sessionId && stored) {
+      onlineMultiplayerState.sessionId = stored.sessionId;
+      onlineMultiplayerState.playerId = stored.playerId;
+      onlineMultiplayerState.resumeToken = stored.resumeToken;
+    }
+    sendOnlineSessionJoin();
+  }
+
+  function discardOnlineSocket(reason) {
+    var socket = onlineMultiplayerState.socket;
+    onlineMultiplayerState.socket = null;
+    onlineMultiplayerState.socketGeneration += 1;
+    if (!socket) return false;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onerror = null;
+    socket.onclose = null;
+    try { socket.close(1000, String(reason || "client_close")); } catch (error) {}
+    markOnlineMultiplayerBridgeDisconnected();
+    return true;
+  }
+
+  // `adopted` is a probe result whose socket is already open and greeted. Reusing
+  // it turns the latency measurement into the real connection instead of paying a
+  // second handshake right after choosing a region.
+  function attachOnlineSocket(url, adopted) {
+    var reusing = !!(adopted && adopted.socket && adopted.socket.readyState === 1);
+    var target = String(url || (adopted ? adopted.url : "") || "");
+    if ((!target && !reusing) || typeof window.WebSocket !== "function") {
+      if (adopted) closeOnlineProbe(adopted);
       onlineMultiplayerState.desiredQueue = false;
       setOnlineConnectionState("error");
       setOnlineMultiplayerStatus(
@@ -97703,11 +98413,16 @@
     onlineMultiplayerState.intentionalClose = false;
     var generation = ++onlineMultiplayerState.socketGeneration;
     var socket;
-    try {
-      socket = new window.WebSocket(url);
-    } catch (error) {
-      scheduleOnlineMultiplayerReconnect();
-      return false;
+    if (reusing) {
+      socket = adopted.socket;
+    } else {
+      if (adopted) closeOnlineProbe(adopted);
+      try {
+        socket = new window.WebSocket(target);
+      } catch (error) {
+        scheduleOnlineMultiplayerReconnect();
+        return false;
+      }
     }
     onlineMultiplayerState.socket = socket;
     setOnlineConnectionState(onlineMultiplayerState.reconnectAttempt ? "reconnecting" : "connecting");
@@ -97722,13 +98437,7 @@
     syncOnlineMultiplayerUi();
     socket.onopen = function () {
       if (generation !== onlineMultiplayerState.socketGeneration || socket !== onlineMultiplayerState.socket) return;
-      var stored = readStoredOnlineSession();
-      if (!onlineMultiplayerState.sessionId && stored) {
-        onlineMultiplayerState.sessionId = stored.sessionId;
-        onlineMultiplayerState.playerId = stored.playerId;
-        onlineMultiplayerState.resumeToken = stored.resumeToken;
-      }
-      sendOnlineSessionJoin();
+      beginOnlineHandshake();
     };
     socket.onmessage = function (event) {
       if (generation !== onlineMultiplayerState.socketGeneration || socket !== onlineMultiplayerState.socket) return;
@@ -97738,10 +98447,95 @@
     socket.onclose = function () {
       if (generation !== onlineMultiplayerState.socketGeneration || socket !== onlineMultiplayerState.socket) return;
       onlineMultiplayerState.socket = null;
+      // The server resets readiness on disconnect, so a ready toggle that was in
+      // flight can never be confirmed. Leaving the flag set latches the button
+      // on "Saving…" for the rest of the session.
+      onlineMultiplayerState.readyPending = false;
       markOnlineMultiplayerBridgeDisconnected();
       if (!onlineMultiplayerState.intentionalClose) scheduleOnlineMultiplayerReconnect();
     };
+    if (reusing) {
+      // The greeting already arrived during the probe, so onopen will never fire
+      // again on this socket and the handshake has to be driven directly.
+      if (adopted.hello) handleOnlineMultiplayerMessage(adopted.hello);
+      adopted.socket = null;
+      beginOnlineHandshake();
+    }
     return true;
+  }
+
+  function beginOnlineRegionSelection(directorUrl) {
+    var generation = ++onlineMultiplayerState.regionSelectionGeneration;
+    var searchCode = onlineMultiplayerState.searchCode || "";
+    onlineMultiplayerState.regionSelectionPending = true;
+    onlineMultiplayerState.regionSearchCode = searchCode;
+    if (onlineMultiplayerState.reconnectTimer) {
+      window.clearTimeout(onlineMultiplayerState.reconnectTimer);
+      onlineMultiplayerState.reconnectTimer = 0;
+    }
+    setOnlineConnectionState(onlineMultiplayerState.reconnectAttempt ? "reconnecting" : "connecting");
+    setOnlineMultiplayerStatus(
+      "multiplayer.online.status.selectingRegion",
+      "Measuring latency to the game regions…"
+    );
+    syncOnlineMultiplayerUi();
+    selectOnlineRegion(directorUrl, searchCode).catch(function () {
+      return null;
+    }).then(function (choice) {
+      var stale = generation !== onlineMultiplayerState.regionSelectionGeneration;
+      if (!stale) onlineMultiplayerState.regionSelectionPending = false;
+      if (stale || !onlineMultiplayerState.open || onlineMultiplayerState.intentionalClose) {
+        closeOnlineProbe(choice);
+        return;
+      }
+      if (!choice) {
+        // No director answer, or nothing usable in it. A configured direct url is
+        // the last resort before telling the player there is nowhere to play.
+        var fallback = resolveOnlineMultiplayerUrl();
+        if (fallback) {
+          attachOnlineSocket(fallback, null);
+          return;
+        }
+        onlineMultiplayerState.desiredQueue = false;
+        setOnlineConnectionState("error");
+        setOnlineMultiplayerStatus(
+          "multiplayer.online.error.noRegion",
+          "No game region is available right now. Try again soon.",
+          null,
+          true
+        );
+        syncOnlineMultiplayerUi();
+        return;
+      }
+      applyOnlineRegionChoice(choice);
+      attachOnlineSocket(choice.url, choice);
+    });
+    return true;
+  }
+
+  function connectOnlineMultiplayerSocket() {
+    if (!onlineMultiplayerState.open) return false;
+    if (onlineMultiplayerState.socket && (
+      onlineMultiplayerState.socket.readyState === 0 ||
+      onlineMultiplayerState.socket.readyState === 1
+    )) return true;
+    if (onlineMultiplayerState.regionSelectionPending) return true;
+    // A session lives on exactly one region, so every reconnect goes straight
+    // back to the region already chosen instead of re-racing the probe. After a
+    // page reload the choice only survives in the stored session.
+    if (!onlineMultiplayerState.regionUrl) {
+      var storedRegion = readStoredOnlineSession();
+      if (storedRegion && storedRegion.regionUrl) {
+        onlineMultiplayerState.regionUrl = storedRegion.regionUrl;
+        onlineMultiplayerState.regionId = storedRegion.regionId;
+        onlineMultiplayerState.regionLabel = storedRegion.regionLabel || storedRegion.regionId;
+        renderOnlineRegionStatus();
+      }
+    }
+    if (onlineMultiplayerState.regionUrl) return attachOnlineSocket(onlineMultiplayerState.regionUrl, null);
+    var directorUrl = getOnlineDirectorUrl();
+    if (!directorUrl) return attachOnlineSocket(resolveOnlineMultiplayerUrl(), null);
+    return beginOnlineRegionSelection(directorUrl);
   }
 
   function beginOnlineMatchmaking() {
@@ -97754,6 +98548,16 @@
     onlineMultiplayerState.room = null;
     onlineMultiplayerState.roomRevision = -1;
     onlineMultiplayerState.readyPending = false;
+    // A different code can belong to a different region, and a session never
+    // survives a region change, so the old one is dropped before re-selecting.
+    if (getOnlineDirectorUrl() && onlineMultiplayerState.regionSearchCode !== onlineMultiplayerState.searchCode) {
+      // Release the old region's room first, or it lingers with a disconnected
+      // player for the whole reconnect grace.
+      if (isOnlineSocketOpen()) sendOnlineEnvelope({ type: "queue.leave" });
+      discardOnlineSocket("region_reselect");
+      clearStoredOnlineSession();
+      clearOnlineRegionSelection();
+    }
     if (isOnlineSocketOpen() && onlineMultiplayerState.sessionId) sendOnlineJoin();
     else connectOnlineMultiplayerSocket();
     syncOnlineMultiplayerUi();
@@ -97812,6 +98616,7 @@
     onlineMultiplayerState.readyPending = false;
     onlineMultiplayerState.reconnectAttempt = 0;
     onlineMultiplayerState.reconnectStartedAt = 0;
+    clearOnlineRegionSelection();
     installOnlineMultiplayerBridge();
     if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
     if (onlineMultiplayerSearchCode) onlineMultiplayerSearchCode.value = "";
@@ -97824,13 +98629,27 @@
       "multiplayer.online.status.initial",
       "Enter an optional code or search the public queue."
     );
+    // A session still in storage means this page died mid-session — a clean
+    // leave clears it. Reconnect right away so a reload drops the player back
+    // into their room (or their running match) without touching Find Match.
+    if (readStoredOnlineSession()) {
+      onlineMultiplayerState.shouldReconnect = (window.DustAndDeadOnlineConfig || {}).reconnect !== false;
+      connectOnlineMultiplayerSocket();
+    }
     syncMultiplayerModeCopy();
     syncOnlineMultiplayerUi();
     updateModeClass();
   }
 
   function closeOnlineMultiplayerLobby() {
-    var returningFromMatch = multiplayerState.phase === "match" || multiplayerState.phase === "ended" || !!multiplayerState.matchId;
+    // multiplayerState.matchId outlives the match itself (the local return-to-
+    // lobby handshake still needs it), so the phases — local and as reported by
+    // the server room — are what decide whether this is a match.leave.
+    var onlineRoomPhase = onlineMultiplayerState.room ? String(onlineMultiplayerState.room.phase || "") : "";
+    var returningFromMatch = multiplayerState.phase === "match" ||
+      multiplayerState.phase === "ended" ||
+      onlineRoomPhase === "match" ||
+      onlineRoomPhase === "ended";
     onlineMultiplayerState.open = false;
     onlineMultiplayerState.intentionalClose = true;
     onlineMultiplayerState.shouldReconnect = false;
@@ -97857,6 +98676,7 @@
       try { socket.close(1000, "client_leave"); } catch (error) {}
     }
     clearStoredOnlineSession();
+    clearOnlineRegionSelection();
     markOnlineMultiplayerBridgeDisconnected();
     releaseMultiplayerPlayerEntities();
     var previousPlugin = onlineMultiplayerState.previousPlugin;
@@ -100924,6 +101744,13 @@
 
   function applyRemoteMultiplayerInput(player, message) {
     if (!player || String(message.matchId || "") !== multiplayerState.matchId) return false;
+    // Placed before the life-sequence guard on purpose: a client that died
+    // while its delivery was suspended still streams its ack heartbeat with a
+    // stale lifeSequence, and that heartbeat alone proves it is back and
+    // consuming — resume before anything can reject the frame.
+    if (player.deliverySuspendedAt && multiplayerState.dedicatedAuthority) {
+      resumeSuspendedMultiplayerEndpointDelivery(player);
+    }
     var lifeSequence = Math.max(0, Math.floor(Number(message.lifeSequence) || 0));
     if (lifeSequence !== Math.max(0, player.deaths || 0)) return false;
     acknowledgeMultiplayerClientState(player, message);
@@ -102960,6 +103787,11 @@
   var multiplayerScoreboardNextFrameCheckAt = 0;
 
   function updateMultiplayerScoreboardFrame() {
+    // DOM-only on both branches (the signature rebuild feeds textContent
+    // writes; the death PANEL is cosmetic — the death-decision timeout is
+    // enforced separately in sim via deathDecisionDeadline). No viewer exists
+    // on the headless authority.
+    if (dedicatedServerHeadless) return;
     var now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     if (now < multiplayerScoreboardNextFrameCheckAt) return;
     multiplayerScoreboardNextFrameCheckAt = now + 100;
@@ -103094,11 +103926,50 @@
       disconnected += 1;
       multiplayerState.networkStats.slowClientDisconnects = Math.max(0, multiplayerState.networkStats.slowClientDisconnects || 0) + 1;
       var endpointId = player.endpointId;
+      if (multiplayerState.dedicatedAuthority) {
+        // The online server owns this endpoint's lifecycle, and the stall is
+        // very likely a socket sitting inside the server's reconnect grace.
+        // The nearby-style kick below would surrender the player and delete
+        // the endpoint mapping that worker.reconnect() resolves through —
+        // permanently freezing a client the server is still promising a
+        // rejoin. Suspend delivery instead: the seat, mapping and alive-state
+        // stay intact, snapshots stop, and the shared event queue is
+        // released. Recovery is worker.reconnect (socket returned) or the
+        // next input frame from a client that was merely stalled; a client
+        // that never returns is surrendered by the server's grace expiry
+        // through the normal disconnect path.
+        suspendMultiplayerEndpointDelivery(player);
+        continue;
+      }
       disconnectMultiplayerEndpoint(endpointId);
       handleMultiplayerEndpointDisconnected(endpointId);
     }
     if (disconnected) pruneAcknowledgedMultiplayerCombatEvents();
     return disconnected;
+  }
+
+  function suspendMultiplayerEndpointDelivery(player) {
+    if (!player || player.connected === false) return;
+    player.connected = false;
+    player.deliverySuspendedAt = state.time;
+    // connected=false takes this player out of the snapshot fan-out and out
+    // of the combat-event retention minimum; events pruned while suspended
+    // are gone for good, which resumeSuspended... compensates with a forced
+    // enemy keyframe. Fire/reload queues are left untouched so a same-page
+    // recovery continues exactly where it stalled.
+    pruneAcknowledgedMultiplayerCombatEvents();
+  }
+
+  function resumeSuspendedMultiplayerEndpointDelivery(player) {
+    if (!player) return;
+    player.deliverySuspendedAt = 0;
+    player.connected = true;
+    player.lastCombatAckProgressAt = state.time;
+    player.lastSnapshotAckProgressAt = state.time;
+    // The event stream may have pruned past this viewer while it was out;
+    // restart the enemy stream from a keyframe so its replica world cannot
+    // keep entities the deltas will never mention again.
+    forceMultiplayerEnemyKeyframe(getMultiplayerEnemyReplication(player));
   }
 
   function updateMultiplayerHost(dt) {
@@ -117325,6 +118196,11 @@
       return;
     }
     syncMultiplayerSpectatorUi();
+    // Headless authority: the HUD DOM has no viewer, and under jsdom every
+    // textContent/style write is real CPU. The spectator sync above still runs
+    // because it also zeroes a local spectator's input — an invariant, even
+    // though the authority never has a local player.
+    if (dedicatedServerHeadless) return;
     var hudPlayer = getLocalViewPlayer();
     var ratio = hudPlayer ? clamp(hudPlayer.hp / hudPlayer.maxHp, 0, 1) : 1;
     var ratioText = ratio.toFixed(3);
@@ -118553,7 +119429,7 @@
       // simulation or network debt when the test hands the GPU back to it.
       lastRuntimeNetworkFlushAt = now;
     }
-    if (automaticFrameLoopModeForTest !== "paused") {
+    if (automaticFrameLoopModeForTest !== "paused" && !isHeadlessAuthorityFrame()) {
       renderingAnimationFrame = true;
       try {
         render();
@@ -118562,6 +119438,13 @@
       }
     }
     scheduleNextAnimationFrame();
+  }
+
+  // Only while this page is actually running a match as the dedicated authority.
+  // Before the match starts it still draws normally, so an operator who opens the
+  // same URL without the flag gets a watchable window.
+  function isHeadlessAuthorityFrame() {
+    return dedicatedServerHeadless && multiplayerState.dedicatedAuthority;
   }
 
   function resize() {
@@ -126263,7 +127146,7 @@
     return true;
   }
 
-  function reconnectDedicatedAuthorityEndpoint(endpointId) {
+  function reconnectDedicatedAuthorityEndpoint(endpointId, freshClient) {
     var id = String(endpointId || "");
     var playerId = multiplayerState.endpointToPlayerId[id];
     var networkPlayer = getMultiplayerPlayer(playerId);
@@ -126275,11 +127158,51 @@
       getMultiplayerEndpointConnectionNonce(id) + 1
     );
     networkPlayer.connected = true;
+    networkPlayer.deliverySuspendedAt = 0;
     networkPlayer.forceEnemyKeyframe = true;
     networkPlayer.nextEnemyKeyframeAt = 0;
     networkPlayer.lastSnapshotAck = -1;
     networkPlayer.lastCombatAckProgressAt = state.time;
     networkPlayer.lastSnapshotAckProgressAt = state.time;
+    // forceEnemyKeyframe/nextEnemyKeyframeAt above are legacy names nothing
+    // reads anymore; the live enemy stream keys off player.enemyReplication.
+    // Force the real keyframe AND drop any half-sent chunk transfer — a
+    // reloaded page must never complete a transfer whose earlier chunks only
+    // the previous incarnation of this client received.
+    forceMultiplayerEnemyKeyframe(getMultiplayerEnemyReplication(networkPlayer));
+    if (freshClient) {
+      // The page rejoining this match was reloaded: every counter it stamps on
+      // outgoing traffic restarts from zero. The authoritative copies of those
+      // counters must restart with it, or all of its input, shots and reloads
+      // would be rejected as stale duplicates. Only client-sequence bookkeeping
+      // resets here — deaths, points and progression are authoritative state
+      // and survive the rejoin untouched.
+      networkPlayer.lastInputSequence = -1;
+      networkPlayer.lastInputAt = state.time;
+      networkPlayer.lastFireActionSequence = 0;
+      networkPlayer.lastProcessedFireActionSequence = 0;
+      networkPlayer.lastLifeFireActionSequence = 0;
+      networkPlayer.lastFireResultAck = 0;
+      networkPlayer.pendingFireResults = [];
+      networkPlayer.pendingFireActions = [];
+      networkPlayer.pendingReloadAfterFireSequence = -1;
+      networkPlayer.lastReloadRequestId = "";
+      networkPlayer.pendingReloadRequestId = "";
+      networkPlayer.pendingReloadWeaponId = "";
+      networkPlayer.lastProcessedReloadRequestId = "";
+      networkPlayer.lastCombatEventAck = 0;
+      networkPlayer.lastEnemyKeyframeRequestSequence = 0;
+      networkPlayer.enemyAckState = Object.create(null);
+      networkPlayer.pendingEnemyFrames = [];
+      networkPlayer.knownHazards = Object.create(null);
+      networkPlayer.pendingHazardFrames = [];
+      networkPlayer.lastUpgradeRequestId = "";
+      networkPlayer.lastReviveRequestId = "";
+      if (networkPlayer.input) {
+        networkPlayer.input.moveX = 0;
+        networkPlayer.input.moveZ = 0;
+      }
+    }
     return true;
   }
 
@@ -126321,6 +127244,20 @@
     cancelMatchmaking: cancelOnlineMatchmaking,
     receiveEnvelope: handleOnlineMultiplayerMessage,
     updateCountdown: function () { updateOnlineMultiplayerCountdown(true); },
+    selectRegion: function (directorUrl, searchCode) {
+      return selectOnlineRegion(
+        String(directorUrl || getOnlineDirectorUrl()),
+        normalizeOnlineSearchCode(searchCode || "")
+      ).then(function (choice) {
+        if (choice) closeOnlineProbe(choice);
+        return choice ? {
+          regionId: String(choice.candidate && choice.candidate.id || ""),
+          url: String(choice.url || ""),
+          pingMs: Number(choice.pingMs),
+          pinned: !!choice.pinned,
+        } : null;
+      });
+    },
     expireReconnectGrace: function (phase) {
       if (onlineMultiplayerState.reconnectTimer) {
         window.clearTimeout(onlineMultiplayerState.reconnectTimer);
@@ -126344,6 +127281,12 @@
         sessionId: onlineMultiplayerState.sessionId,
         playerId: onlineMultiplayerState.playerId,
         searchCode: onlineMultiplayerState.searchCode,
+        regionId: onlineMultiplayerState.regionId,
+        regionLabel: onlineMultiplayerState.regionLabel,
+        regionUrl: onlineMultiplayerState.regionUrl,
+        regionPingMs: onlineMultiplayerState.regionPingMs,
+        regionPinned: onlineMultiplayerState.regionPinned,
+        regionSelectionPending: onlineMultiplayerState.regionSelectionPending,
         room: onlineMultiplayerState.room,
         readyPending: onlineMultiplayerState.readyPending,
         pendingStartId: multiplayerState.pendingGuestStart
@@ -126357,6 +127300,31 @@
   };
 
   window.__dustMultiplayerTest = {
+    // Positional truth for both sides of a match, so a test can measure how far
+    // a guest's replica of a player has drifted from the authority's own copy.
+    getMultiplayerSyncDiagnostics: function () {
+      return {
+        time: Number(state.time.toFixed(3)),
+        wave: state.wave,
+        enemies: state.enemies.length,
+        role: multiplayerState.role,
+        localPlayerId: multiplayerState.localPlayerId,
+        players: multiplayerState.playerOrder.map(function (id) {
+          var player = getMultiplayerPlayer(id);
+          var entity = player && player.entity;
+          return {
+            id: id,
+            local: !!(player && player.local),
+            alive: !!(player && player.alive),
+            connected: !!(player && player.connected !== false),
+            x: entity ? Number(entity.x.toFixed(4)) : null,
+            z: entity ? Number(entity.z.toFixed(4)) : null,
+            hasNetworkSnapshot: !!(player && player.hasNetworkSnapshot),
+            lastInputSequence: player ? Number(player.lastInputSequence || 0) : 0,
+          };
+        }),
+      };
+    },
     bindNearbyConnectionsForTest: function () {
       return bindNearbyConnections();
     },
@@ -127764,6 +128732,40 @@
         pendingHazardFrames: (player.pendingHazardFrames || []).length,
         networkRttMs: Number(Math.max(0, player.networkRttMs || 0).toFixed(2)),
       } : null;
+    },
+    forceClientBackpressureStallForTest: function (playerId, pendingEvents) {
+      // Manufactures the exact stall enforceMultiplayerClientBackpressure
+      // reacts to — a deep unacked combat-event backlog with no ack progress —
+      // without waiting through 8 real seconds of sustained combat.
+      var player = getMultiplayerPlayer(playerId);
+      if (!player) return null;
+      var events = Math.max(1, Math.floor(Number(pendingEvents) || (MULTIPLAYER_EVENT_BACKLOG_HARD_LIMIT + 1)));
+      multiplayerState.combatEventSequence = Math.max(
+        multiplayerState.combatEventSequence || 0,
+        (player.lastCombatEventAck || 0) + events
+      );
+      player.lastCombatAckProgressAt = state.time - MULTIPLAYER_HARD_STALL_TIMEOUT - 1;
+      player.lastSnapshotAckProgressAt = state.time - MULTIPLAYER_HARD_STALL_TIMEOUT - 1;
+      enforceMultiplayerClientBackpressure();
+      return {
+        connected: player.connected !== false,
+        deliverySuspendedAt: Number(player.deliverySuspendedAt || 0),
+        alive: !!player.alive,
+        surrendered: !!player.surrendered,
+        endpointMapped: !!multiplayerState.endpointToPlayerId[player.endpointId],
+      };
+    },
+    getEndpointDeliveryStateForTest: function (playerId) {
+      var player = getMultiplayerPlayer(playerId);
+      if (!player) return null;
+      return {
+        connected: player.connected !== false,
+        deliverySuspendedAt: Number(player.deliverySuspendedAt || 0),
+        alive: !!player.alive,
+        surrendered: !!player.surrendered,
+        endpointMapped: !!multiplayerState.endpointToPlayerId[player.endpointId],
+        keyframeForced: !!(player.enemyReplication && player.enemyReplication.forceKeyframe),
+      };
     },
     setUpgradeDrawerOpen: function (open) {
       setMultiplayerUpgradeDrawerOpen(!!open);

@@ -331,7 +331,7 @@ test("current protocol keeps a 4000-enemy mixed battle inside the 10 Hz network 
   const report = JSON.stringify(run, null, 2);
   console.log(`protocol ${run.protocol} network throughput metrics\n${report}`);
 
-  expect(run.protocol, report).toBe(46);
+  expect(run.protocol, report).toBe(47);
   expect(run.configuredSnapshotHz, report).toBe(10);
   expect(run.simulatedRttMs, report).toBe(1000);
   expect(run.source, report).toMatchObject({

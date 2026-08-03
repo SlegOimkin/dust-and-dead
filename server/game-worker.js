@@ -2,6 +2,11 @@
 
 const { chromium } = require("playwright");
 
+// Deliveries are handed to the authority page one at a time. This bounds how far
+// a flood of non-coalescable messages (decision, progressionChoice, acks) may run
+// ahead of the page before the excess is dropped instead of queued.
+const MAX_PENDING_DELIVERIES = 256;
+
 function withTimeout(promise, timeoutMs, message) {
   let timer = null;
   const timeout = new Promise((resolve, reject) => {
@@ -25,17 +30,43 @@ class BrowserMatchWorker {
     this.pendingInputs = new Map();
     this.inputFlushScheduled = false;
     this.deliveryChain = Promise.resolve();
+    this.pendingDeliveries = 0;
+    this.droppedDeliveries = 0;
+    this.startPromise = null;
     this.startedAt = 0;
   }
 
+  // start() is a long chain of awaits, and close() can land in any gap between
+  // them. Every step therefore re-checks `closed` and releases whatever it just
+  // created, so a cancelled start can never leave an unreachable browser context
+  // holding a MAX_MATCHES slot.
+  async releaseContext() {
+    const context = this.context;
+    this.context = null;
+    this.page = null;
+    if (!context) return;
+    await withTimeout(context.close().catch(() => {}), this.manager.shutdownTimeoutMs, "worker_close_timeout")
+      .catch(() => {});
+  }
+
+  async abortIfClosed() {
+    if (!this.closed) return false;
+    await this.releaseContext();
+    throw new Error("worker_closed");
+  }
+
   async start() {
+    await this.abortIfClosed();
     const browser = await this.manager.ensureBrowser();
+    await this.abortIfClosed();
     this.context = await browser.newContext({
       viewport: { width: 960, height: 540 },
       deviceScaleFactor: 1,
       reducedMotion: "reduce",
     });
+    await this.abortIfClosed();
     this.page = await this.context.newPage();
+    await this.abortIfClosed();
     await this.page.exposeFunction("__dustDedicatedServerEmit", (packet) => {
       if (!this.closed && packet && packet.endpointId && packet.data) this.onPacket(packet);
       return true;
@@ -63,11 +94,13 @@ class BrowserMatchWorker {
       this.manager.startupTimeoutMs,
       "authoritative_page_load_timeout"
     );
+    await this.abortIfClosed();
     await withTimeout(
       this.page.waitForFunction(() => !!(window.__dustDedicatedServer && window.__dustDedicatedServer.start)),
       this.manager.startupTimeoutMs,
       "authoritative_runtime_timeout"
     );
+    await this.abortIfClosed();
     const result = await withTimeout(
       this.page.evaluate((settings) => window.__dustDedicatedServer.start(settings), {
         matchId: this.options.matchId,
@@ -78,6 +111,7 @@ class BrowserMatchWorker {
       this.manager.startupTimeoutMs,
       "authoritative_match_start_timeout"
     );
+    await this.abortIfClosed();
     const expectedMatchId = String(this.options.startId || this.options.matchId || "");
     if (!result || !result.ready || result.matchId !== expectedMatchId) {
       throw new Error("authoritative_runtime_rejected_match");
@@ -88,6 +122,14 @@ class BrowserMatchWorker {
   }
 
   enqueueDelivery(delivery) {
+    // The chain is serial by design, so a client that outruns the authority page
+    // would otherwise grow it without bound. Dropping the newest message past the
+    // cap keeps the already-queued (older, still-relevant) ones intact.
+    if (this.pendingDeliveries >= MAX_PENDING_DELIVERIES) {
+      this.droppedDeliveries += 1;
+      return Promise.resolve(false);
+    }
+    this.pendingDeliveries += 1;
     this.deliveryChain = this.deliveryChain.then(async () => {
       if (this.closed || !this.page) return false;
       return this.page.evaluate((entry) => {
@@ -96,6 +138,8 @@ class BrowserMatchWorker {
     }).catch((error) => {
       if (!this.closed) this.onFatal(error);
       return false;
+    }).finally(() => {
+      this.pendingDeliveries = Math.max(0, this.pendingDeliveries - 1);
     });
     return this.deliveryChain;
   }
@@ -141,9 +185,14 @@ class BrowserMatchWorker {
     return this.page.evaluate((id) => window.__dustDedicatedServer.disconnect(id), String(endpointId || ""));
   }
 
-  async reconnect(endpointId) {
+  // `freshClient` marks a page that reloaded (rather than a socket blip): the
+  // authority then also resets that player's client-sequence counters.
+  async reconnect(endpointId, freshClient) {
     if (this.closed || !this.page) return false;
-    return this.page.evaluate((id) => window.__dustDedicatedServer.reconnect(id), String(endpointId || ""));
+    return this.page.evaluate(
+      (entry) => window.__dustDedicatedServer.reconnect(entry.id, entry.fresh),
+      { id: String(endpointId || ""), fresh: !!freshClient }
+    );
   }
 
   async state() {
@@ -156,13 +205,10 @@ class BrowserMatchWorker {
     this.closed = true;
     this.ready = false;
     this.pendingInputs.clear();
-    const context = this.context;
-    this.context = null;
-    this.page = null;
-    if (context) {
-      await withTimeout(context.close().catch(() => {}), this.manager.shutdownTimeoutMs, "worker_close_timeout")
-        .catch(() => {});
-    }
+    // A start still in flight owns the context; waiting for it to unwind is what
+    // guarantees the release below sees whatever it managed to create.
+    if (this.startPromise) await this.startPromise.catch(() => {});
+    await this.releaseContext();
   }
 }
 
@@ -170,10 +216,15 @@ class GameWorkerManager {
   constructor(options) {
     const settings = options || {};
     this.baseUrl = String(settings.baseUrl || "http://127.0.0.1:8787");
-    this.maxMatches = Math.max(1, Number(settings.maxMatches) || 12);
+    this.maxMatches = Math.max(1, Number(settings.maxMatches) || 4);
     this.startupTimeoutMs = Math.max(5000, Number(settings.startupTimeoutMs) || 45000);
     this.shutdownTimeoutMs = Math.max(1000, Number(settings.shutdownTimeoutMs) || 5000);
     this.logLevel = settings.logLevel || "info";
+    // Extra Chromium switches appended at launch. Lets a deployment tune the
+    // browser (process model, memory flags) without patching this file.
+    this.launchArgs = Array.isArray(settings.launchArgs)
+      ? settings.launchArgs.map((value) => String(value)).filter(Boolean)
+      : [];
     this.browser = null;
     this.browserPromise = null;
     this.workers = new Map();
@@ -191,7 +242,7 @@ class GameWorkerManager {
           "--disable-backgrounding-occluded-windows",
           "--disable-renderer-backgrounding",
           "--no-first-run",
-        ],
+        ].concat(this.launchArgs),
       }).then((browser) => {
         this.browser = browser;
         browser.on("disconnected", () => {
@@ -215,13 +266,18 @@ class GameWorkerManager {
     if (!matchId || this.workers.has(matchId)) throw new Error("duplicate_match_worker");
     const worker = new BrowserMatchWorker(this, options);
     this.workers.set(matchId, worker);
+    // Tracked on the worker so a concurrent close() can await the same start
+    // rather than racing it and orphaning the context it is about to create.
+    worker.startPromise = worker.start();
     try {
-      await worker.start();
+      await worker.startPromise;
       return worker;
     } catch (error) {
       this.workers.delete(matchId);
       await worker.close();
       throw error;
+    } finally {
+      worker.startPromise = null;
     }
   }
 
@@ -249,11 +305,14 @@ class GameWorkerManager {
   }
 
   readiness() {
+    const browserConnected = !!(this.browser && this.browser.isConnected());
     return {
-      ready: !this.closed,
+      // A node that cannot launch Chromium cannot run a single match, so it must
+      // not advertise itself as ready to a health gate or to the region director.
+      ready: !this.closed && browserConnected,
       activeMatches: this.workers.size,
       maxMatches: this.maxMatches,
-      browserConnected: !!(this.browser && this.browser.isConnected()),
+      browserConnected,
     };
   }
 }
