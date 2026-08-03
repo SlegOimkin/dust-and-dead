@@ -98703,9 +98703,21 @@
     updateModeClass();
   }
 
+  // Local play is carried by the Nearby Connections plugin, which exists only
+  // in the Android build. A browser that offers the mode can open the lobby and
+  // then never find anyone, so the menu hides the entry instead. The class also
+  // gives tests a single switch to reveal it while exercising that lobby.
+  function syncLocalMultiplayerAvailability() {
+    var capacitor = window.Capacitor;
+    var available = !!(capacitor && capacitor.Plugins && capacitor.Plugins.NearbyConnections);
+    document.documentElement.classList.toggle("no-local-multiplayer", !available);
+    return available;
+  }
+
   function bindMultiplayerUi() {
     if (multiplayerPlayerName) multiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
     if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
+    syncLocalMultiplayerAvailability();
     if (localMultiplayerBtn) localMultiplayerBtn.addEventListener("click", openLocalMultiplayerLobby);
     if (onlineMultiplayerBtn) onlineMultiplayerBtn.addEventListener("click", openOnlineMultiplayerLobby);
     if (multiplayerLobbyBackBtn) multiplayerLobbyBackBtn.addEventListener("click", closeLocalMultiplayerLobby);

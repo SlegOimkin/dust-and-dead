@@ -11,7 +11,7 @@
         }
       } catch (error) {}
     </script>
-    <link rel="stylesheet" href="styles.css?v=wardrobe-mobile-fit-v4-20260731">
+    <link rel="stylesheet" href="styles.css?v=menu-layout-v3-20260803">
   </head>
   <body>
     <main id="game-root" class="is-intro" aria-label="Dust and Dead game">
@@ -238,14 +238,16 @@
       </aside>
 
       <section id="menu" class="panel menu-panel is-visible" aria-label="Main menu">
-        <h1>Dust &amp; Dead</h1>
+        <div class="menu-panel__header">
+          <h1>Dust &amp; Dead</h1>
+          <button id="menu-music-btn" class="menu-music-btn" type="button" aria-label="Mute menu music" aria-pressed="true" title="Mute menu music">&#9835;</button>
+        </div>
         <p class="menu-panel__lead">Ride into a blocky frontier where a lone cowboy, roaming dead, and upgrade-heavy gunplay collide in the dust.</p>
         <div class="menu-panel__actions">
           <div class="menu-panel__play-actions">
             <button id="start-btn" type="button">Start Hunt</button>
             <button id="local-multiplayer-btn" type="button">Local Multiplayer</button>
             <button id="online-multiplayer-btn" type="button" data-i18n="menu.onlineMultiplayer">Online Multiplayer</button>
-            <button id="menu-music-btn" class="menu-music-btn" type="button" aria-label="Mute menu music" aria-pressed="true" title="Mute menu music">&#9835;</button>
             <button id="contracts-btn" class="menu-contracts-btn" type="button" aria-haspopup="dialog" aria-controls="contracts-menu" aria-expanded="false">
               <span class="menu-contracts-btn__icon" aria-hidden="true">
                 <svg viewBox="0 0 42 42" focusable="false">
@@ -1778,6 +1780,6 @@
     <script src="hordeheart-model.js?v=hordeheart-model-v15-20260726"></script>
     <script src="land-eater-model.js?v=land-eater-model-v11-20260724"></script>
     <script src="progression.js?v=dust-rewards-v2-20260730"></script>
-    <script src="game.js?v=ui-lifecycle-v1-20260730"></script>
+    <script src="game.js?v=menu-layout-v1-20260803"></script>
   </body>
 </html>

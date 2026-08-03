@@ -6,6 +6,15 @@ function fileUrl(relativePath) {
   return `file:///${absolute}`;
 }
 
+// Local play needs the Nearby Connections plugin, so the menu hides its entry
+// outside the Android build. These specs drive that lobby, so they put the
+// button back the same way the Android build would.
+async function revealLocalMultiplayerEntry(page) {
+  await page.evaluate(() =>
+    document.documentElement.classList.remove("no-local-multiplayer")
+  );
+}
+
 test("a legacy multiplayer URL hides the title before the main script executes", async ({ page }) => {
   let releaseGameScript;
   const gameScriptGate = new Promise((resolve) => {
@@ -57,6 +66,7 @@ test("the menu multiplayer button opens in place without navigation or changing 
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) navigationCount += 1;
   });
+  await revealLocalMultiplayerEntry(page);
   await page.locator("#local-multiplayer-btn").click();
 
   const url = new URL(page.url());
@@ -115,6 +125,7 @@ test("random background input never starts a solo match", async ({ page }) => {
 test("lobby blocks the main menu and ignores clicks outside its dialog", async ({ page }) => {
   await page.goto(`${fileUrl("index.html")}?mapSeed=92`);
   await page.keyboard.press("KeyM");
+  await revealLocalMultiplayerEntry(page);
   await page.locator("#local-multiplayer-btn").click();
 
   await expect(page.locator("#local-multiplayer-lobby")).toBeVisible();

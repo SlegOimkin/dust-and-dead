@@ -6,6 +6,15 @@ function fileUrl(relativePath) {
   return `file:///${absolute}`;
 }
 
+// Local play needs the Nearby Connections plugin, so the menu hides its entry
+// outside the Android build. These specs drive that lobby, so they put the
+// button back the same way the Android build would.
+async function revealLocalMultiplayerEntry(page) {
+  await page.evaluate(() =>
+    document.documentElement.classList.remove("no-local-multiplayer")
+  );
+}
+
 async function installFakeWebSocket(page) {
   await page.addInitScript(() => {
     window.__onlineSockets = [];
@@ -158,6 +167,7 @@ test("online matchmaking uses the namespaced dedicated-server contract", async (
 
   await page.locator("#online-multiplayer-lobby-back-btn").click();
   await expect(page.locator("#menu")).toBeVisible();
+  await revealLocalMultiplayerEntry(page);
   await page.locator("#local-multiplayer-btn").click();
   await expect(page.locator("#local-multiplayer-lobby")).toBeVisible();
 });
