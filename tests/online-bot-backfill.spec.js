@@ -554,6 +554,108 @@ test("bots hold fire while the Bell Ringer is shielded and go take the churches"
   expect(moved.length).toBeGreaterThan(0);
 });
 
+test("an empty gun stops a bot pretending to fight and sends it through the horde", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+
+  const setup = await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    const game = window.__dustAndDeadTest;
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    multi.setProgression(botId, { ammo: { revolver: 0 }, ammoReserve: { revolver: 0 } });
+    const cx = bot.x + 14;
+    const cz = bot.z;
+    game.spawnAmmoCrateAt(cx, cz);
+    // A wall of zombies directly between the bot and the crate.
+    for (let i = 0; i < 7; i += 1) multi.spawnEnemyAt(bot.x + 7, bot.z - 4.5 + i * 1.5, "walker", 500);
+    return { cx, cz };
+  }, bots[0].id);
+
+  // With nothing to shoot, the bot must not hold a target: aiming at zombies it
+  // cannot kill is what made it swivel unnaturally, and at a boss it cannot
+  // hurt is wasted time.
+  await advanceMs(page, 500);
+  const dry = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(dry.targetKind).toBe("");
+
+  // And it walks the gauntlet rather than circling at a safe distance.
+  let collected = false;
+  for (let round = 0; round < 12 && !collected; round += 1) {
+    await advanceMs(page, 1000);
+    collected = await page.evaluate((args) => {
+      const crates = JSON.parse(window.render_game_to_text()).ammoCrates || [];
+      return !crates.some((crate) => Math.hypot(crate.x - args.cx, crate.z - args.cz) < 2);
+    }, setup);
+  }
+  expect(collected).toBe(true);
+
+  const fed = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(fed.targetKind).not.toBe("");
+});
+
+test("bots restock at two magazines, not at the last round", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+
+  const crate = await page.evaluate((botId) => {
+    const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    const point = { cx: bot.x + 20, cz: bot.z };
+    window.__dustAndDeadTest.spawnAmmoCrateAt(point.cx, point.cz);
+    return point;
+  }, bots[0].id);
+
+  const distance = () => page.evaluate((args) => {
+    const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === args.id);
+    return Math.hypot(bot.x - args.cx, bot.z - args.cz);
+  }, { id: bots[0].id, cx: crate.cx, cz: crate.cz });
+
+  const settleWith = async (magazine, reserve) => {
+    await page.evaluate((args) => window.__dustMultiplayerTest.setProgression(args.id, {
+      ammo: { revolver: args.magazine },
+      ammoReserve: { revolver: args.reserve },
+    }), { id: bots[0].id, magazine, reserve });
+    await advanceMs(page, 4000);
+    return distance();
+  };
+
+  // A bot with rounds to spare drifts around fighting; it must not commit to
+  // the crate. The revolver holds six, so thirteen rounds is over two mags.
+  expect(await settleWith(6, 7)).toBeGreaterThan(8);
+  // At exactly two magazines it goes and gets them.
+  expect(await settleWith(6, 6)).toBeLessThan(4);
+});
+
+test("the lobby keeps counting down while the room is still filling", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  await page.evaluate((config) => window.__dustOnlineTest.configureBackfillForTest(config), {
+    ...FAST_BACKFILL,
+    joinIntervalMs: 2000,
+    allReadyCountdownMs: 5000,
+    allReadyStartMs: 5500,
+  });
+
+  await advanceMs(page, FAST_BACKFILL.delayMs + 400);
+  await advanceMs(page, 1000);
+  await page.locator("#online-multiplayer-ready-btn").click();
+  await advanceMs(page, 500);
+
+  // Everyone present is ready but bots are still walking in. The lobby used to
+  // claim the match was starting and show nothing at all; it must show the
+  // player when it will actually begin.
+  const filling = await page.evaluate(() => window.__dustOnlineTest.getBackfillState());
+  expect(filling.pendingJoins).toBeGreaterThan(0);
+  await expect(page.locator("#online-multiplayer-countdown")).toBeVisible();
+  const shown = Number(await page.locator("#online-multiplayer-countdown-value").textContent());
+  expect(shown).toBeGreaterThan(0);
+});
+
 test("derricks do not hold the bots back from the Baron himself", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);

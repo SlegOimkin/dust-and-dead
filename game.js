@@ -98914,6 +98914,34 @@
   var ONLINE_BOT_MAX_LEVEL_GAP = 3;
   var ONLINE_BOT_LEVEL_CATCHUP_INTERVAL = 4;
   var ONLINE_BOT_AMMO_CRATE_MULTIPLIER = 3;
+  // Two magazines left is when a player starts thinking about resupply rather
+  // than when they are already helpless.
+  var ONLINE_BOT_RESUPPLY_MAGAZINES = 2;
+
+  // One reading of a bot's ammo, shared by targeting, steering and firing so
+  // they cannot disagree about whether the gun is worth pointing at anything.
+  function getOnlineBackfillBotAmmoStatus(player) {
+    var progression = player && player.progression || {};
+    var weaponId = String(progression.weapon || "revolver");
+    var weapon = WEAPONS[weaponId] || WEAPONS.revolver;
+    var magazineSize = Math.max(1, Number(weapon && weapon.magazine) || 6);
+    var magazine = Number((progression.ammo || {})[weaponId]) || 0;
+    var reserve = Number((progression.ammoReserve || {})[weaponId]) || 0;
+    var reloading = Number((progression.reloadTimers || {})[weaponId]) > 0;
+    var total = magazine + reserve;
+    return {
+      weaponId: weaponId,
+      magazineSize: magazineSize,
+      magazine: magazine,
+      reserve: reserve,
+      reloading: reloading,
+      total: total,
+      low: total <= magazineSize * ONLINE_BOT_RESUPPLY_MAGAZINES,
+      // Nothing to load and nothing in the chamber: the gun is scenery until a
+      // crate is found, so the bot must stop pretending to fight.
+      dry: total <= 0 && !reloading,
+    };
+  }
 
   var onlineBotBackfillState = {
     aloneSince: 0,
@@ -99091,7 +99119,9 @@
         minPlayers: room.minPlayers,
         maxPlayers: room.maxPlayers,
         autoStartAt: room.autoStartAt,
-        serverNow: Date.now(),
+        // Must come from the same clock as autoStartAt, or the client's
+        // countdown is offset by the difference between the two.
+        serverNow: getOnlineBackfillNow(),
         startReason: room.startReason,
         matchId: room.matchId,
         mapSeed: room.mapSeed,
@@ -99223,9 +99253,23 @@
     var readyCount = room.players.filter(function (entry) { return entry.ready; }).length;
     // The emulated matchmaker keeps seating queued players, so all-ready only
     // arms the start once the room has filled to its cap.
-    var everyoneReady = !onlineBotBackfillState.pendingJoins.length &&
-      room.players.length >= room.minPlayers &&
-      readyCount === room.players.length;
+    var presentAllReady = room.players.length >= room.minPlayers && readyCount === room.players.length;
+    if (presentAllReady && onlineBotBackfillState.pendingJoins.length) {
+      // Everyone here is ready but the room is still filling. Without this the
+      // lobby sat on "the server is starting the match" with no countdown for
+      // as long as it took the remaining bots to walk in — the player is told
+      // the match is imminent and then nothing visibly happens. Show the real
+      // arrival time instead; it is recomputed on every roster change, so it
+      // keeps counting down and lands on the true start.
+      var perBot = getOnlineBotBackfillSetting("joinIntervalMs", ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS) +
+        getOnlineBotBackfillSetting("readyMaxMs", ONLINE_BOT_BACKFILL_READY_MAX_MS);
+      onlineBotBackfillState.allReadyStartAt = 0;
+      room.autoStartAt = now + onlineBotBackfillState.pendingJoins.length * perBot +
+        getOnlineBotBackfillSetting("allReadyStartMs", ONLINE_BOT_BACKFILL_ALL_READY_START_MS);
+      room.startReason = "filling";
+      return;
+    }
+    var everyoneReady = presentAllReady && !onlineBotBackfillState.pendingJoins.length;
     if (everyoneReady) {
       // Not an instant start: the player gets a countdown to read the full
       // room, and a bot still walking in has time to take its seat.
@@ -99828,6 +99872,13 @@
 
   function pickOnlineBackfillBotTarget(player, entity, endgame, bossTruce) {
     var runtime = player.backfillRuntime;
+    // An empty gun means there is nothing to aim at. Holding a target anyway is
+    // what made bots swivel to face zombies they could not shoot, and keep
+    // circling a boss they could not hurt. Resupply is the only job now.
+    if (getOnlineBackfillBotAmmoStatus(player).dry) {
+      runtime.targetPlayerId = "";
+      return null;
+    }
     var nearestEnemy = null;
     var nearestEnemyDistance = Infinity;
     for (var i = 0; i < state.enemies.length; i++) {
@@ -100028,16 +100079,13 @@
       if (!enemy || enemy.active === false || (enemy.hp || 0) <= 0) continue;
       if (Math.hypot(enemy.x - entity.x, enemy.z - entity.z) < 13) nearbyEnemies.push(enemy);
     }
-    var progression = player.progression || {};
-    var weaponId = String(progression.weapon || "revolver");
-    var idealRange = ONLINE_BOT_WEAPON_IDEAL_RANGE[weaponId] || 9;
-    var ammoMap = progression.ammo || {};
-    var reserveMap = progression.ammoReserve || {};
-    var lowAmmo = (Number(ammoMap[weaponId]) || 0) <= 3 && (Number(reserveMap[weaponId]) || 0) <= 6;
+    var botAmmo = getOnlineBackfillBotAmmoStatus(player);
+    var idealRange = ONLINE_BOT_WEAPON_IDEAL_RANGE[botAmmo.weaponId] || 9;
     // A dry weapon flips the priorities: stop orbiting targets at ideal range
     // (there is nothing to shoot with) and march to a crate instead, or the
     // bot circles enemies in silence forever and the wave stalls.
-    var outOfAmmo = (Number(ammoMap[weaponId]) || 0) <= 0 && (Number(reserveMap[weaponId]) || 0) <= 0;
+    var lowAmmo = botAmmo.low;
+    var outOfAmmo = botAmmo.dry;
     var nearestCrate = null;
     var nearestCrateDistance = Infinity;
     if (lowAmmo && Array.isArray(state.ammoCrates)) {
@@ -100085,17 +100133,21 @@
 
     // Zombies standing on a crate used to make it untouchable: the avoidance
     // penalty around them dwarfed the pull toward the crate, so a dry bot
-    // circled at a respectful distance until the wave ended. A player low on
-    // ammo just pushes in and grabs it, so the keep-away shrinks the emptier
-    // the bot is.
+    // circled at a respectful distance until the wave ended. A bot with an
+    // empty gun and a crate in sight has nothing left to lose by running
+    // through the horde, so the keep-away is switched off entirely; one that
+    // still has rounds merely loosens it.
     var enemyAvoidWeight = 14;
     var enemyAvoidRadius = 7;
+    var crateWeight = 4;
     if (outOfAmmo && nearestCrate) {
-      enemyAvoidWeight = 2.5;
-      enemyAvoidRadius = 2.6;
+      enemyAvoidWeight = 0;
+      enemyAvoidRadius = 0;
+      crateWeight = 30;
     } else if (lowAmmo && nearestCrate) {
-      enemyAvoidWeight = 6;
-      enemyAvoidRadius = 4.5;
+      enemyAvoidWeight = 5;
+      enemyAvoidRadius = 4;
+      crateWeight = 12;
     }
 
     var bestScore = -Infinity;
@@ -100150,7 +100202,7 @@
         if (anchorDistance > 18) score -= (anchorDistance - 18) * 2.4;
       }
       if (nearestCrate) {
-        score -= Math.hypot(nearestCrate.x - probeX, nearestCrate.z - probeZ) * (outOfAmmo ? 9 : 4);
+        score -= Math.hypot(nearestCrate.x - probeX, nearestCrate.z - probeZ) * crateWeight;
       }
       if (orbitActive) score += (moveX * orbitTangentX + moveZ * orbitTangentZ) * 7;
       if (score > bestScore) {
@@ -100258,12 +100310,14 @@
   }
 
   function updateOnlineBackfillBotCombat(player, entity, runtime, persona, target) {
-    var progression = player.progression || {};
-    var weaponId = String(progression.weapon || "revolver");
-    var magazine = Number(progression.ammo && progression.ammo[weaponId]) || 0;
-    var reserve = Number(progression.ammoReserve && progression.ammoReserve[weaponId]) || 0;
-    var reloading = !!(progression.reloadTimers && Number(progression.reloadTimers[weaponId]) > 0);
-    if (magazine <= 0 && reserve > 0 && !reloading && (player.pendingReloadAfterFireSequence == null || player.pendingReloadAfterFireSequence < 0)) {
+    var botAmmo = getOnlineBackfillBotAmmoStatus(player);
+    var weaponId = botAmmo.weaponId;
+    if (
+      botAmmo.magazine <= 0 &&
+      botAmmo.reserve > 0 &&
+      !botAmmo.reloading &&
+      (player.pendingReloadAfterFireSequence == null || player.pendingReloadAfterFireSequence < 0)
+    ) {
       queueRemoteMultiplayerReload(player, {
         requestId: createMultiplayerId("bot-reload"),
         matchId: multiplayerState.matchId,
@@ -100273,7 +100327,7 @@
       });
       return;
     }
-    if (!target || magazine <= 0 || reloading) return;
+    if (!target || botAmmo.magazine <= 0 || botAmmo.reloading) return;
     if ((player.pendingFireActions || []).length) return;
     if ((entity.cooldown || 0) > 0.02) return;
     // Human trigger rhythm: a beat after acquiring a target, and occasional
