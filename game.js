@@ -100572,17 +100572,20 @@
     var trueAngle = Math.atan2((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
     if (Math.abs(wrapOnlineBackfillAngle(trueAngle - runtime.aimAngle)) > 0.12) return true;
     if (findBlockingObstacle(entity.x, entity.z, ref.x || 0, ref.z || 0, 0.2, null)) return true;
-    // Never clip a teammate who is not the intended target. A splash weapon is
-    // judged twice: down the lane like any bullet, and again around the point
-    // the shell will actually burst — during a boss fight everybody is crowded
-    // onto the same target, which is exactly when a careless grenade lands on
-    // the people it was meant to help.
+    // Friendly fire only counts as friendly during a boss encounter. That is
+    // the one stretch where the other players are allies — damage between them
+    // is muted and the boss is the shared problem — so a shot that would clip
+    // one is worth holding. On an ordinary wave it is a free-for-all at full
+    // damage: hitting somebody is the point, not an accident, and a bot that
+    // politely refused would just be an easier target.
+    if (!isBossEncounterActiveForPvp()) return false;
+    // A splash weapon is judged twice: down the lane like any bullet, and again
+    // around the point the shell will actually burst, because during a boss
+    // fight everybody is crowded onto the same target.
     var dirX = Math.sin(runtime.aimAngle);
     var dirZ = Math.cos(runtime.aimAngle);
     var blastRadius = getOnlineBackfillBotBlastRadius(player);
-    var blastGuard = blastRadius > 0
-      ? blastRadius + (isBossEncounterActiveForPvp() ? 1.6 : 0.8)
-      : 0;
+    var blastGuard = blastRadius > 0 ? blastRadius + 1.6 : 0;
     var impactX = entity.x + dirX * targetDistance;
     var impactZ = entity.z + dirZ * targetDistance;
     var blocked = false;
@@ -100590,6 +100593,9 @@
       if (blocked || otherId === player.id || otherId === target.playerId) return;
       var other = getMultiplayerPlayer(otherId);
       if (!other || !other.alive || other.surrendered || !other.entity) return;
+      // Whoever took the Baron's gold is not an ally: they fight for the boss,
+      // they take full damage, and nobody holds a shot for them.
+      if (other.oilBaronAlly) return;
       if (blastGuard > 0 && Math.hypot(other.entity.x - impactX, other.entity.z - impactZ) < blastGuard) {
         blocked = true;
         return;

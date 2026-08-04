@@ -787,6 +787,65 @@ test("a bot killed outside a boss wave sometimes carries the grudge into its nex
   expect(settled.vendettaPlayerId).toBe("");
 });
 
+test("bots only watch their line of fire while a boss is on the field", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+  const botId = bots[0].id;
+
+  const fireCount = () => page.evaluate((id) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id).lastFireActionSequence, botId);
+
+  // Ordinary wave: a zombie to shoot, with the player standing squarely in the
+  // way. This is a free-for-all at full damage, so the bot takes the shot.
+  await page.evaluate((args) => {
+    const multi = window.__dustMultiplayerTest;
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+    multi.spawnEnemyAt(bot.x + 12, bot.z, "walker", 4000);
+    multi.setPlayerPosition(args.localId, bot.x + 6, bot.z);
+  }, { botId, localId });
+  const before = await fireCount();
+  for (let i = 0; i < 6; i += 1) {
+    await page.evaluate((args) => {
+      const multi = window.__dustMultiplayerTest;
+      const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+      multi.setPlayerPosition(args.localId, bot.x + 6, bot.z);
+      multi.setHealth(args.localId, 120);
+    }, { botId, localId });
+    await advanceMs(page, 500);
+  }
+  expect(await fireCount()).toBeGreaterThan(before);
+
+  // Boss encounter: the same obstruction, but now the other players are allies
+  // and the shot is held instead.
+  await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    game.startWaveNow(10, "oilBaron");
+    game.clearEnemies();
+    game.setOilBaronAiEnabled(false);
+  });
+  await advanceMs(page, 500);
+  const bossBefore = await fireCount();
+  for (let i = 0; i < 8; i += 1) {
+    await page.evaluate((args) => {
+      const multi = window.__dustMultiplayerTest;
+      const boss = window.__dustAndDeadTest.getOilBaronDiagnostics().boss;
+      const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+      // Park the bot in range of the Baron and the player exactly between them.
+      const dx = bot.x - boss.x;
+      const dz = bot.z - boss.z;
+      const length = Math.max(0.001, Math.hypot(dx, dz));
+      multi.setPlayerPosition(args.botId, boss.x + (dx / length) * 14, boss.z + (dz / length) * 14);
+      multi.setPlayerPosition(args.localId, boss.x + (dx / length) * 7, boss.z + (dz / length) * 7);
+      multi.setHealth(args.localId, 120);
+    }, { botId, localId });
+    await advanceMs(page, 500);
+  }
+  expect(await fireCount()).toBe(bossBefore);
+});
+
 test("bots do not shoot a boss that cannot be damaged", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);
