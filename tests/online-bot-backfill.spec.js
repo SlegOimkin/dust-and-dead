@@ -106,10 +106,18 @@ async function findPublicMatch(page, options) {
 }
 
 async function advanceMs(page, ms) {
-  // advanceTime caps how much simulated time a single call may cover, so long
-  // waits must be fed to it in small slices.
-  for (let remaining = ms; remaining > 0; remaining -= 1000) {
-    await page.evaluate((value) => window.advanceTime(value), Math.min(1000, remaining));
+  // Two clocks have to move together: advanceTime drives the simulation (the
+  // in-match bot brains), and advanceBackfillClockForTest drives the lobby's
+  // wall-clock timers. advanceTime also caps how much simulated time one call
+  // may cover, so long waits are fed in slices. The simulation is stepped
+  // first each slice, so the lobby timer starts from the current clock before
+  // the jump rather than after it.
+  for (let remaining = ms; remaining > 0; remaining -= 500) {
+    const slice = Math.min(500, remaining);
+    await page.evaluate((value) => {
+      window.advanceTime(value);
+      window.__dustOnlineTest.advanceBackfillClockForTest(value);
+    }, slice);
   }
 }
 

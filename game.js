@@ -75616,7 +75616,7 @@
   function update(dt, skipFrameWork) {
     if (!skipFrameWork) updateRenderFrameMaintenance(dt);
     updateOnlineMultiplayerCountdown(false);
-    updateOnlineBotBackfill(dt);
+    updateOnlineBotBackfill();
     flushPendingDoppelgangerWorldCleanup();
     if (state.paused) {
       if (state.enemyAnimationPreview) updateEnemyBestiaryAnimationPreview(dt);
@@ -98762,20 +98762,30 @@
   var ONLINE_BOT_TRAITOR_HUNT_RANGE = 24;
 
   var onlineBotBackfillState = {
-    aloneMs: 0,
+    aloneSince: 0,
     active: false,
     matchBots: false,
     room: null,
     bots: [],
     pendingJoins: [],
-    joinTimerMs: 0,
-    prepareTimerMs: 0,
+    nextJoinAt: 0,
+    prepareAt: 0,
     startPending: false,
-    postMatchReturnMs: 0,
+    postMatchReturnAt: 0,
+    clockOffsetMs: 0,
     rngState: 1,
     testConfig: null,
     standardUpgradeIdSet: null,
   };
+
+  // Lobby waits are quoted to the player in seconds, so they are measured on the
+  // wall clock rather than by summing frame deltas: outside a live match the
+  // frame step is clamped to MAX_SIMULATION_STEP, which stretches every
+  // dt-accumulated timer on a device that renders the menu below 25 fps.
+  // clockOffsetMs exists only so tests can jump this clock deterministically.
+  function getOnlineBackfillNow() {
+    return Date.now() + onlineBotBackfillState.clockOffsetMs;
+  }
 
   function isOnlineBotBackfillEnabled() {
     if (dedicatedServerHeadless) return false;
@@ -98877,7 +98887,7 @@
         dodgeCooldown: 1.2 + nextOnlineBackfillRandom() * 0.7,
         triggerHesitation: 0.1 + nextOnlineBackfillRandom() * 0.12,
       },
-      readyAtMs: null,
+      readyAt: null,
     };
   }
 
@@ -99001,12 +99011,13 @@
     };
     onlineBotBackfillState.bots = bots;
     onlineBotBackfillState.pendingJoins = bots.slice();
-    onlineBotBackfillState.joinTimerMs = getOnlineBotBackfillSetting("firstJoinMs", ONLINE_BOT_BACKFILL_FIRST_JOIN_MS);
+    onlineBotBackfillState.nextJoinAt = getOnlineBackfillNow() +
+      getOnlineBotBackfillSetting("firstJoinMs", ONLINE_BOT_BACKFILL_FIRST_JOIN_MS);
     onlineBotBackfillState.startPending = false;
-    onlineBotBackfillState.prepareTimerMs = 0;
-    onlineBotBackfillState.postMatchReturnMs = 0;
+    onlineBotBackfillState.prepareAt = 0;
+    onlineBotBackfillState.postMatchReturnAt = 0;
     onlineBotBackfillState.active = true;
-    onlineBotBackfillState.aloneMs = 0;
+    onlineBotBackfillState.aloneSince = 0;
     return true;
   }
 
@@ -99017,8 +99028,8 @@
     onlineBotBackfillState.bots = [];
     onlineBotBackfillState.pendingJoins = [];
     onlineBotBackfillState.startPending = false;
-    onlineBotBackfillState.aloneMs = 0;
-    onlineBotBackfillState.postMatchReturnMs = 0;
+    onlineBotBackfillState.aloneSince = 0;
+    onlineBotBackfillState.postMatchReturnAt = 0;
     var socket = onlineMultiplayerState.socket;
     if (socket && socket.__backfill) {
       socket.readyState = 3;
@@ -99065,7 +99076,7 @@
     var unreadyCount = room.players.length - readyCount;
     if (room.players.length >= room.minPlayers && unreadyCount === 1) {
       if (!room.autoStartAt) {
-        room.autoStartAt = Date.now() + getOnlineBotBackfillSetting("autoStartMs", ONLINE_BOT_BACKFILL_AUTO_START_MS);
+        room.autoStartAt = getOnlineBackfillNow() + getOnlineBotBackfillSetting("autoStartMs", ONLINE_BOT_BACKFILL_AUTO_START_MS);
       }
     } else if (room.autoStartAt) {
       room.autoStartAt = 0;
@@ -99079,7 +99090,8 @@
     room.startReason = reason;
     room.autoStartAt = 0;
     onlineBotBackfillState.startPending = true;
-    onlineBotBackfillState.prepareTimerMs = getOnlineBotBackfillSetting("prepareMs", ONLINE_BOT_BACKFILL_PREPARE_MS);
+    onlineBotBackfillState.prepareAt = getOnlineBackfillNow() +
+      getOnlineBotBackfillSetting("prepareMs", ONLINE_BOT_BACKFILL_PREPARE_MS);
     emitOnlineBackfillRoom();
   }
 
@@ -99138,7 +99150,7 @@
     room.phase = "match";
     room.matchId = multiplayerState.matchId;
     room.mapSeed = mapSeed;
-    onlineBotBackfillState.postMatchReturnMs = 0;
+    onlineBotBackfillState.postMatchReturnAt = 0;
     emitOnlineBackfillRoom();
     onlineMultiplayerState.readyPending = false;
     onlineMultiplayerState.queued = false;
@@ -99158,21 +99170,22 @@
       entry.ready = false;
       entry.autoReady = false;
     });
+    var now = getOnlineBackfillNow();
     onlineBotBackfillState.bots.forEach(function (persona) {
-      persona.readyAtMs = 1200 + Math.floor(nextOnlineBackfillRandom() * 2600);
+      persona.readyAt = now + 1200 + Math.floor(nextOnlineBackfillRandom() * 2600);
     });
-    onlineBotBackfillState.postMatchReturnMs = 0;
+    onlineBotBackfillState.postMatchReturnAt = 0;
     emitOnlineBackfillRoom();
   }
 
-  function tickOnlineBackfillRoom(dt) {
+  function tickOnlineBackfillRoom() {
     var room = onlineBotBackfillState.room;
     if (!room) return;
-    var elapsedMs = dt * 1000;
+    var now = getOnlineBackfillNow();
 
     if (room.phase === "match" && multiplayerState.phase === "ended") {
       room.phase = "ended";
-      onlineBotBackfillState.postMatchReturnMs = getOnlineBotBackfillSetting(
+      onlineBotBackfillState.postMatchReturnAt = now + getOnlineBotBackfillSetting(
         "postMatchReturnMs",
         ONLINE_BOT_BACKFILL_POST_MATCH_RETURN_MS
       );
@@ -99187,62 +99200,61 @@
     }
     if (room.phase === "ended") {
       // Server parity: idling on the results screen auto-returns the room.
-      onlineBotBackfillState.postMatchReturnMs -= elapsedMs;
-      if (onlineBotBackfillState.postMatchReturnMs <= 0 && multiplayerState.phase === "ended") {
+      if (now >= onlineBotBackfillState.postMatchReturnAt && multiplayerState.phase === "ended") {
         resetOnlineBackfillRoomToLobby();
       }
       return;
     }
     if (room.phase === "preparing") {
-      if (onlineBotBackfillState.startPending) {
-        onlineBotBackfillState.prepareTimerMs -= elapsedMs;
-        if (onlineBotBackfillState.prepareTimerMs <= 0) startOnlineBackfillMatch();
+      if (onlineBotBackfillState.startPending && now >= onlineBotBackfillState.prepareAt) {
+        startOnlineBackfillMatch();
       }
       return;
     }
     if (room.phase !== "lobby") return;
 
     var dirty = false;
-    if (onlineBotBackfillState.pendingJoins.length && room.players.length < room.maxPlayers) {
-      onlineBotBackfillState.joinTimerMs -= elapsedMs;
-      if (onlineBotBackfillState.joinTimerMs <= 0) {
-        var persona = onlineBotBackfillState.pendingJoins.shift();
-        room.players.push({
-          id: persona.id,
-          name: persona.name,
-          ready: false,
-          connected: true,
-          autoReady: false,
-          cosmetics: persona.cosmetics,
-        });
-        persona.readyAtMs = getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS) +
-          Math.floor(nextOnlineBackfillRandom() * Math.max(
-            1,
-            getOnlineBotBackfillSetting("readyMaxMs", ONLINE_BOT_BACKFILL_READY_MAX_MS) -
-              getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS)
-          ));
-        var jitter = getOnlineBotBackfillSetting("joinJitterMs", ONLINE_BOT_BACKFILL_JOIN_JITTER_MS);
-        onlineBotBackfillState.joinTimerMs = getOnlineBotBackfillSetting("joinIntervalMs", ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS) +
-          Math.floor((nextOnlineBackfillRandom() * 2 - 1) * jitter);
-        dirty = true;
-      }
+    if (
+      onlineBotBackfillState.pendingJoins.length &&
+      room.players.length < room.maxPlayers &&
+      now >= onlineBotBackfillState.nextJoinAt
+    ) {
+      var persona = onlineBotBackfillState.pendingJoins.shift();
+      room.players.push({
+        id: persona.id,
+        name: persona.name,
+        ready: false,
+        connected: true,
+        autoReady: false,
+        cosmetics: persona.cosmetics,
+      });
+      persona.readyAt = now + getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS) +
+        Math.floor(nextOnlineBackfillRandom() * Math.max(
+          1,
+          getOnlineBotBackfillSetting("readyMaxMs", ONLINE_BOT_BACKFILL_READY_MAX_MS) -
+            getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS)
+        ));
+      var jitter = getOnlineBotBackfillSetting("joinJitterMs", ONLINE_BOT_BACKFILL_JOIN_JITTER_MS);
+      onlineBotBackfillState.nextJoinAt = now +
+        getOnlineBotBackfillSetting("joinIntervalMs", ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS) +
+        Math.floor((nextOnlineBackfillRandom() * 2 - 1) * jitter);
+      dirty = true;
     }
     for (var botIndex = 0; botIndex < onlineBotBackfillState.bots.length; botIndex++) {
       var readyPersona = onlineBotBackfillState.bots[botIndex];
-      if (readyPersona.readyAtMs == null) continue;
+      if (readyPersona.readyAt == null) continue;
       var entry = room.players.find(function (roomEntry) { return roomEntry.id === readyPersona.id; });
       if (!entry || entry.ready) {
-        readyPersona.readyAtMs = null;
+        readyPersona.readyAt = null;
         continue;
       }
-      readyPersona.readyAtMs -= elapsedMs;
-      if (readyPersona.readyAtMs <= 0) {
-        readyPersona.readyAtMs = null;
+      if (now >= readyPersona.readyAt) {
+        readyPersona.readyAt = null;
         entry.ready = true;
         dirty = true;
       }
     }
-    if (room.autoStartAt && Date.now() >= room.autoStartAt) {
+    if (room.autoStartAt && now >= room.autoStartAt) {
       room.players.forEach(function (roomEntry) {
         if (!roomEntry.ready) {
           roomEntry.ready = true;
@@ -99260,17 +99272,17 @@
     }
   }
 
-  function updateOnlineBotBackfill(dt) {
+  function updateOnlineBotBackfill() {
     if (onlineBotBackfillState.active) {
       if (!onlineMultiplayerState.open && multiplayerState.phase !== "match" && multiplayerState.phase !== "ended") {
         deactivateOnlineBotBackfill();
         return;
       }
-      tickOnlineBackfillRoom(dt);
+      tickOnlineBackfillRoom();
       return;
     }
     if (!isOnlineBotBackfillEnabled() || !onlineMultiplayerState.open) {
-      onlineBotBackfillState.aloneMs = 0;
+      onlineBotBackfillState.aloneSince = 0;
       return;
     }
     var room = onlineMultiplayerState.room;
@@ -99286,11 +99298,12 @@
       multiplayerState.phase === "lobby"
     );
     if (!eligible) {
-      onlineBotBackfillState.aloneMs = 0;
+      onlineBotBackfillState.aloneSince = 0;
       return;
     }
-    onlineBotBackfillState.aloneMs += dt * 1000;
-    if (onlineBotBackfillState.aloneMs >= getOnlineBotBackfillSetting("delayMs", ONLINE_BOT_BACKFILL_DELAY_MS)) {
+    var now = getOnlineBackfillNow();
+    if (!onlineBotBackfillState.aloneSince) onlineBotBackfillState.aloneSince = now;
+    if (now - onlineBotBackfillState.aloneSince >= getOnlineBotBackfillSetting("delayMs", ONLINE_BOT_BACKFILL_DELAY_MS)) {
       activateOnlineBotBackfill();
     }
   }
@@ -128556,10 +128569,19 @@
       onlineBotBackfillState.testConfig = options && typeof options === "object" ? options : null;
       return true;
     },
+    // The lobby timers run on the wall clock, which window.advanceTime() cannot
+    // move; this jumps that clock so a spec stays deterministic and fast.
+    advanceBackfillClockForTest: function (milliseconds) {
+      onlineBotBackfillState.clockOffsetMs += Math.max(0, Number(milliseconds) || 0);
+      updateOnlineBotBackfill();
+      return onlineBotBackfillState.clockOffsetMs;
+    },
     getBackfillState: function () {
       return {
         enabled: isOnlineBotBackfillEnabled(),
-        aloneMs: Math.round(onlineBotBackfillState.aloneMs),
+        aloneMs: onlineBotBackfillState.aloneSince
+          ? Math.round(getOnlineBackfillNow() - onlineBotBackfillState.aloneSince)
+          : 0,
         active: onlineBotBackfillState.active,
         matchBots: onlineBotBackfillState.matchBots,
         pendingJoins: onlineBotBackfillState.pendingJoins.length,
