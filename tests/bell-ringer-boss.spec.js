@@ -71,7 +71,7 @@ test("the playable Bell Ringer rifle test scene starts fully upgraded on wave 10
     longReach: 5,
   });
   expect(result.boss).toMatchObject({ active: true, shielded: true, defeated: false });
-  expect(result.boss.maxHp).toBe(252);
+  expect(result.boss.maxHp).toBe(328);
   expect(result.boss.churches).toHaveLength(3);
 });
 
@@ -624,7 +624,7 @@ test("wave 10 keeps its full zombie budget and presents one shielded Bell Ringer
     shielded: true,
     aiEnabled: false,
     hpRatio: 1,
-    maxHp: 252,
+    maxHp: 328,
   });
   expect(result.initial.hp).toBe(result.initial.maxHp);
   expect(result.initial.maxHp).toBeGreaterThan(0);
@@ -1597,7 +1597,10 @@ test("three short shield phases preserve their health while the final unshielded
   thresholds.forEach((state, index) => {
     expect(state.active).toBe(true);
     expect(state.shielded).toBe(true);
-    expect(state.hp).toBeCloseTo(result.initial.maxHp * expectedRatios[index], 5);
+    // Three decimals, not five: the diagnostics report hp rounded to four, and
+    // a phase floor of five sixths of the pool is only exact when the pool
+    // divides by six. It did while the boss had 252 health.
+    expect(state.hp).toBeCloseTo(result.initial.maxHp * expectedRatios[index], 3);
     expect(state.hpRatio).toBeCloseTo(expectedRatios[index], 3);
     expect(state.hud).toMatchObject({ visible: true });
     expect(state.hud.hpRatio).toBeCloseTo(expectedRatios[index], 3);
@@ -1605,7 +1608,7 @@ test("three short shield phases preserve their health while the final unshielded
   });
   expect(result.threshold50.phase).toBeGreaterThan(result.threshold75.phase);
   expect(result.threshold25.phase).toBeGreaterThan(result.threshold50.phase);
-  expect(result.initial.maxHp).toBe(252);
+  expect(result.initial.maxHp).toBe(328);
   expect(result.finalCaptures[2].hp).toBeCloseTo(result.initial.maxHp / 2, 5);
   expect(result.initial.maxHp - result.threshold25.hp).toBeCloseTo(result.finalCaptures[2].hp, 5);
   expect(result.threshold25.speed.finalPhaseMultiplier).toBe(1);

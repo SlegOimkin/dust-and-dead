@@ -91,7 +91,7 @@ test("solo wave 5 bosses have one 2.3rd of wave 10 health except the unchanged G
   });
 
   const expectedSoloHealth = {
-    bellRinger: { first: 110, standard: 252 },
+    bellRinger: { first: 142, standard: 328 },
     ghostTrain: { first: 250, standard: 425 },
     oilBaron: { first: 939, standard: 2160 },
     slothArchbishop: { first: 548, standard: 1260 },
@@ -110,7 +110,12 @@ test("solo wave 5 bosses have one 2.3rd of wave 10 health except the unchanged G
     } else {
       const firstWaveBalance = pair.kind === "oilBaron" ? 0.8 : 0.7;
       expect(pair.first.waveScale, pair.kind).toBeCloseTo(firstWaveBalance / 2.3, 2);
-      expect(pair.first.maxHp, pair.kind).toBe(Math.round(pair.standard.maxHp / 2.3));
+      // Both sides are rounded independently off the same base, so they can
+      // land a point apart: the standard value is round(base * balance) and the
+      // first-wave one is round(base * balance / 2.3). They agreed exactly only
+      // while every base * balance happened to be a whole number.
+      expect(Math.abs(pair.first.maxHp - Math.round(pair.standard.maxHp / 2.3)), pair.kind)
+        .toBeLessThanOrEqual(1);
     }
   }
   for (const pair of result.multiplayerPairs) {
@@ -172,9 +177,9 @@ test("every boss gains exactly 20 percent of its standard health every five wave
   });
 
   expect(result.filter((entry) => entry.kind !== "slothArchbishop")).toEqual([
-    { wave: 10, kind: "bellRinger", hp: 252, maxHp: 252, segmentMaxHp: null, waveScale: 1 },
-    { wave: 15, kind: "bellRinger", hp: 302, maxHp: 302, segmentMaxHp: null, waveScale: 1.2 },
-    { wave: 20, kind: "bellRinger", hp: 353, maxHp: 353, segmentMaxHp: null, waveScale: 1.4 },
+    { wave: 10, kind: "bellRinger", hp: 328, maxHp: 328, segmentMaxHp: null, waveScale: 1 },
+    { wave: 15, kind: "bellRinger", hp: 393, maxHp: 393, segmentMaxHp: null, waveScale: 1.2 },
+    { wave: 20, kind: "bellRinger", hp: 459, maxHp: 459, segmentMaxHp: null, waveScale: 1.4 },
     { wave: 10, kind: "ghostTrain", hp: 425, maxHp: 425, segmentMaxHp: 85, waveScale: 1 },
     { wave: 15, kind: "ghostTrain", hp: 510, maxHp: 510, segmentMaxHp: 102, waveScale: 1.2 },
     { wave: 20, kind: "ghostTrain", hp: 595, maxHp: 595, segmentMaxHp: 119, waveScale: 1.4 },
@@ -264,7 +269,7 @@ test("wave health scaling composes with four-player health and survives the pack
       };
     }, { sloth: host.slothSnapshot, baron: host.snapshot });
 
-    expect(host.bell).toEqual({ hp: 756, maxHp: 756 });
+    expect(host.bell).toEqual({ hp: 983, maxHp: 983 });
     expect(host.train).toEqual({ hp: 1490, maxHp: 1490, segmentMaxHp: 298, playerScale: 2.5, waveScale: 1.4 });
     expect(host.sloth.hp).toBe(host.sloth.maxHp);
     expect(host.sloth.baseHp).toBeGreaterThan(0);

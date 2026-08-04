@@ -1086,3 +1086,108 @@ test("bots do not shoot a boss that cannot be damaged", async ({ page }) => {
   const diagnostics = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
   expect(diagnostics.length).toBe(3);
 });
+
+test("a bot steps out of the Bell Ringer's sweep and keeps shooting on the way", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.clearEnemies();
+    window.__dustAndDeadTest.forceWaveState(10, 0, 0, "bellRinger");
+  });
+  await advanceMs(page, 500);
+
+  // Park the bot inside the sweep — the disc the Bell Ringer's own attack
+  // picker chooses against anybody within 6.35 — with a zombie to shoot so the
+  // "keep firing while leaving" half of this is measurable.
+  const staged = await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    const boss = window.__dustAndDeadTest.getBellRingerDiagnostics().bossPosition;
+    multi.setPlayerPosition(botId, boss.x + 3, boss.z);
+    multi.spawnEnemyAt(boss.x + 9, boss.z + 2, "walker", 4000);
+    window.__dustAndDeadTest.forceBellRingerAction("sweep");
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    return {
+      action: window.__dustAndDeadTest.getBellRingerDiagnostics().action,
+      distance: Math.hypot(bot.x - boss.x, bot.z - boss.z),
+      fired: bot.lastFireActionSequence,
+    };
+  }, bots[0].id);
+  expect(staged.action).toBe("sweepWindup");
+  expect(staged.distance).toBeLessThan(4);
+
+  await advanceMs(page, 600);
+  const escaped = await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    const boss = window.__dustAndDeadTest.getBellRingerDiagnostics().bossPosition;
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    return {
+      distance: Math.hypot(bot.x - boss.x, bot.z - boss.z),
+      fired: bot.lastFireActionSequence,
+      alive: bot.alive,
+    };
+  }, bots[0].id);
+  // Out of the 6.6 disc (the resolver adds the player's own radius on top).
+  expect(escaped.distance).toBeGreaterThan(7.4);
+  // And it did not stop being a player while doing it.
+  expect(escaped.fired).toBeGreaterThan(staged.fired);
+  expect(escaped.alive).toBe(true);
+});
+
+test("a bot leaves the ground slam sideways instead of running down it", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.clearEnemies();
+    window.__dustAndDeadTest.forceWaveState(10, 0, 0, "bellRinger");
+  });
+  await advanceMs(page, 500);
+
+  // Halfway down the lane, dead on its axis. The lane is 17 long and 3.6 to
+  // each side: running along it is nine units of exposure, stepping across it
+  // is four, and a bot with no shape model picked the long way out.
+  const staged = await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    const game = window.__dustAndDeadTest;
+    game.forceBellRingerAction("groundSlam");
+    const bell = game.getBellRingerDiagnostics();
+    const forwardX = Math.sin(bell.bossFacing);
+    const forwardZ = Math.cos(bell.bossFacing);
+    multi.setPlayerPosition(
+      botId,
+      bell.bossPosition.x + forwardX * 8,
+      bell.bossPosition.z + forwardZ * 8
+    );
+    return {
+      action: bell.action,
+      facing: bell.bossFacing,
+      bossX: bell.bossPosition.x,
+      bossZ: bell.bossPosition.z,
+    };
+  }, bots[0].id);
+  expect(staged.action).toBe("groundSlam");
+
+  // The slam lands 0.899 s in, so this is the window the bot actually has.
+  await advanceMs(page, 800);
+  const moved = await page.evaluate((args) => {
+    const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics()
+      .find((entry) => entry.id === args.botId);
+    const forwardX = Math.sin(args.staged.facing);
+    const forwardZ = Math.cos(args.staged.facing);
+    const dx = bot.x - args.staged.bossX;
+    const dz = bot.z - args.staged.bossZ;
+    return {
+      along: dx * forwardX + dz * forwardZ,
+      across: Math.abs(dx * forwardZ - dz * forwardX),
+      alive: bot.alive,
+    };
+  }, { botId: bots[0].id, staged });
+
+  // Clear of the lane's width, and by stepping out of it rather than by
+  // sprinting to one of its ends.
+  expect(moved.across).toBeGreaterThan(4.7);
+  expect(moved.along).toBeGreaterThan(0);
+  expect(moved.along).toBeLessThan(17);
+  expect(moved.alive).toBe(true);
+});

@@ -332,8 +332,13 @@
   var LIGHT_FLASH_PREWARM = MAX_LIGHT_FLASHES;
   var MAX_DECALS = 48;
   var SCORCH_DECAL_VISUAL_PREWARM = MAX_DECALS;
-  var MAX_DEBRIS = 120;
-  var DEATH_DEBRIS_VISUAL_PREWARM = MAX_DEBRIS;
+  // The pool is shared by every corpse on screen and a single body can leave
+  // thirteen pieces, so at four-player kill rates the cap was evicting gibs
+  // that were still mid-arc — the pieces do not fade, they vanish. Raised
+  // enough to cover a busy four-player wave; the prewarm deliberately stays at
+  // the old figure so start-up cost does not follow.
+  var MAX_DEBRIS = 176;
+  var DEATH_DEBRIS_VISUAL_PREWARM = 120;
   var DEATH_DEBRIS_GROUND_CLEARANCE = 0.12;
   var CONTACT_SHADOW_SURFACE_Y = 0.112;
   var MAX_AMMO_CRATES = 4;
@@ -896,8 +901,14 @@
     [1.42, 4.55, 0.18],
   ];
   var BELL_RINGER_CHURCH_COUNT = 3;
-  var BELL_RINGER_BASE_HP = 360;
-  var BELL_RINGER_HP_PER_EXTRA_PLAYER = 180;
+  // +30% over the 360/180 the fight shipped with. Both numbers move together on
+  // purpose: the per-player term is what a four-handed party actually fights
+  // through, so raising only the base would have buffed solo by a third and a
+  // full room by a tenth. Backfill bots count as players for this
+  // (getMultiplayerWaveParticipantCount walks the roster), so a bot match pays
+  // the full four-player price.
+  var BELL_RINGER_BASE_HP = 468;
+  var BELL_RINGER_HP_PER_EXTRA_PLAYER = 234;
   var BELL_RINGER_CAPTURE_TIME = 5;
   var BELL_RINGER_CAPTURE_RADIUS = 13.5;
   var BELL_RINGER_SWEEP_RADIUS = 6.6;
@@ -1281,11 +1292,15 @@
   // avoids paying four times the shadow pixels before crowd budgeting begins.
   var GAMEPLAY_SHADOW_MAP_SIZE = 1024;
   // At four-player boss/late-wave populations, rendering every animated body
-  // part into the shadow map can cost more than the gameplay simulation.
-  // Keep the color-pass silhouettes exact, but use the stable world shadow map
-  // at 15 Hz and omit per-zombie shadow casters while the crowd is extreme.
+  // part into the shadow map can cost more than the gameplay simulation. Keep
+  // the color-pass silhouettes exact and omit per-zombie shadow casters while
+  // the crowd is extreme — but keep updating the map itself every frame, or the
+  // few casters that remain (the players, their bullets, the gib debris) move
+  // smoothly while their shadows advance in steps. Released 40 below the
+  // engage point so thinning a horde does not flip the whole scene's shadows
+  // on and off frame by frame.
   var ZOMBIE_CROWD_SHADOW_THRESHOLD = 240;
-  var ZOMBIE_CROWD_SHADOW_UPDATE_INTERVAL = 4;
+  var ZOMBIE_CROWD_SHADOW_RELEASE_THRESHOLD = 200;
   var ZOMBIE_CLEAR_DIRECTION_OFFSETS = [0, 0.28, -0.28, 0.58, -0.58, 0.95, -0.95, 1.35, -1.35, Math.PI];
   var ZOMBIE_CLEAR_DIRECTION_COS = ZOMBIE_CLEAR_DIRECTION_OFFSETS.map(Math.cos);
   var ZOMBIE_CLEAR_DIRECTION_SIN = ZOMBIE_CLEAR_DIRECTION_OFFSETS.map(Math.sin);
@@ -75052,7 +75067,7 @@
     zombieInstanceRoot.updateWorldMatrix(false, false);
     zombieInstanceRootInverse.copy(zombieInstanceRoot.matrixWorld).invert();
     var rootIsIdentity = isIdentityMatrix4(zombieInstanceRoot.matrixWorld);
-    var crowdShadowsEnabled = state.enemies.length < ZOMBIE_CROWD_SHADOW_THRESHOLD;
+    var crowdShadowsEnabled = !zombieCrowdShadowBudgetActive;
     for (var enemyIndex = 0; enemyIndex < state.enemies.length; enemyIndex++) {
       var enemy = state.enemies[enemyIndex];
       if (!enemy || enemy.active === false || !enemy.renderVisible || !enemy.group) continue;
@@ -75165,10 +75180,13 @@
       crowdShadowBudget: {
         active: zombieCrowdShadowBudgetActive,
         threshold: ZOMBIE_CROWD_SHADOW_THRESHOLD,
+        releaseThreshold: ZOMBIE_CROWD_SHADOW_RELEASE_THRESHOLD,
         mapSize: GAMEPLAY_SHADOW_MAP_SIZE,
-        updateInterval: ZOMBIE_CROWD_SHADOW_UPDATE_INTERVAL,
+        // Kept at 1: the budget no longer skips shadow frames, only casters.
+        updateInterval: 1,
         updates: zombieCrowdShadowUpdates,
         skips: zombieCrowdShadowSkips,
+        shadowAutoUpdate: !!(renderer && renderer.shadowMap && renderer.shadowMap.autoUpdate),
       },
       drawnParts: instances,
       attached: zombieInstanceRoot.parent === dynamicRoot,
@@ -99057,6 +99075,29 @@
   // whenever the bot is meaningfully short, not only when it is nearly empty.
   var ONLINE_BOT_CRATE_TOPUP_MAGAZINES = 4;
   var ONLINE_BOT_CRATE_TOPUP_RANGE = 30;
+  // The pause between bursts, counted in the gun's own shots rather than in
+  // seconds, so it is a rhythm at any fire rate instead of a rate cap on the
+  // fast guns. Measured before: a bot got 72% of a revolver's rate and 57% of a
+  // rifle's out of it; roughly one skipped beat now leaves both near 86%.
+  var ONLINE_BOT_BURST_PAUSE_CHANCE = 0.22;
+  var ONLINE_BOT_BURST_PAUSE_MIN_SHOTS = 1.1;
+  var ONLINE_BOT_BURST_PAUSE_MAX_SHOTS = 1.8;
+  // How much closer a new enemy must be before a bot switches to it. Without
+  // this the "nearest enemy" flips constantly in a horde, and every flip re-arms
+  // the 0.25-0.60 s acquire hold — a bot in a crowd could spend most of the
+  // wave holding its trigger for a target it had already swapped away from.
+  var ONLINE_BOT_TARGET_SWITCH_RATIO = 0.75;
+  // Every Bell Ringer resolver tests its radius PLUS the victim's radius, so a
+  // model built from the bare constants is a player's width too small.
+  var ONLINE_BOT_BELL_TELEGRAPH_PAD = 1.1;
+  // How far outside a boss's own killing radius a bot tries to stand. Bell
+  // Ringer picks his sweep whenever anyone is within 6.35, so a coach-gun bot
+  // holding its 5.2 ideal range was choosing to be swept on every cooldown.
+  var ONLINE_BOT_BOSS_STANDOFF_MARGIN = 2.4;
+  // The escape sprint probes two rings: far enough to clear the widest zone in
+  // the model, and a short fallback for when the long one is all wall.
+  var ONLINE_BOT_ESCAPE_PROBE_FAR = 10.5;
+  var ONLINE_BOT_ESCAPE_PROBE_NEAR = 5.5;
   // An empty gun with no crate to walk to is not a reason to stand still. The
   // bot picks somewhere else on the map and goes there, the way a player out of
   // ammo would go looking rather than wait to be resupplied where they ran dry.
@@ -99760,6 +99801,7 @@
         orbitDirection: index % 2 ? -1 : 1,
         orbitFlipAt: 0,
         wanderAngle: (index + 1) * 2.1,
+        targetEnemy: null,
         targetLastX: null,
         targetLastZ: null,
         targetVelX: 0,
@@ -100073,18 +100115,115 @@
     }
   }
 
+  // One telegraph, scored. The shape is measured in its OWN axes — how far
+  // along it you are, and how far across — which is what makes the way out of a
+  // long thin attack sideways rather than down its length. Standing in it is
+  // close to fatal, so it outweighs anything else a bot might want, including a
+  // crate it is starving for.
+  function scoreOnlineBackfillTelegraphShape(atX, atZ, cx, cz, halfLength, halfWidth, angle) {
+    var dx = atX - cx;
+    var dz = atZ - cz;
+    var along = (dx * Math.sin(angle) + dz * Math.cos(angle)) / Math.max(0.01, halfLength);
+    var across = (dx * Math.cos(angle) - dz * Math.sin(angle)) / Math.max(0.01, halfWidth);
+    var normalized = along * along + across * across;
+    if (normalized <= 1) return (1.2 - normalized) * 2600;
+    if (normalized < 2.4) return (2.4 - normalized) * 260;
+    return 0;
+  }
+
   function getOnlineBackfillSlothTelegraphPenalty(atX, atZ) {
     var penalty = 0;
     forEachOnlineBackfillSlothTelegraph(function (cx, cz, halfLength, halfWidth, angle) {
-      var dx = atX - cx;
-      var dz = atZ - cz;
-      var along = (dx * Math.sin(angle) + dz * Math.cos(angle)) / Math.max(0.01, halfLength);
-      var across = (dx * Math.cos(angle) - dz * Math.sin(angle)) / Math.max(0.01, halfWidth);
-      var normalized = along * along + across * across;
-      // Standing in it is close to fatal, so it outweighs anything else a bot
-      // might want — including a crate it is starving for.
-      if (normalized <= 1) penalty += (1.2 - normalized) * 2600;
-      else if (normalized < 2.4) penalty += (2.4 - normalized) * 260;
+      penalty += scoreOnlineBackfillTelegraphShape(atX, atZ, cx, cz, halfLength, halfWidth, angle);
+    });
+    return penalty;
+  }
+
+  // The Bell Ringer's attacks, in the same shape language. Until now the only
+  // one a bot could see was the falling bell, which is why they walked into the
+  // sweep, stood under the landing and ran the length of the ground slam.
+  //
+  // Discs (sweep, landing, and the last-stand frenzy) are left by walking
+  // straight out of them. Lanes (ground slam, charge) are left sideways, and
+  // the 4:1 aspect ratio of the scoring is what makes the bot choose sideways
+  // without being told. The frenzy is deliberately modelled as a disc around
+  // the boss rather than as its strike lane: he re-dashes to whoever he can
+  // reach, so stepping out of the current lane just earns another one — the
+  // answer to that phase is distance.
+  function forEachOnlineBackfillBellTelegraph(callback) {
+    var encounter = state.bellRinger;
+    if (!encounter || !encounter.active || encounter.defeated || encounter.replica) return;
+    var boss = encounter.boss;
+    if (!boss || boss.active === false) return;
+    var action = String(boss.action || "");
+    // The resolvers all test against radius + entity.radius, so the model has
+    // to be a player's width wider than the constant or the bot clears the
+    // telegraph and still gets hit.
+    var pad = ONLINE_BOT_BELL_TELEGRAPH_PAD;
+    var facing = Number(boss.facingAngle) || 0;
+    var forwardX = Math.sin(facing);
+    var forwardZ = Math.cos(facing);
+    var radius;
+    if ((action === "sweepWindup" || action === "sweepRecover") && !boss.sweepResolved) {
+      // Frozen where the windup began — the boss cannot move during either half.
+      radius = BELL_RINGER_SWEEP_RADIUS + pad;
+      callback(boss.x, boss.z, radius, radius, 0);
+    } else if (action === "groundSlam" && !boss.groundSlamResolved) {
+      var slamHalf = BELL_RINGER_GROUND_SLAM_LENGTH / 2;
+      callback(
+        boss.x + forwardX * slamHalf,
+        boss.z + forwardZ * slamHalf,
+        slamHalf,
+        BELL_RINGER_GROUND_SLAM_HALF_WIDTH + pad,
+        facing
+      );
+    } else if (action === "chargeWindup" || action === "charge") {
+      // During the windup the whole run is ahead of him; once he is moving only
+      // what is left of it can still be walked into.
+      var remaining = action === "charge" && boss.actionDuration > 0
+        ? BELL_RINGER_CHARGE_LENGTH * clamp((boss.actionTimer || 0) / boss.actionDuration, 0, 1)
+        : BELL_RINGER_CHARGE_LENGTH;
+      var chargeHalf = Math.max(1, remaining / 2);
+      callback(
+        boss.x + forwardX * chargeHalf,
+        boss.z + forwardZ * chargeHalf,
+        chargeHalf,
+        (Number(boss.radius) || 2.22) + pad,
+        facing
+      );
+    } else if (action === "heavenDrop" && !boss.heavenDropResolved) {
+      // He has already teleported: this circle is where he lands, and it is
+      // marked for over two seconds. Nobody should be standing in it.
+      radius = BELL_RINGER_HEAVEN_DROP_RADIUS + pad;
+      callback(boss.x, boss.z, radius, radius, 0);
+    } else if (
+      action === "frenzyDash" ||
+      action === "frenzyStrikeWindup" ||
+      action === "frenzyStrikeRecover"
+    ) {
+      radius = BELL_RINGER_DIRECT_STRIKE_LENGTH + pad;
+      callback(boss.x, boss.z, radius, radius, 0);
+    }
+  }
+
+  // How close a bot is willing to stand to the boss it is shooting at. The Bell
+  // Ringer's attack picker takes the sweep against anybody inside 6.35 and the
+  // sweep is a 7.3-unit disc he cannot miss, so a coach-gun bot holding its 5.2
+  // ideal range was standing in the one place that guarantees being hit on
+  // every cooldown. Ranged weapons already stand further out than this; it only
+  // bites on the short ones.
+  function getOnlineBackfillBossStandoff() {
+    var bell = state.bellRinger;
+    if (bell && bell.active && !bell.defeated) {
+      return BELL_RINGER_SWEEP_RADIUS + ONLINE_BOT_BOSS_STANDOFF_MARGIN;
+    }
+    return 0;
+  }
+
+  function getOnlineBackfillBellTelegraphPenalty(atX, atZ) {
+    var penalty = 0;
+    forEachOnlineBackfillBellTelegraph(function (cx, cz, halfLength, halfWidth, angle) {
+      penalty += scoreOnlineBackfillTelegraphShape(atX, atZ, cx, cz, halfLength, halfWidth, angle);
     });
     return penalty;
   }
@@ -100120,16 +100259,12 @@
         if (starDistance < starRadius) penalty += (starRadius - starDistance) * 380;
       }
     }
-    var sloth = state.slothArchbishop;
-    if (sloth && Array.isArray(sloth.slamTargets)) {
-      for (i = 0; i < sloth.slamTargets.length; i++) {
-        var slam = sloth.slamTargets[i];
-        if (!slam || slam.resolved) continue;
-        var slamRadius = 5.6;
-        var slamDistance = Math.hypot(atX - (slam.x || 0), atZ - (slam.z || 0));
-        if (slamDistance < slamRadius) penalty += (slamRadius - slamDistance) * 340;
-      }
-    }
+    // The Archbishop is scored by his real telegraph shapes at the bottom of
+    // this function. He used to be scored HERE as well, as a flat 5.6 circle on
+    // every slam target — which put a fat round blob over a cross-sweep arm
+    // that is 9.2 long and 1.42 wide, and a blob has no sideways gradient. The
+    // circle was quietly cancelling out the one model that knows which way is
+    // out.
     var heart = state.hordeheart;
     if (heart && Array.isArray(heart.attackHazards)) {
       for (i = 0; i < heart.attackHazards.length; i++) {
@@ -100147,7 +100282,8 @@
       if (burrowDistance < burrowRadius) penalty += (burrowRadius - burrowDistance) * 620;
     }
     return penalty + getOnlineBackfillDoomedCellPenalty(atX, atZ) +
-      getOnlineBackfillSlothTelegraphPenalty(atX, atZ);
+      getOnlineBackfillSlothTelegraphPenalty(atX, atZ) +
+      getOnlineBackfillBellTelegraphPenalty(atX, atZ);
   }
 
   // Something is landing on this spot. Escaping it is not a term in a steering
@@ -100160,24 +100296,45 @@
     if (here <= 0) return null;
     var bestX = 0;
     var bestZ = 0;
-    var bestPenalty = here;
-    for (var i = 0; i < 12; i++) {
-      var angle = (Math.PI * 2 * i) / 12;
-      var moveX = Math.sin(angle);
-      var moveZ = Math.cos(angle);
-      var probeX = entity.x + moveX * 6.5;
-      var probeZ = entity.z + moveZ * 6.5;
-      if (
-        probeX < -ARENA_W / 2 + entity.radius + 0.4 || probeX > ARENA_W / 2 - entity.radius - 0.4 ||
-        probeZ < -ARENA_D / 2 + entity.radius + 0.4 || probeZ > ARENA_D / 2 - entity.radius - 0.4
-      ) continue;
-      if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
-      var penalty = getOnlineBackfillBossHazardPenalty(probeX, probeZ);
-      if (penalty < bestPenalty) {
-        bestPenalty = penalty;
-        bestX = moveX;
-        bestZ = moveZ;
+    // Standing still scores the same penalty at both sample points, so the
+    // seed has to be scored the same way as a candidate or the comparison is
+    // between two different measures.
+    var bestPenalty = here * 1.5;
+    // Two rings. The far one clears the widest zone in the model — the frenzy
+    // circle at 9.7 — and the near one exists because a long probe against a
+    // wall or a rock is rejected outright, and a rejected probe used to drop
+    // the bot back onto the ordinary steering fan, which is exactly the case
+    // this function was written to cover.
+    var rings = [ONLINE_BOT_ESCAPE_PROBE_FAR, ONLINE_BOT_ESCAPE_PROBE_NEAR];
+    for (var ring = 0; ring < rings.length; ring++) {
+      var reach = rings[ring];
+      for (var i = 0; i < 12; i++) {
+        var angle = (Math.PI * 2 * i) / 12;
+        var moveX = Math.sin(angle);
+        var moveZ = Math.cos(angle);
+        var probeX = entity.x + moveX * reach;
+        var probeZ = entity.z + moveZ * reach;
+        if (
+          probeX < -ARENA_W / 2 + entity.radius + 0.4 || probeX > ARENA_W / 2 - entity.radius - 0.4 ||
+          probeZ < -ARENA_D / 2 + entity.radius + 0.4 || probeZ > ARENA_D / 2 - entity.radius - 0.4
+        ) continue;
+        if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
+        // The route counts, not just the destination: a direction whose far end
+        // is clean but which crosses a second telegraph on the way is not an
+        // escape. Weighted behind the destination, which is where the bot has
+        // to end up.
+        var penalty = getOnlineBackfillBossHazardPenalty(probeX, probeZ) +
+          getOnlineBackfillBossHazardPenalty(
+            entity.x + moveX * reach * 0.5,
+            entity.z + moveZ * reach * 0.5
+          ) * 0.5;
+        if (penalty < bestPenalty) {
+          bestPenalty = penalty;
+          bestX = moveX;
+          bestZ = moveZ;
+        }
       }
+      if (bestX || bestZ) break;
     }
     if (!bestX && !bestZ) return null;
     return { x: bestX, z: bestZ };
@@ -100255,19 +100412,36 @@
     // circling a boss they could not hurt. Resupply is the only job now.
     if (getOnlineBackfillBotAmmoStatus(player).dry) {
       runtime.targetPlayerId = "";
+      runtime.targetEnemy = null;
       return null;
     }
     var nearestEnemy = null;
     var nearestEnemyDistance = Infinity;
+    var heldEnemy = null;
+    var heldEnemyDistance = Infinity;
     for (var i = 0; i < state.enemies.length; i++) {
       var enemy = state.enemies[i];
       if (!enemy || enemy.active === false || (enemy.hp || 0) <= 0) continue;
       var enemyDistance = Math.hypot(enemy.x - entity.x, enemy.z - entity.z);
+      if (enemy === runtime.targetEnemy) {
+        heldEnemy = enemy;
+        heldEnemyDistance = enemyDistance;
+      }
       if (enemyDistance < nearestEnemyDistance) {
         nearestEnemyDistance = enemyDistance;
         nearestEnemy = enemy;
       }
     }
+    // Finish the one you started on. "Nearest" changes several times a second in
+    // a crowd, and because every change re-arms the acquire hold, a bot that
+    // re-decided each frame spent the fight lifting its gun and putting it down
+    // again. It only switches for something meaningfully closer, or when the
+    // one it was shooting is dead or out of the fight.
+    if (heldEnemy && heldEnemyDistance <= 30 && nearestEnemyDistance > heldEnemyDistance * ONLINE_BOT_TARGET_SWITCH_RATIO) {
+      nearestEnemy = heldEnemy;
+      nearestEnemyDistance = heldEnemyDistance;
+    }
+    runtime.targetEnemy = nearestEnemy;
     // Self defence beats everything: a zombie in claw range gets shot no matter
     // the mode.
     if (nearestEnemy && nearestEnemyDistance < 4.5) {
@@ -100610,6 +100784,11 @@
     }
     var botAmmo = getOnlineBackfillBotAmmoStatus(player);
     var idealRange = ONLINE_BOT_WEAPON_IDEAL_RANGE[botAmmo.weaponId] || 9;
+    // Against a boss the gun's comfortable range is a floor, not the answer:
+    // whatever the weapon wants, do not stand inside the thing's swing.
+    if (target && target.kind === "boss") {
+      idealRange = Math.max(idealRange, getOnlineBackfillBossStandoff());
+    }
     // A dry weapon flips the priorities: stop orbiting targets at ideal range
     // (there is nothing to shoot with) and march to a crate instead, or the
     // bot circles enemies in silence forever and the wave stalls.
@@ -100663,11 +100842,18 @@
     // Oil Baron behind his derricks); everything else walks to what it shoots.
     var approachRef = (target && (target.approach || target.ref)) || null;
     var orbitActive = false;
+    // The escape sprint above already returns for a bot standing in a telegraph,
+    // so reaching here with one underfoot means every escape probe was blocked.
+    // In that corner the last thing wanted is a spring holding the bot at its
+    // firing distance and an orbit bonus turning the retreat into a strafe:
+    // both are switched off so the plain hazard gradient decides the heading.
+    var standingInHazard = getOnlineBackfillBossHazardPenalty(entity.x, entity.z) > 0;
+    var holdFiringDistance = approachRef && !outOfAmmo && !churchTravel && !standingInHazard;
     // Only the RUN to a church switches combat positioning off. Standing in the
     // yard it does not: the capture is a radius, not a spot, so there is room to
     // hold a firing distance and orbit inside it, and a bot that stops fighting
     // for the length of a capture stops scoring for the length of a capture.
-    if (approachRef && !outOfAmmo && !churchTravel) {
+    if (holdFiringDistance) {
       var toTargetX = (approachRef.x || 0) - entity.x;
       var toTargetZ = (approachRef.z || 0) - entity.z;
       var toTargetLength = Math.hypot(toTargetX, toTargetZ);
@@ -100733,7 +100919,7 @@
         if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
       }
       var score = nextBackfillBotRandom(runtime) * 6;
-      if (approachRef && !outOfAmmo && !churchTravel) {
+      if (holdFiringDistance) {
         var targetDistance = Math.hypot((approachRef.x || 0) - probeX, (approachRef.z || 0) - probeZ);
         score -= Math.abs(targetDistance - idealRange) * 6;
       }
@@ -100823,13 +101009,26 @@
   function updateOnlineBackfillBotAim(player, entity, runtime, persona, target, dt) {
     runtime.aimUpdateIn -= dt;
     var ref = target && target.ref;
-    if (!ref && runtime.aimUpdateIn <= 0) {
-      // Nothing to shoot: pan the view around lazily like a player scanning
-      // the horizon instead of freezing on the last aim point.
-      runtime.aimUpdateIn = 0.7 + nextBackfillBotRandom(runtime) * 0.9;
-      runtime.wanderAngle = (runtime.wanderAngle || 0) + (nextBackfillBotRandom(runtime) * 2 - 1) * 1.2;
-      runtime.aimPointX = entity.x + Math.sin(runtime.wanderAngle) * 9;
-      runtime.aimPointZ = entity.z + Math.cos(runtime.wanderAngle) * 9;
+    if (!ref) {
+      // Nothing to shoot. Walking somewhere is itself an intention, so the gun
+      // points where the legs are going — a player crossing the map does not
+      // stroll along sideways scanning the horizon. Recomputed every tick
+      // rather than on the wander timer, because the whole point is that it
+      // tracks the heading; the timer stays for the standing-still case.
+      // Steering runs immediately before this, so moveX/moveZ are this tick's.
+      var travelLength = Math.hypot(runtime.moveX || 0, runtime.moveZ || 0);
+      if (travelLength > 0.08) {
+        var travelAngle = Math.atan2(runtime.moveX, runtime.moveZ);
+        runtime.aimPointX = entity.x + Math.sin(travelAngle) * 9;
+        runtime.aimPointZ = entity.z + Math.cos(travelAngle) * 9;
+      } else if (runtime.aimUpdateIn <= 0) {
+        // Standing: pan the view around lazily like a player scanning the
+        // horizon instead of freezing on the last aim point.
+        runtime.aimUpdateIn = 0.7 + nextBackfillBotRandom(runtime) * 0.9;
+        runtime.wanderAngle = (runtime.wanderAngle || 0) + (nextBackfillBotRandom(runtime) * 2 - 1) * 1.2;
+        runtime.aimPointX = entity.x + Math.sin(runtime.wanderAngle) * 9;
+        runtime.aimPointZ = entity.z + Math.cos(runtime.wanderAngle) * 9;
+      }
     }
     if (ref && runtime.aimUpdateIn <= 0) {
       runtime.aimUpdateIn = persona.skill.reactionTime * (0.75 + nextBackfillBotRandom(runtime) * 0.5);
@@ -100886,16 +101085,27 @@
   function shouldOnlineBackfillBotHoldFire(player, entity, runtime, target) {
     var ref = target && target.ref;
     if (!ref) return true;
-    // Standing in a telegraph and squeezing the trigger is how a bot dies
-    // looking stupid. Getting out comes first; the shot can wait a beat.
-    if (isOnlineBackfillPointUnderBossAttack(entity.x, entity.z)) return true;
+    // Standing in a telegraph used to veto the shot as well. It no longer does:
+    // getting out is a movement decision, made every frame before this runs and
+    // committed to as a sprint, and holding the trigger on the way out only
+    // means the bot spends the escape contributing nothing. Shooting while
+    // moving out of a zone is the whole skill being modelled here.
     var targetDistance = Math.hypot((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
     var progression = player.progression || {};
     var weaponId = String(progression.weapon || "revolver");
     var maxRange = ONLINE_BOT_WEAPON_MAX_RANGE[weaponId] || 22;
     if (targetDistance > maxRange) return true;
-    var trueAngle = Math.atan2((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
-    if (Math.abs(wrapOnlineBackfillAngle(trueAngle - runtime.aimAngle)) > 0.12) return true;
+    // Has the aim SETTLED — not, is the gun pointed straight at the target. The
+    // bot leads its shots, so on anything crossing quickly the two are supposed
+    // to differ: at revolver speed a target strafing at 3.5 u/s already sits
+    // outside this tolerance, and a running player never re-entered it, which
+    // is why bots stopped firing at exactly the moment they should not. The
+    // aim point IS the lead solution, so measuring against it keeps the "do not
+    // fire mid-flick" guarantee without vetoing every led shot.
+    var settleX = runtime.aimPointX == null ? (ref.x || 0) : runtime.aimPointX;
+    var settleZ = runtime.aimPointZ == null ? (ref.z || 0) : runtime.aimPointZ;
+    var settleAngle = Math.atan2(settleX - entity.x, settleZ - entity.z);
+    if (Math.abs(wrapOnlineBackfillAngle(settleAngle - runtime.aimAngle)) > 0.12) return true;
     if (findBlockingObstacle(entity.x, entity.z, ref.x || 0, ref.z || 0, 0.2, null)) return true;
     // During a boss encounter everyone is an ally: damage between players is
     // muted, the boss is the shared problem, and a shot that would clip anybody
@@ -100980,8 +101190,19 @@
       originZ: entity.z,
       actionAgeMs: 0,
     });
-    if (queued && nextBackfillBotRandom(runtime) < 0.3) {
-      runtime.fireHoldUntil = state.time + 0.25 + nextBackfillBotRandom(runtime) * 0.45;
+    if (queued && nextBackfillBotRandom(runtime) < ONLINE_BOT_BURST_PAUSE_CHANCE) {
+      // Measured in trigger pulls, not in seconds. A flat quarter-to-two-thirds
+      // of a second is longer than a revolver's whole cooldown (0.22) and one
+      // and a half rifle shots (0.14), so the old pause was not a rhythm on top
+      // of the weapon — it WAS the weapon's rate, and it cost the rifle 36% of
+      // its fire rate while doing nothing at all to a launcher.
+      // The weapon's BASE cooldown, deliberately not getWeaponCooldown: that
+      // reads state.fireRateBonus, which outside withMultiplayerPlayerContext
+      // belongs to the local player, not this bot.
+      var shotInterval = Math.max(0.05, Number((WEAPONS[weaponId] || WEAPONS.revolver).cooldown) || 0.22);
+      runtime.fireHoldUntil = state.time + shotInterval *
+        (ONLINE_BOT_BURST_PAUSE_MIN_SHOTS +
+          nextBackfillBotRandom(runtime) * (ONLINE_BOT_BURST_PAUSE_MAX_SHOTS - ONLINE_BOT_BURST_PAUSE_MIN_SHOTS));
     }
   }
 
@@ -121296,28 +121517,35 @@
     ) {
       heavyPrewarmScheduler.deferGameplayShadowUpdate = false;
     }
-    var active = (
-      renderScene === scene &&
-      state.mode === "playing" &&
-      state.enemies.length >= ZOMBIE_CROWD_SHADOW_THRESHOLD
-    );
-    if (!active) {
-      if (zombieCrowdShadowBudgetActive || renderer.shadowMap.autoUpdate === false) {
-        renderer.shadowMap.autoUpdate = true;
-        renderer.shadowMap.needsUpdate = true;
-      }
+    var eligible = renderScene === scene && state.mode === "playing";
+    refreshZombieCrowdShadowBudgetState(eligible);
+    // The budget's saving is dropping three hundred zombies out of the shadow
+    // map, which syncZombieInstanceBatches does. It used ALSO to re-render the
+    // map on one frame in four, and that second half was the expensive one to
+    // look at: with the crowd no longer casting, the only moving shadows left
+    // belong to the player, the bullets and the gib debris, and quantising
+    // those to 15 Hz is what made a rifle round appear to advance in ~2.8-unit
+    // steps while the frame rate never moved. Re-rendering what remains every
+    // frame is strictly cheaper than the sub-threshold case it replaces, which
+    // draws the same scene plus the whole horde.
+    renderer.shadowMap.autoUpdate = true;
+    if (zombieCrowdShadowBudgetActive) zombieCrowdShadowUpdates += 1;
+  }
+
+  // Latched with hysteresis: the caster set is what this decides, and flipping
+  // it frame to frame as a horde is thinned across the threshold pops every
+  // shadow in the scene on and off.
+  function refreshZombieCrowdShadowBudgetState(eligible) {
+    if (!eligible) {
       zombieCrowdShadowBudgetActive = false;
-      return;
+      return false;
     }
-    var enteringBudget = !zombieCrowdShadowBudgetActive || renderer.shadowMap.autoUpdate !== false;
-    var explicitlyRequested = !!renderer.shadowMap.needsUpdate;
-    zombieCrowdShadowBudgetActive = true;
-    renderer.shadowMap.autoUpdate = false;
-    var updateThisFrame = enteringBudget || explicitlyRequested ||
-      renderRafSequence % ZOMBIE_CROWD_SHADOW_UPDATE_INTERVAL === 0;
-    renderer.shadowMap.needsUpdate = updateThisFrame;
-    if (updateThisFrame) zombieCrowdShadowUpdates += 1;
-    else zombieCrowdShadowSkips += 1;
+    if (zombieCrowdShadowBudgetActive) {
+      if (state.enemies.length <= ZOMBIE_CROWD_SHADOW_RELEASE_THRESHOLD) zombieCrowdShadowBudgetActive = false;
+    } else if (state.enemies.length >= ZOMBIE_CROWD_SHADOW_THRESHOLD) {
+      zombieCrowdShadowBudgetActive = true;
+    }
+    return zombieCrowdShadowBudgetActive;
   }
 
   function render() {

@@ -237,3 +237,79 @@ test("the final kill stays frame-safe while inter-wave warming is paced", async 
   expect(frames.at(-1).deferredShadowUpdates).toBeGreaterThan(0);
   expect(frames.every((frame) => frame.timing.pendingMs <= 0.001)).toBe(true);
 });
+
+test("a crowd drops the horde out of the shadow map without stepping what is left", async ({ page }) => {
+  await openFirstWave(page);
+
+  const result = await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    game.setAutomaticFrameLoopModeForTest("paused");
+    game.forceWaveState(1, 0, 400);
+    game.clearEnemies();
+    const world = JSON.parse(window.render_game_to_text());
+
+    // render_game_to_text caps its enemy list at twelve entries, so the live
+    // population has to come from the object diagnostics instead.
+    function liveEnemies() {
+      return game.getThreeObjectDiagnostics().state.enemies;
+    }
+
+    function fill(count) {
+      const live = liveEnemies();
+      for (let index = live; index < count; index += 1) {
+        const angle = (index * 2.399) % (Math.PI * 2);
+        const radius = 18 + (index % 40) * 1.6;
+        game.spawnZombieAt(
+          "walker",
+          world.player.x + Math.sin(angle) * radius,
+          world.player.z + Math.cos(angle) * radius
+        );
+      }
+      game.advanceRealFrame(1000 / 60);
+      const stats = game.getZombieOptimizationStats().instances.crowdShadowBudget;
+      return {
+        enemies: liveEnemies(),
+        active: stats.active,
+        shadowAutoUpdate: stats.shadowAutoUpdate,
+        updateInterval: stats.updateInterval,
+      };
+    }
+
+    function thinTo(count) {
+      let live = liveEnemies();
+      while (live > count && game.killNearestZombie()) {
+        live = liveEnemies();
+      }
+      game.advanceRealFrame(1000 / 60);
+      const stats = game.getZombieOptimizationStats().instances.crowdShadowBudget;
+      return { enemies: live, active: stats.active, shadowAutoUpdate: stats.shadowAutoUpdate };
+    }
+
+    const quiet = fill(60);
+    const crowded = fill(260);
+    const thinned = thinTo(215);
+    const released = thinTo(180);
+    return { quiet, crowded, thinned, released };
+  });
+
+  // Below the threshold nothing is budgeted at all.
+  expect(result.quiet.active).toBe(false);
+
+  // A four-player-sized horde takes the zombies out of the shadow map — that is
+  // the saving — but the shadow map itself keeps updating every frame. Skipping
+  // frames here is what made bullets and gib debris advance in visible steps
+  // while the frame rate stayed high, because with the crowd suppressed they
+  // are the only moving casters left.
+  expect(result.crowded.enemies).toBeGreaterThanOrEqual(240);
+  expect(result.crowded.active).toBe(true);
+  expect(result.crowded.shadowAutoUpdate).toBe(true);
+  expect(result.crowded.updateInterval).toBe(1);
+
+  // Hysteresis: thinning the horde past the engage point does not immediately
+  // flip every shadow in the scene back on, and the release point is lower.
+  expect(result.thinned.enemies).toBeLessThan(240);
+  expect(result.thinned.active).toBe(true);
+  expect(result.released.enemies).toBeLessThan(200);
+  expect(result.released.active).toBe(false);
+  expect(result.released.shadowAutoUpdate).toBe(true);
+});

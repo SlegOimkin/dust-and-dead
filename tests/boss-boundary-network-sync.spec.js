@@ -34,14 +34,14 @@ const SCOPED_VISIBLE_ENEMIES = 6;
 const BOSS_CASES = [
   {
     kind: "bellRinger",
-    expectedMaxHp: 378,
+    expectedMaxHp: 491,
     assertStructure(summary) {
       expect(summary.bell, "Bell Ringer replica").toMatchObject({
         active: true,
         replica: true,
         defeated: false,
-        hp: 378,
-        maxHp: 378,
+        hp: 491,
+        maxHp: 491,
         churchCount: 3,
         activeChurchCount: 3,
       });
