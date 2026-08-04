@@ -47,6 +47,8 @@ const FAST_BACKFILL = {
   readyMinMs: 150,
   readyMaxMs: 151,
   prepareMs: 200,
+  allReadyCountdownMs: 300,
+  allReadyStartMs: 350,
   // Long enough that the emulated post-match auto-return can never race an
   // "ended"-phase assertion.
   postMatchReturnMs: 60000,
@@ -141,7 +143,7 @@ async function fillRoomWithBots(page) {
 async function startBackfillMatch(page) {
   await fillRoomWithBots(page);
   await page.locator("#online-multiplayer-ready-btn").click();
-  await advanceMs(page, FAST_BACKFILL.prepareMs + 300);
+  await advanceMs(page, FAST_BACKFILL.allReadyStartMs + FAST_BACKFILL.prepareMs + 500);
   await expect.poll(() => page.evaluate(() => window.__dustMultiplayerTest.getState().phase)).toBe("match");
   const role = await page.evaluate(() => window.__dustMultiplayerTest.getState().role);
   expect(role).toBe("host");
@@ -181,10 +183,15 @@ test("waiting alone in the public queue for 12 seconds fills the room with bots"
   const names = new Set(state.botNames);
   expect(names.size).toBe(3);
 
-  // The player readies up and the match starts as a host-authoritative match
-  // that still reports the online transport.
+  // The player readies up. The match does not begin on the click: a countdown
+  // runs first, so the room is never yanked away the instant the last bot
+  // settles.
   await page.locator("#online-multiplayer-ready-btn").click();
-  await advanceMs(page, FAST_BACKFILL.prepareMs + 300);
+  await advanceMs(page, 100);
+  await expect(page.locator("#online-multiplayer-countdown")).toBeVisible();
+  expect(await page.evaluate(() => window.__dustMultiplayerTest.getState().phase)).not.toBe("match");
+
+  await advanceMs(page, FAST_BACKFILL.allReadyStartMs + FAST_BACKFILL.prepareMs + 500);
   const matchState = await page.evaluate(() => window.__dustMultiplayerTest.getState());
   expect(matchState.phase).toBe("match");
   expect(matchState.role).toBe("host");
@@ -301,6 +308,12 @@ test("bots fight zombies and never shoot an innocent player, but do retaliate", 
     window.__dustMultiplayerTest.setPlayerPosition(args.localId, bot.x + 5, bot.z);
   }, { localId });
   await advanceMs(page, 1000);
+  // With the arena empty the only thing a bot could shoot is the player, so a
+  // single fired round is a real failure rather than a stray zombie. Assert the
+  // emptiness explicitly: if it ever stops holding, the test says so instead of
+  // failing further down for a reason nobody can reconstruct.
+  const enemiesLeft = await page.evaluate(() => JSON.parse(window.render_game_to_text()).enemies.length);
+  expect(enemiesLeft).toBe(0);
   const fireCountsBefore = await page.evaluate(() =>
     window.__dustMultiplayerTest.getBackfillBotDiagnostics().map((entry) => entry.lastFireActionSequence));
   await advanceMs(page, 4000);
@@ -310,11 +323,12 @@ test("bots fight zombies and never shoot an innocent player, but do retaliate", 
     expect(bot.playerKills).toBe(0);
     expect(bot.lastFireActionSequence).toBe(fireCountsBefore[index]);
   });
-  const localAlive = await page.evaluate((id) => {
+  const localState = await page.evaluate((id) => {
     const player = window.__dustMultiplayerTest.getState().players.find((entry) => entry.id === id);
-    return player ? player.alive : null;
+    return player ? { alive: player.alive, hp: player.hp } : null;
   }, localId);
-  expect(localAlive).toBe(true);
+  expect(localState.alive).toBe(true);
+  expect(localState.hp).toBe(120);
 
   // Hurting a bot flips only that bot into revenge mode.
   await page.evaluate((args) => {
@@ -496,4 +510,67 @@ test("losing the player during a boss wave delays the bot feud until the next wa
     expect(botIds.has(bot.targetPlayerId)).toBe(true);
     expect(bot.targetPlayerId).not.toBe(bot.id);
   }
+});
+
+test("bots hold fire while the Bell Ringer is shielded and go take the churches", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+
+  await page.evaluate(() => window.__dustAndDeadTest.forceWaveState(10, 0, 0, "bellRinger"));
+  await advanceMs(page, 1000);
+  const shielded = await page.evaluate(() => {
+    const encounter = window.__dustAndDeadTest.getBellRingerDiagnostics
+      ? window.__dustAndDeadTest.getBellRingerDiagnostics()
+      : null;
+    return encounter ? encounter.shielded : null;
+  });
+  // The fight opens shielded; if that ever changes the rest of this test is
+  // meaningless, so assert it rather than assume it.
+  expect(shielded === null || shielded === true).toBe(true);
+
+  // Shield up: nobody wastes rounds on the boss, and every bot has a church to
+  // walk to.
+  await advanceMs(page, 2500);
+  let diagnostics = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+  for (const bot of diagnostics) {
+    if (!bot.alive) continue;
+    expect(bot.targetKind).not.toBe("boss");
+    expect(bot.churchGoal).toBeGreaterThanOrEqual(0);
+  }
+
+  // The bots actually close on their church rather than milling around.
+  const approach = await page.evaluate(() => {
+    const before = window.__dustMultiplayerTest.getBackfillBotDiagnostics();
+    return before.map((bot) => ({ id: bot.id, x: bot.x, z: bot.z }));
+  });
+  await advanceMs(page, 5000);
+  const after = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+  const moved = after.filter((bot, index) => {
+    const start = approach[index];
+    return start && Math.hypot(bot.x - start.x, bot.z - start.z) > 2;
+  });
+  expect(moved.length).toBeGreaterThan(0);
+});
+
+test("bots do not shoot a boss that cannot be damaged", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+
+  // The Ghost Train spends the fight cycling between spectral (immune) and
+  // materialized (only its current tail car can be hurt), so sampling across
+  // the whole encounter exercises both states.
+  await page.evaluate(() => window.__dustAndDeadTest.forceWaveState(10, 0, 0, "ghostTrain"));
+  for (let sample = 0; sample < 10; sample++) {
+    await advanceMs(page, 1000);
+    const targeting = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBossTargetAudit());
+    // A bot may aim at the boss or at nothing, but never at a target the damage
+    // pipeline would reject outright.
+    for (const entry of targeting) expect(entry.damageable).toBe(true);
+  }
+  const diagnostics = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+  expect(diagnostics.length).toBe(3);
 });

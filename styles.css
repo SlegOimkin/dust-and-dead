@@ -6436,6 +6436,23 @@ html:not(.no-local-multiplayer) .menu-panel__play-actions > .menu-contracts-btn 
   text-align: right;
 }
 
+/* The "multiplayer is unavailable" notice reuses the lobby shell but is a
+   single message with one way out, so it stays narrow and its button is
+   centered rather than pushed to one side. */
+.online-unavailable-panel {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.online-unavailable-panel .multiplayer-lobby__header p {
+  color: rgba(226, 190, 127, 0.78);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.online-unavailable-panel__footer {
+  justify-content: center;
+}
+
 .multiplayer-scoreboard-toggle {
   position: fixed;
   top: max(12px, env(safe-area-inset-top));

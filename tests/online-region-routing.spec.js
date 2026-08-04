@@ -270,6 +270,48 @@ test("an unreachable director falls back to the configured direct address", asyn
   expect(finalJoins).toEqual(["wss://fallback.test/online"]);
 });
 
+test("regions that all answer too slowly are reported as unavailable", async ({ page }) => {
+  await installRegionNetwork(page, {
+    latency: { "far.test": 320, "mid.test": 240, "slow.test": 180 },
+    directorBody: directory([
+      { id: "far", label: "Far", url: "wss://far.test/online" },
+      { id: "mid", label: "Mid", url: "wss://mid.test/online" },
+      { id: "slow", label: "Slow", url: "wss://slow.test/online" },
+    ]),
+  });
+  await openOnlineLobby(page);
+
+  await page.locator("#online-matchmaking-find-btn").click();
+
+  // Every region answered, so this is not an outage — it is a set of regions
+  // nobody could play on, and the player is told exactly that.
+  await expect(page.locator("#online-unavailable-panel")).toBeVisible({ timeout: 20000 });
+  await expect(page.locator("#online-unavailable-body")).toContainText("too slowly");
+
+  await page.locator("#online-unavailable-ok-btn").click();
+  await expect(page.locator("#online-unavailable-panel")).toBeHidden();
+  await expect(page.locator("#menu")).toBeVisible();
+  await expect(page.locator("#online-multiplayer-lobby")).toBeHidden();
+});
+
+test("one region inside the latency budget still gets the player into a match", async ({ page }) => {
+  await installRegionNetwork(page, {
+    latency: { "far.test": 320, "near.test": 40 },
+    directorBody: directory([
+      { id: "far", label: "Far", url: "wss://far.test/online" },
+      { id: "near", label: "Near", url: "wss://near.test/online" },
+    ]),
+  });
+  await openOnlineLobby(page);
+
+  await page.locator("#online-matchmaking-find-btn").click();
+
+  await expect
+    .poll(() => page.evaluate(() => window.__dustOnlineTest.getState().regionId), { timeout: 15000 })
+    .toBe("near");
+  await expect(page.locator("#online-unavailable-panel")).toBeHidden();
+});
+
 test("no reachable region and no fallback reports a routing error instead of hanging", async ({ page }) => {
   await installRegionNetwork(page, {
     directorBody: directory([]),
@@ -281,10 +323,15 @@ test("no reachable region and no fallback reports a routing error instead of han
   await expect
     .poll(() => page.evaluate(() => window.__dustOnlineTest.getState().connectionState), { timeout: 15000 })
     .toBe("error");
-  await expect(page.locator("#online-multiplayer-status")).toContainText("No game region is available");
+  // Nowhere to play is a dead end, not a status line to squint at: the player
+  // gets a dialog whose only button drops them back on the main menu.
+  await expect(page.locator("#online-unavailable-panel")).toBeVisible();
   const state = await page.evaluate(() => window.__dustOnlineTest.getState());
   expect(state.regionSelectionPending).toBe(false);
   expect(state.desiredQueue).toBe(false);
+
+  await page.locator("#online-unavailable-ok-btn").click();
+  await expect(page.locator("#menu")).toBeVisible();
 });
 
 test("a director on another protocol version is ignored rather than trusted", async ({ page }) => {

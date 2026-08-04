@@ -338,6 +338,9 @@
   var XP_ORB_VISUAL_PREWARM = MAX_XP_ORBS;
   var MULTIPLAYER_XP_ORB_MERGE_RADIUS = 3.2;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
+  // Crates arrive 20% more often than the original cadence, so running dry is a
+  // short detour rather than a stalled wave.
+  var AMMO_CRATE_SPAWN_RATE_SCALE = 1 / 1.2;
   var MINI_AMMO_CRATE_PICKUP_SCALE = 1 / 3;
   var SILVER_CACHE_KILLS_PER_DROP = 3;
   var XP_PICKUP_RADIUS = 1.1;
@@ -1765,6 +1768,9 @@
   var onlineMultiplayerRegion = document.getElementById("online-multiplayer-region");
   var onlineMultiplayerRegionValue = document.getElementById("online-multiplayer-region-value");
   var onlineMultiplayerLobbyBackBtn = document.getElementById("online-multiplayer-lobby-back-btn");
+  var onlineUnavailablePanel = document.getElementById("online-unavailable-panel");
+  var onlineUnavailableBody = document.getElementById("online-unavailable-body");
+  var onlineUnavailableOkBtn = document.getElementById("online-unavailable-ok-btn");
   var multiplayerScoreboardToggle = document.getElementById("multiplayer-scoreboard-toggle");
   var multiplayerScoreboard = document.getElementById("multiplayer-scoreboard");
   var multiplayerScoreboardBody = document.getElementById("multiplayer-scoreboard-body");
@@ -5715,6 +5721,7 @@
     regionSelectionPending: false,
     regionSelectionGeneration: 0,
     adoptedProbe: null,
+    handshakeTimer: 0,
   };
 
   var careerProgression = window.DustAndDeadProgression || null;
@@ -10229,7 +10236,7 @@
     state.revolverAmmoPickupBonus = 0;
     state.rifleAmmoPickupBonus = 0;
     state.ammoCrates = [];
-    state.ammoCrateTimer = state.mode === "playing" ? rand(7, 11) : 0;
+    state.ammoCrateTimer = state.mode === "playing" ? rand(7, 11) * AMMO_CRATE_SPAWN_RATE_SCALE : 0;
     state.zombieTeleports = 0;
     state.zombieSpawnPlayerCursor = 0;
     resetMultiplayerZombiePressureState();
@@ -78619,7 +78626,7 @@
     state.ammoCrateTimer = Math.max(0, state.ammoCrateTimer - dt);
     if (state.ammoCrateTimer <= 0) {
       if (getAmmoCrateCountForLimit() < getAmmoCrateLimit()) spawnAmmoCrate();
-      state.ammoCrateTimer = rand(16, 25);
+      state.ammoCrateTimer = rand(16, 25) * AMMO_CRATE_SPAWN_RATE_SCALE;
     }
 
     for (var i = state.ammoCrates.length - 1; i >= 0; i--) {
@@ -97555,6 +97562,10 @@
       socket: probe ? probe.socket : null,
       hello: probe ? probe.hello : null,
       pingMs: probe ? probe.pingMs : -1,
+      // The winner is picked by score (ping plus a load penalty), so its own
+      // ping is not necessarily the lowest one measured. "Every region is too
+      // slow" has to be judged against the best measurement, not the winner's.
+      bestPingMs: probe ? probe.pingMs : -1,
       pinned: false,
     };
   }
@@ -97610,12 +97621,18 @@
           if (!result) return;
           if (!winner || scoreOnlineProbe(result) < scoreOnlineProbe(winner)) winner = result;
         });
+        var bestPingMs = -1;
+        results.forEach(function (result) {
+          if (!result || !(Number(result.pingMs) >= 0)) return;
+          if (bestPingMs < 0 || Number(result.pingMs) < bestPingMs) bestPingMs = Number(result.pingMs);
+        });
         function settle(finalProbe, finalCandidate, isPinned) {
           results.forEach(function (result) {
             if (result && result !== finalProbe) closeOnlineProbe(result);
           });
           var choice = describeOnlineRegionChoice(finalCandidate, finalProbe);
           choice.pinned = !!isPinned;
+          choice.bestPingMs = bestPingMs;
           return choice;
         }
         // Nothing answered in time. Handing back the first advertised region
@@ -97938,11 +97955,23 @@
         onlineMultiplayerState.connectionState !== "error" &&
         !onlineMultiplayerState.statusError
       ) {
-        setOnlineMultiplayerStatus(
-          "multiplayer.online.status.countdown",
-          "One player is not ready. The server starts the match in {seconds} seconds.",
-          { seconds: seconds }
-        );
+        // Two different countdowns share this element: the server waiting out a
+        // single holdout, and everyone already being ready. Saying "one player
+        // is not ready" during the second one is simply untrue.
+        var everyoneReady = readiness.total > 0 && readiness.ready === readiness.total;
+        if (everyoneReady) {
+          setOnlineMultiplayerStatus(
+            "multiplayer.online.status.startingIn",
+            "Everyone is ready. The match starts in {seconds} seconds.",
+            { seconds: seconds }
+          );
+        } else {
+          setOnlineMultiplayerStatus(
+            "multiplayer.online.status.countdown",
+            "One player is not ready. The server starts the match in {seconds} seconds.",
+            { seconds: seconds }
+          );
+        }
       }
     }
   }
@@ -98213,6 +98242,7 @@
         handleOnlineMultiplayerError({ code: "invalid_session", fatal: true });
         return;
       }
+      clearOnlineHandshakeTimeout();
       onlineMultiplayerState.sessionId = String(message.sessionId);
       onlineMultiplayerState.playerId = String(message.playerId);
       onlineMultiplayerState.resumeToken = String(message.resumeToken);
@@ -98319,6 +98349,86 @@
     if (message.type === "session.error") handleOnlineMultiplayerError(message);
   }
 
+  // Matchmaking is either reachable or it is not; there is no half-online mode
+  // worth leaving a player staring at. Every terminal failure — no region, no
+  // address, a handshake that never answers, a reconnect grace that ran out, or
+  // regions so slow that a match would be unplayable — ends here, and OK is a
+  // one-way trip back to the main menu.
+  var ONLINE_UNAVAILABLE_MAX_PING_MS = 150;
+  var ONLINE_HANDSHAKE_TIMEOUT_MS = 12000;
+
+  function isOnlineUnavailableDialogOpen() {
+    return !!(onlineUnavailablePanel && onlineUnavailablePanel.classList.contains("is-visible"));
+  }
+
+  function showOnlineMultiplayerUnavailable(reason) {
+    if (isOnlineUnavailableDialogOpen()) return false;
+    clearOnlineHandshakeTimeout();
+    onlineMultiplayerState.shouldReconnect = false;
+    onlineMultiplayerState.desiredQueue = false;
+    onlineMultiplayerState.intentionalClose = true;
+    // The dialog is the visible half; the state machine still has to report a
+    // failed connection so diagnostics and the lobby behind it stay truthful.
+    setOnlineConnectionState("error");
+    setOnlineMultiplayerStatus(
+      reason === "slow" ? "multiplayer.online.unavailable.slow" : "multiplayer.online.error.unavailable",
+      reason === "slow"
+        ? "Every game region is answering too slowly for a fair match. Try again later — solo hunts are still available."
+        : "The online server is unavailable. Try again in a moment.",
+      null,
+      true
+    );
+    onlineMultiplayerState.regionSelectionPending = false;
+    if (onlineMultiplayerState.reconnectTimer) {
+      window.clearTimeout(onlineMultiplayerState.reconnectTimer);
+      onlineMultiplayerState.reconnectTimer = 0;
+    }
+    discardOnlineSocket("unavailable");
+    if (onlineUnavailableBody) {
+      var slow = reason === "slow";
+      onlineUnavailableBody.setAttribute(
+        "data-i18n",
+        slow ? "multiplayer.online.unavailable.slow" : "multiplayer.online.unavailable.body"
+      );
+      onlineUnavailableBody.textContent = slow
+        ? tr(
+            "multiplayer.online.unavailable.slow",
+            "Every game region is answering too slowly for a fair match. Try again later — solo hunts are still available."
+          )
+        : tr(
+            "multiplayer.online.unavailable.body",
+            "The matchmaking server cannot be reached right now. Try again later — solo hunts are still available."
+          );
+    }
+    if (onlineMultiplayerLobby) setPanel(onlineMultiplayerLobby, false);
+    if (onlineUnavailablePanel) setPanel(onlineUnavailablePanel, true);
+    if (onlineUnavailableOkBtn) onlineUnavailableOkBtn.focus();
+    return true;
+  }
+
+  function dismissOnlineMultiplayerUnavailable() {
+    if (onlineUnavailablePanel) setPanel(onlineUnavailablePanel, false);
+    closeOnlineMultiplayerLobby();
+    if (onlineMultiplayerBtn) onlineMultiplayerBtn.focus();
+  }
+
+  function clearOnlineHandshakeTimeout() {
+    if (!onlineMultiplayerState.handshakeTimer) return;
+    window.clearTimeout(onlineMultiplayerState.handshakeTimer);
+    onlineMultiplayerState.handshakeTimer = 0;
+  }
+
+  // A socket that opens and then never greets us used to hang the lobby on
+  // "Connecting…" forever: no close event, no timer, nothing to report.
+  function armOnlineHandshakeTimeout() {
+    clearOnlineHandshakeTimeout();
+    onlineMultiplayerState.handshakeTimer = window.setTimeout(function () {
+      onlineMultiplayerState.handshakeTimer = 0;
+      if (!onlineMultiplayerState.open || onlineMultiplayerState.sessionId) return;
+      showOnlineMultiplayerUnavailable("unreachable");
+    }, ONLINE_HANDSHAKE_TIMEOUT_MS);
+  }
+
   function scheduleOnlineMultiplayerReconnect() {
     if (
       !onlineMultiplayerState.open ||
@@ -98357,6 +98467,7 @@
         true
       );
       syncOnlineMultiplayerUi();
+      showOnlineMultiplayerUnavailable("unreachable");
       return;
     }
     setOnlineConnectionState("reconnecting");
@@ -98374,6 +98485,7 @@
   }
 
   function beginOnlineHandshake() {
+    armOnlineHandshakeTimeout();
     var stored = readStoredOnlineSession();
     if (!onlineMultiplayerState.sessionId && stored) {
       onlineMultiplayerState.sessionId = stored.sessionId;
@@ -98414,6 +98526,7 @@
         true
       );
       syncOnlineMultiplayerUi();
+      showOnlineMultiplayerUnavailable("unreachable");
       return false;
     }
     if (onlineMultiplayerState.reconnectTimer) {
@@ -98506,15 +98619,25 @@
           attachOnlineSocket(fallback, null);
           return;
         }
-        onlineMultiplayerState.desiredQueue = false;
-        setOnlineConnectionState("error");
-        setOnlineMultiplayerStatus(
-          "multiplayer.online.error.noRegion",
-          "No game region is available right now. Try again soon.",
-          null,
-          true
-        );
-        syncOnlineMultiplayerUi();
+        showOnlineMultiplayerUnavailable("unreachable");
+        return;
+      }
+      // A choice with no measured ping means every advertised region ignored the
+      // probe; the url is only a last-ditch guess. Anything slower than
+      // ONLINE_UNAVAILABLE_MAX_PING_MS everywhere is not worth a match either.
+      var bestPing = Number(choice.bestPingMs);
+      if (!Number.isFinite(bestPing)) bestPing = Number(choice.pingMs);
+      if (!(bestPing >= 0)) {
+        showOnlineMultiplayerUnavailable("unreachable");
+        closeOnlineProbe(choice);
+        return;
+      }
+      // A pinned region is not a preference: it is where the search code's room
+      // already exists. Refusing it on latency would mean friends with a code
+      // can never meet, which is worse than a slow match.
+      if (!choice.pinned && bestPing > ONLINE_UNAVAILABLE_MAX_PING_MS) {
+        showOnlineMultiplayerUnavailable("slow");
+        closeOnlineProbe(choice);
         return;
       }
       applyOnlineRegionChoice(choice);
@@ -98626,6 +98749,8 @@
     onlineMultiplayerState.readyPending = false;
     onlineMultiplayerState.reconnectAttempt = 0;
     onlineMultiplayerState.reconnectStartedAt = 0;
+    clearOnlineHandshakeTimeout();
+    if (onlineUnavailablePanel) setPanel(onlineUnavailablePanel, false);
     clearOnlineRegionSelection();
     installOnlineMultiplayerBridge();
     if (onlineMultiplayerPlayerName) onlineMultiplayerPlayerName.value = normalizeMultiplayerName(readStoredMultiplayerName() || "Cowboy");
@@ -98664,6 +98789,8 @@
     onlineMultiplayerState.intentionalClose = true;
     onlineMultiplayerState.shouldReconnect = false;
     onlineMultiplayerState.desiredQueue = false;
+    clearOnlineHandshakeTimeout();
+    if (onlineUnavailablePanel) setPanel(onlineUnavailablePanel, false);
     if (onlineMultiplayerState.reconnectTimer) {
       window.clearTimeout(onlineMultiplayerState.reconnectTimer);
       onlineMultiplayerState.reconnectTimer = 0;
@@ -98733,6 +98860,11 @@
   var ONLINE_BOT_BACKFILL_READY_MIN_MS = 800;
   var ONLINE_BOT_BACKFILL_READY_MAX_MS = 2300;
   var ONLINE_BOT_BACKFILL_PREPARE_MS = 950;
+  // The countdown the player reads, and the slightly longer deadline behind it.
+  // The extra half second keeps the visible "1" on screen instead of blinking
+  // past it, and gives a straggling bot room to land.
+  var ONLINE_BOT_BACKFILL_ALL_READY_COUNTDOWN_MS = 5000;
+  var ONLINE_BOT_BACKFILL_ALL_READY_START_MS = 5500;
   var ONLINE_BOT_BACKFILL_AUTO_START_MS = 40000;
   var ONLINE_BOT_BACKFILL_POST_MATCH_RETURN_MS = 90000;
   var ONLINE_BOT_BACKFILL_GRUDGE_TIME = 9;
@@ -98760,6 +98892,10 @@
   var ONLINE_BOT_WEAPON_MAX_RANGE = { revolver: 22, rifle: 30, launcher: 26, coachGun: 10 };
   var ONLINE_BOT_STEER_DIRECTIONS = 10;
   var ONLINE_BOT_TRAITOR_HUNT_RANGE = 24;
+  // Bots are lazy about chasing XP orbs on purpose, but a bot that falls far
+  // behind stops being a credible opponent, so the gap to the human is capped.
+  var ONLINE_BOT_MAX_LEVEL_GAP = 3;
+  var ONLINE_BOT_LEVEL_CATCHUP_INTERVAL = 4;
 
   var onlineBotBackfillState = {
     aloneSince: 0,
@@ -98770,6 +98906,7 @@
     pendingJoins: [],
     nextJoinAt: 0,
     prepareAt: 0,
+    allReadyStartAt: 0,
     startPending: false,
     postMatchReturnAt: 0,
     clockOffsetMs: 0,
@@ -99015,6 +99152,7 @@
       getOnlineBotBackfillSetting("firstJoinMs", ONLINE_BOT_BACKFILL_FIRST_JOIN_MS);
     onlineBotBackfillState.startPending = false;
     onlineBotBackfillState.prepareAt = 0;
+    onlineBotBackfillState.allReadyStartAt = 0;
     onlineBotBackfillState.postMatchReturnAt = 0;
     onlineBotBackfillState.active = true;
     onlineBotBackfillState.aloneSince = 0;
@@ -99029,6 +99167,7 @@
     onlineBotBackfillState.pendingJoins = [];
     onlineBotBackfillState.startPending = false;
     onlineBotBackfillState.aloneSince = 0;
+    onlineBotBackfillState.allReadyStartAt = 0;
     onlineBotBackfillState.postMatchReturnAt = 0;
     var socket = onlineMultiplayerState.socket;
     if (socket && socket.__backfill) {
@@ -99062,21 +99201,36 @@
   function evaluateOnlineBackfillStart() {
     var room = onlineBotBackfillState.room;
     if (!room || room.phase !== "lobby") return;
+    var now = getOnlineBackfillNow();
     var readyCount = room.players.filter(function (entry) { return entry.ready; }).length;
     // The emulated matchmaker keeps seating queued players, so all-ready only
-    // starts the match once the room has filled to its cap.
-    if (
-      !onlineBotBackfillState.pendingJoins.length &&
+    // arms the start once the room has filled to its cap.
+    var everyoneReady = !onlineBotBackfillState.pendingJoins.length &&
       room.players.length >= room.minPlayers &&
-      readyCount === room.players.length
-    ) {
-      beginOnlineBackfillPrepare("all-ready");
+      readyCount === room.players.length;
+    if (everyoneReady) {
+      // Not an instant start: the player gets a countdown to read the full
+      // room, and a bot still walking in has time to take its seat.
+      if (!onlineBotBackfillState.allReadyStartAt) {
+        onlineBotBackfillState.allReadyStartAt = now +
+          getOnlineBotBackfillSetting("allReadyStartMs", ONLINE_BOT_BACKFILL_ALL_READY_START_MS);
+        room.autoStartAt = now +
+          getOnlineBotBackfillSetting("allReadyCountdownMs", ONLINE_BOT_BACKFILL_ALL_READY_COUNTDOWN_MS);
+        room.startReason = "all-ready";
+      }
       return;
+    }
+    // Someone took their readiness back (or a late bot arrived): drop the
+    // countdown instead of starting a match nobody is waiting on.
+    if (onlineBotBackfillState.allReadyStartAt) {
+      onlineBotBackfillState.allReadyStartAt = 0;
+      room.autoStartAt = 0;
+      room.startReason = "";
     }
     var unreadyCount = room.players.length - readyCount;
     if (room.players.length >= room.minPlayers && unreadyCount === 1) {
       if (!room.autoStartAt) {
-        room.autoStartAt = getOnlineBackfillNow() + getOnlineBotBackfillSetting("autoStartMs", ONLINE_BOT_BACKFILL_AUTO_START_MS);
+        room.autoStartAt = now + getOnlineBotBackfillSetting("autoStartMs", ONLINE_BOT_BACKFILL_AUTO_START_MS);
       }
     } else if (room.autoStartAt) {
       room.autoStartAt = 0;
@@ -99089,6 +99243,7 @@
     room.phase = "preparing";
     room.startReason = reason;
     room.autoStartAt = 0;
+    onlineBotBackfillState.allReadyStartAt = 0;
     onlineBotBackfillState.startPending = true;
     onlineBotBackfillState.prepareAt = getOnlineBackfillNow() +
       getOnlineBotBackfillSetting("prepareMs", ONLINE_BOT_BACKFILL_PREPARE_MS);
@@ -99254,7 +99409,11 @@
         dirty = true;
       }
     }
-    if (room.autoStartAt && now >= room.autoStartAt) {
+    if (onlineBotBackfillState.allReadyStartAt && now >= onlineBotBackfillState.allReadyStartAt) {
+      beginOnlineBackfillPrepare("all-ready");
+      return;
+    }
+    if (!onlineBotBackfillState.allReadyStartAt && room.autoStartAt && now >= room.autoStartAt) {
       room.players.forEach(function (roomEntry) {
         if (!roomEntry.ready) {
           roomEntry.ready = true;
@@ -99292,7 +99451,11 @@
       room.phase === "lobby" &&
       players.length === 1 &&
       String((players[0] || {}).id || "") === String(onlineMultiplayerState.playerId || "") &&
+      // Both the local intent and the room the server actually put us in must
+      // be codeless. A coded room belongs to friends who are still coming, and
+      // the server's own copy is the ground truth if the two ever disagree.
       !onlineMultiplayerState.searchCode &&
+      !String(room.searchCode || "") &&
       onlineMultiplayerState.connectionState === "room" &&
       isOnlineSocketOpen() &&
       multiplayerState.phase === "lobby"
@@ -99345,13 +99508,35 @@
         draftDelay: 3 + index * 1.7,
         decisionAt: 0,
         stuckTimer: 0,
+        stuckStrikes: 0,
         forcedTimer: 0,
         forcedX: 0,
         forcedZ: 0,
         lastX: null,
         lastZ: null,
+        catchupTimer: ONLINE_BOT_LEVEL_CATCHUP_INTERVAL,
       };
     });
+  }
+
+  function updateOnlineBackfillBotLevelCatchup(player, runtime, dt) {
+    runtime.catchupTimer -= dt;
+    if (runtime.catchupTimer > 0) return;
+    runtime.catchupTimer = ONLINE_BOT_LEVEL_CATCHUP_INTERVAL;
+    var local = getLocalMultiplayerPlayer();
+    if (!local || !local.progression || !player.progression) return;
+    var gap = (Number(local.progression.level) || 1) - (Number(player.progression.level) || 1);
+    if (gap <= ONLINE_BOT_MAX_LEVEL_GAP) return;
+    // Award exactly one level's worth of XP per tick so the bot walks up to the
+    // player instead of teleporting there, and so every level still runs
+    // through the normal offer/draft machinery.
+    var entity = player.entity;
+    awardMultiplayerXp(
+      player.id,
+      Math.max(1, Number(player.progression.xpToNext) || 1),
+      entity ? entity.x : null,
+      entity ? entity.z : null
+    );
   }
 
   function isOnlineBackfillBossFightActive() {
@@ -99426,19 +99611,171 @@
     return penalty;
   }
 
+  // Shooting a boss that cannot be hurt wastes the magazine and reads as a bot
+  // that does not understand the fight. Each encounter has its own answer to
+  // "is this thing damageable right now"; the generic damage-target helpers do
+  // not check any of them.
+  function canOnlineBackfillBotDamageBossTarget(target, entity) {
+    if (!target || target.active === false) return false;
+    if (target.hp != null && target.hp <= 0) return false;
+    if (target.isBellRinger) return !(state.bellRinger && state.bellRinger.shielded);
+    if (target.isGhostTrainSegment) {
+      var train = state.ghostTrain;
+      return !!(
+        train && train.materialized && train.vulnerable &&
+        target.attached && target.index === train.activeTailIndex
+      );
+    }
+    if (target.isOilBaron) {
+      var baron = state.oilBaron;
+      return !!(baron && baron.bribeState !== "offered" && target.action !== "oilStar");
+    }
+    if (target.isOilBaronDouble) return target.action !== "oilStar";
+    if (target.isOilDerrick) return !target.destroyed && !target.building;
+    if (target.isSlothArchbishop) {
+      if (target.action === "wake" || target.action === "spiderRise") return false;
+      // The Archbishop armours a whole arc: the bot has to be standing in an
+      // open sector for its shots to land at all.
+      if (entity && typeof shouldSlothBlockDamage === "function" && state.slothArchbishop) {
+        try {
+          if (shouldSlothBlockDamage(state.slothArchbishop, null, entity.x, entity.z)) return false;
+        } catch (error) {}
+      }
+      return true;
+    }
+    if (target.isHordeheart) {
+      var heart = state.hordeheart;
+      var phase = heart ? String(heart.phase || "") : "";
+      if (phase !== "whole" && phase !== "halves" && phase !== "quarters") return false;
+      return !target.downed;
+    }
+    if (target.isDoppelgangerBoss) {
+      return !!(state.doppelganger && state.doppelganger.phase === "boss");
+    }
+    return true;
+  }
+
   function collectOnlineBackfillBossTargets(entity) {
     var targets = [];
     forEachActiveBossDamageTarget(function (target) {
-      if (!target || target.active === false) return;
-      if (target.hp != null && target.hp <= 0) return;
+      if (!canOnlineBackfillBotDamageBossTarget(target, entity)) return;
       targets.push(target);
     });
+    // Derricks and doubles are not in the generic sweep, but they are the
+    // Oil Baron fight's real objectives while he is untouchable.
+    var baronEncounter = state.oilBaron;
+    if (baronEncounter && getActiveOilBaronBoss()) {
+      if (Array.isArray(baronEncounter.oilDoubles)) {
+        baronEncounter.oilDoubles.forEach(function (oilDouble) {
+          if (canOnlineBackfillBotDamageBossTarget(oilDouble, entity)) targets.push(oilDouble);
+        });
+      }
+      if (Array.isArray(baronEncounter.derricks)) {
+        baronEncounter.derricks.forEach(function (derrick) {
+          if (canOnlineBackfillBotDamageBossTarget(derrick, entity)) targets.push(derrick);
+        });
+      }
+    }
     targets.sort(function (a, b) {
       var da = Math.hypot((a.x || 0) - entity.x, (a.z || 0) - entity.z);
       var db = Math.hypot((b.x || 0) - entity.x, (b.z || 0) - entity.z);
       return da - db;
     });
     return targets;
+  }
+
+  // While the Bell Ringer holds his shield, standing in the churches is the
+  // only thing that matters — but all three have to fall, so the bots split up
+  // instead of piling onto whichever one happens to be closest. The split is by
+  // roster slot, which is stable frame to frame and needs no coordination.
+  function findOnlineBackfillBellChurchGoal(entity, player) {
+    var encounter = state.bellRinger;
+    if (!encounter || !encounter.active || !encounter.shielded) return null;
+    if (!Array.isArray(encounter.churches)) return null;
+    var open = encounter.churches.filter(function (church) {
+      return church && church.active;
+    });
+    if (!open.length) return null;
+    if (!player) return open[0];
+    var botOrdinal = 0;
+    for (var i = 0; i < multiplayerState.playerOrder.length; i++) {
+      var candidate = getMultiplayerPlayer(multiplayerState.playerOrder[i]);
+      if (!candidate || !candidate.backfillBot) continue;
+      if (candidate.id === player.id) break;
+      botOrdinal += 1;
+    }
+    return open[botOrdinal % open.length];
+  }
+
+  // The Land Eater turns the arena into a shrinking board. A cell that is about
+  // to be swallowed kills outright, so it is worth far more than an ordinary
+  // hazard penalty.
+  function getOnlineBackfillDoomedCellPenalty(atX, atZ) {
+    if (!state.landEater || !state.landEater.active || state.landEater.defeated) return 0;
+    if (typeof getLandEaterCellAtWorld !== "function") return 0;
+    var cell = getLandEaterCellAtWorld(atX, atZ);
+    if (!cell) return 0;
+    var cellState = landEaterMapState && landEaterMapState.cells
+      ? landEaterMapState.cells[cell.id]
+      : 0;
+    if (cellState === LAND_EATER_CELL_VOID) return 100000;
+    if (cellState === LAND_EATER_CELL_WARNING) return 4000;
+    return 0;
+  }
+
+  // Boss telegraphs the ordinary bullet sweep cannot see: falling bells, oil
+  // star landings, the Archbishop's snapshotted slam points, Hordeheart's
+  // lingering fields and the Land Eater's burrow strike.
+  function getOnlineBackfillBossHazardPenalty(atX, atZ) {
+    var penalty = 0;
+    var i;
+    var bell = state.bellRinger;
+    if (bell && Array.isArray(bell.bellDrops)) {
+      for (i = 0; i < bell.bellDrops.length; i++) {
+        var drop = bell.bellDrops[i];
+        if (!drop || drop.impacted) continue;
+        var dropRadius = 4.6 + 1.2;
+        var dropDistance = Math.hypot(atX - (drop.x || 0), atZ - (drop.z || 0));
+        if (dropDistance < dropRadius) penalty += (dropRadius - dropDistance) * 420;
+      }
+    }
+    var baron = state.oilBaron;
+    if (baron && baron.boss && baron.boss.action === "oilStar" && Array.isArray(baron.boss.starLandingPoints)) {
+      for (i = 0; i < baron.boss.starLandingPoints.length; i++) {
+        var star = baron.boss.starLandingPoints[i];
+        if (!star) continue;
+        var starRadius = 4.3 + 1.4;
+        var starDistance = Math.hypot(atX - (star.x || 0), atZ - (star.z || 0));
+        if (starDistance < starRadius) penalty += (starRadius - starDistance) * 380;
+      }
+    }
+    var sloth = state.slothArchbishop;
+    if (sloth && Array.isArray(sloth.slamTargets)) {
+      for (i = 0; i < sloth.slamTargets.length; i++) {
+        var slam = sloth.slamTargets[i];
+        if (!slam || slam.resolved) continue;
+        var slamRadius = 5.6;
+        var slamDistance = Math.hypot(atX - (slam.x || 0), atZ - (slam.z || 0));
+        if (slamDistance < slamRadius) penalty += (slamRadius - slamDistance) * 340;
+      }
+    }
+    var heart = state.hordeheart;
+    if (heart && Array.isArray(heart.attackHazards)) {
+      for (i = 0; i < heart.attackHazards.length; i++) {
+        var hazard = heart.attackHazards[i];
+        if (!hazard || (hazard.life || 0) <= 0) continue;
+        var hazardRadius = Math.max(1.5, Number(hazard.radius) || 2.5);
+        var hazardDistance = Math.hypot(atX - (hazard.targetX || 0), atZ - (hazard.targetZ || 0));
+        if (hazardDistance < hazardRadius) penalty += (hazardRadius - hazardDistance) * 260;
+      }
+    }
+    var eater = state.landEater;
+    if (eater && eater.action === "burrow" && Number.isFinite(Number(eater.burrowEndX))) {
+      var burrowRadius = 6.2 + 1.2;
+      var burrowDistance = Math.hypot(atX - Number(eater.burrowEndX), atZ - Number(eater.burrowEndZ));
+      if (burrowDistance < burrowRadius) penalty += (burrowRadius - burrowDistance) * 620;
+    }
+    return penalty + getOnlineBackfillDoomedCellPenalty(atX, atZ);
   }
 
   function findOnlineBackfillBaronTraitor(player, entity) {
@@ -99519,6 +99856,10 @@
     if (bossTruce) {
       var bossTargets = collectOnlineBackfillBossTargets(entity);
       if (bossTargets.length) return { kind: "boss", ref: bossTargets[0] };
+      // Nothing on the boss can be hurt right now — clear the shield, or at
+      // least stop standing still and shoot the trash it summoned.
+      if (nearestEnemy && nearestEnemyDistance < 30) return { kind: "enemy", ref: nearestEnemy };
+      return null;
     }
     if (nearestEnemy && nearestEnemyDistance < 30) return { kind: "enemy", ref: nearestEnemy };
     return null;
@@ -99542,18 +99883,45 @@
       runtime.moveZ = runtime.forcedZ;
       return;
     }
-    if (runtime.lastX != null && Math.hypot(runtime.moveX, runtime.moveZ) > 0.3) {
-      if (Math.hypot(entity.x - runtime.lastX, entity.z - runtime.lastZ) < 0.02) runtime.stuckTimer += dt;
-      else runtime.stuckTimer = 0;
+    // Stuck detection is measured against the distance this frame SHOULD have
+    // covered, so it behaves the same at any frame rate. Pressing into a wall
+    // still slides a little through resolveMoverPosition, hence the 25% floor
+    // rather than a fixed epsilon.
+    var desiredMove = Math.hypot(runtime.moveX, runtime.moveZ);
+    if (runtime.lastX != null && desiredMove > 0.3) {
+      var expected = (entity.speed || BASE_PLAYER_SPEED) * desiredMove * dt;
+      var travelled = Math.hypot(entity.x - runtime.lastX, entity.z - runtime.lastZ);
+      if (travelled < expected * 0.25) runtime.stuckTimer += dt;
+      else {
+        runtime.stuckTimer = 0;
+        if (travelled > expected * 0.8) runtime.stuckStrikes = 0;
+      }
     }
     runtime.lastX = entity.x;
     runtime.lastZ = entity.z;
-    if (runtime.stuckTimer > 0.7) {
+    if (runtime.stuckTimer > 0.35) {
       runtime.stuckTimer = 0;
-      var kickAngle = nextBackfillBotRandom(runtime) * Math.PI * 2;
-      runtime.forcedX = Math.sin(kickAngle);
-      runtime.forcedZ = Math.cos(kickAngle);
-      runtime.forcedTimer = 0.5;
+      runtime.stuckStrikes = (runtime.stuckStrikes || 0) + 1;
+      // Escalate instead of re-rolling a random direction that can point back
+      // into the same corner: slide one way along the obstacle, then the other,
+      // then back out the way we came, and only then give up and pick at random.
+      var blockedAngle = Math.atan2(runtime.moveX, runtime.moveZ);
+      var escapeAngle;
+      if (runtime.stuckStrikes === 1) escapeAngle = blockedAngle + Math.PI / 2;
+      else if (runtime.stuckStrikes === 2) escapeAngle = blockedAngle - Math.PI / 2;
+      else if (runtime.stuckStrikes === 3) escapeAngle = blockedAngle + Math.PI;
+      else {
+        escapeAngle = nextBackfillBotRandom(runtime) * Math.PI * 2;
+        runtime.stuckStrikes = 0;
+      }
+      runtime.forcedX = Math.sin(escapeAngle);
+      runtime.forcedZ = Math.cos(escapeAngle);
+      runtime.forcedTimer = 0.45 + nextBackfillBotRandom(runtime) * 0.25;
+      runtime.moveX = runtime.forcedX;
+      runtime.moveZ = runtime.forcedZ;
+      // Re-plan from scratch once the kick ends rather than resuming the old
+      // heading that walked into the obstacle.
+      runtime.replanTimer = 0;
       return;
     }
 
@@ -99573,6 +99941,11 @@
       }
     }
 
+    // Standing inside a boss telegraph is not something to finish the current
+    // steering plan over — re-plan on the spot and walk out.
+    if (runtime.replanTimer > 0 && getOnlineBackfillBossHazardPenalty(entity.x, entity.z) > 0) {
+      runtime.replanTimer = 0;
+    }
     if (runtime.replanTimer > 0) return;
     runtime.replanTimer = 0.13 + nextBackfillBotRandom(runtime) * 0.09;
 
@@ -99611,6 +99984,14 @@
       }
     }
 
+    var churchGoal = findOnlineBackfillBellChurchGoal(entity, player);
+    var churchDistanceNow = churchGoal
+      ? Math.hypot((churchGoal.x || 0) - entity.x, (churchGoal.z || 0) - entity.z)
+      : 0;
+    // The arena is hundreds of units across. An objective that far away is a
+    // run, not a nudge to a steering score: commit to the heading and only let
+    // hazards bend it.
+    var churchTravel = !!churchGoal && churchDistanceNow > 18;
     // Circle-strafe: inside the comfortable range band players orbit their
     // target rather than standing square; the orbit side flips now and then.
     if (state.time >= (runtime.orbitFlipAt || 0)) {
@@ -99620,7 +100001,7 @@
     var orbitTangentX = 0;
     var orbitTangentZ = 0;
     var orbitActive = false;
-    if (target && target.ref && !outOfAmmo) {
+    if (target && target.ref && !outOfAmmo && !churchGoal) {
       var toTargetX = (target.ref.x || 0) - entity.x;
       var toTargetZ = (target.ref.z || 0) - entity.z;
       var toTargetLength = Math.hypot(toTargetX, toTargetZ);
@@ -99653,7 +100034,7 @@
         if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
       }
       var score = nextBackfillBotRandom(runtime) * 6;
-      if (target && target.ref && !outOfAmmo) {
+      if (target && target.ref && !outOfAmmo && !churchGoal) {
         var targetDistance = Math.hypot((target.ref.x || 0) - probeX, (target.ref.z || 0) - probeZ);
         score -= Math.abs(targetDistance - idealRange) * 6;
       }
@@ -99663,7 +100044,14 @@
         if (nearDistance < 7) score -= (7 - nearDistance) * 14;
       }
       score -= getOnlineBackfillHazardPenalty(probeX, probeZ);
+      score -= getOnlineBackfillBossHazardPenalty(probeX, probeZ);
       score -= getOnlineBackfillBotThreatAt(player, entity, probeX, probeZ, null) * 0.8;
+      if (churchGoal) {
+        // Inside the capture radius is what counts, so the pull stops once the
+        // bot is standing in the churchyard.
+        var churchDistance = Math.hypot((churchGoal.x || 0) - probeX, (churchGoal.z || 0) - probeZ);
+        if (churchDistance > 11) score -= (churchDistance - 11) * (churchTravel ? 160 : 26);
+      }
       multiplayerState.playerOrder.forEach(function (otherId) {
         if (otherId === player.id) return;
         var other = getMultiplayerPlayer(otherId);
@@ -99685,11 +100073,19 @@
         bestZ = moveZ;
       }
     }
-    if (!target && !nearestCrate && !endgame && nextBackfillBotRandom(runtime) < 0.22) {
-      // Players do just stand still sometimes.
+    if (!target && !nearestCrate && !churchGoal && !endgame && nextBackfillBotRandom(runtime) < 0.22) {
+      // Players do just stand still sometimes — but not while they are on their
+      // way to an objective.
       runtime.moveX = 0;
       runtime.moveZ = 0;
       runtime.replanTimer = 0.55 + nextBackfillBotRandom(runtime) * 0.9;
+      return;
+    }
+    if (churchTravel) {
+      // Full commitment while travelling: no heading inertia to water down a
+      // long run across the map.
+      runtime.moveX = bestX;
+      runtime.moveZ = bestZ;
       return;
     }
     // Heading inertia: commit to a direction instead of re-optimizing into a
@@ -99905,6 +100301,7 @@
       var targetKey = target
         ? target.kind + ":" + String(target.playerId || (target.ref && (target.ref.networkId || target.ref.id)) || "x")
         : "";
+      runtime.targetKind = target ? target.kind : "";
       if (targetKey !== runtime.lastTargetKey) {
         runtime.lastTargetKey = targetKey;
         if (target) {
@@ -99925,6 +100322,7 @@
         aimDistance: runtime.aimDistance,
       });
       updateOnlineBackfillBotCombat(player, entity, runtime, persona, target);
+      updateOnlineBackfillBotLevelCatchup(player, runtime, dt);
       if (player.currentUpgradeOffer || (player.pendingUpgradeLevels || []).length) {
         runtime.draftDelay -= dt;
         if (runtime.draftDelay <= 0) {
@@ -99954,6 +100352,7 @@
     if (onlineMultiplayerBtn) onlineMultiplayerBtn.addEventListener("click", openOnlineMultiplayerLobby);
     if (multiplayerLobbyBackBtn) multiplayerLobbyBackBtn.addEventListener("click", closeLocalMultiplayerLobby);
     if (onlineMultiplayerLobbyBackBtn) onlineMultiplayerLobbyBackBtn.addEventListener("click", closeOnlineMultiplayerLobby);
+    if (onlineUnavailableOkBtn) onlineUnavailableOkBtn.addEventListener("click", dismissOnlineMultiplayerUnavailable);
     if (onlineMatchmakingFindBtn) onlineMatchmakingFindBtn.addEventListener("click", beginOnlineMatchmaking);
     if (onlineMatchmakingCancelBtn) onlineMatchmakingCancelBtn.addEventListener("click", cancelOnlineMatchmaking);
     if (onlineMultiplayerReadyBtn) onlineMultiplayerReadyBtn.addEventListener("click", toggleOnlineMultiplayerReady);
@@ -100112,6 +100511,7 @@
     multiplayerScoreboardNextFrameCheckAt = 0;
     multiplayerUpgradeUiSignature = "";
     multiplayerDeathUiSignature = "";
+    multiplayerState.scoreboardOpen = false;
     resetMultiplayerSpectatorState();
     resetMultiplayerMatchHistory();
     clearMultiplayerPlayerNameplates();
@@ -100281,6 +100681,10 @@
     };
     syncMultiplayerTransportUi();
     updateMultiplayerUpgradeUi();
+    // The session is gone, so the scoreboard and its toggle must go with it.
+    // Both lobby-close paths only dropped the "is-open" class, which left the
+    // toggle button floating over the main menu after leaving a match.
+    syncMultiplayerScoreboardVisibility();
   }
 
   function removePluginListenerHandles(handles) {
@@ -102555,7 +102959,7 @@
     if (multiplayerDeathPanel) multiplayerDeathPanel.classList.remove("is-respawning");
     if (ammoHud) ammoHud.hidden = false;
     resetRun("playing");
-    state.ammoCrateTimer = rand(7, 11);
+    state.ammoCrateTimer = rand(7, 11) * AMMO_CRATE_SPAWN_RATE_SCALE;
     state.waveSuspended = false;
     initializeMultiplayerPlayerEntities();
     multiplayerState.phase = "match";
@@ -119411,6 +119815,7 @@
     var overlays = [
       multiplayerLobby,
       onlineMultiplayerLobby,
+      onlineUnavailablePanel,
       multiplayerDeathPanel,
       multiplayerResultPanel,
       gameGuide,
@@ -128673,7 +129078,12 @@
           pendingUpgradeLevels: (player.pendingUpgradeLevels || []).length,
           hasUpgradeOffer: !!player.currentUpgradeOffer,
           grudgeAttackerId: player.lastAttackerPlayerId || "",
+          targetKind: runtime.targetKind || "",
           targetPlayerId: runtime.targetPlayerId || "",
+          churchGoal: (function () {
+            var church = player.entity ? findOnlineBackfillBellChurchGoal(player.entity, player) : null;
+            return church ? church.index : -1;
+          })(),
           moveX: Number((runtime.moveX || 0).toFixed(3)),
           moveZ: Number((runtime.moveZ || 0).toFixed(3)),
           lastFireActionSequence: player.lastFireActionSequence || 0,
@@ -128682,6 +129092,25 @@
           simTime: Number(state.time.toFixed(3)),
         };
       }).filter(Boolean);
+    },
+    // Every boss target a bot is currently aiming at, with the authority's own
+    // verdict on whether that target can actually take damage right now.
+    getBackfillBossTargetAudit: function () {
+      var audit = [];
+      multiplayerState.playerOrder.forEach(function (id) {
+        var player = getMultiplayerPlayer(id);
+        if (!player || !player.backfillBot || !player.entity) return;
+        var runtime = player.backfillRuntime;
+        if (!runtime || runtime.targetKind !== "boss") return;
+        var targets = collectOnlineBackfillBossTargets(player.entity);
+        var target = targets.length ? targets[0] : null;
+        audit.push({
+          id: player.id,
+          hasTarget: !!target,
+          damageable: !target || canOnlineBackfillBotDamageBossTarget(target, player.entity),
+        });
+      });
+      return audit;
     },
     setOilBaronAllyForTest: function (playerId, allied) {
       var player = getMultiplayerPlayer(playerId);

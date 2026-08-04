@@ -1330,6 +1330,27 @@
       </section>
 
       <section
+        id="online-unavailable-panel"
+        class="panel multiplayer-lobby online-unavailable-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="online-unavailable-title"
+        aria-describedby="online-unavailable-body"
+        aria-hidden="true"
+      >
+        <header class="multiplayer-lobby__header">
+          <div>
+            <span class="multiplayer-eyebrow" data-i18n="multiplayer.online.eyebrow">Dedicated Online Play</span>
+            <h2 id="online-unavailable-title" data-i18n="multiplayer.online.unavailable.title">Multiplayer is unavailable</h2>
+            <p id="online-unavailable-body" data-i18n="multiplayer.online.unavailable.body">The matchmaking server cannot be reached right now. Try again later — solo hunts are still available.</p>
+          </div>
+        </header>
+        <footer class="multiplayer-lobby__footer online-unavailable-panel__footer">
+          <button id="online-unavailable-ok-btn" class="multiplayer-button--secondary" type="button" data-i18n="multiplayer.online.unavailable.ok">OK</button>
+        </footer>
+      </section>
+
+      <section
         id="multiplayer-death-panel"
         class="panel multiplayer-death-panel"
         role="dialog"
