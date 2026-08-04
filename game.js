@@ -99045,16 +99045,30 @@
   // put the whole party in a queue behind one box, and only whoever arrives
   // first gets the ammo anyway — the rest of them go and find their own.
   var ONLINE_BOT_CRATE_CLAIM_LIMIT = 2;
+  // How much nearer another crate has to be before a bot abandons the one it
+  // called dibs on. Hysteresis, not indecision: without a margin it flips
+  // between two equidistant boxes and reaches neither.
+  var ONLINE_BOT_CRATE_SWITCH_RATIO = 0.7;
+  // Crates drop anywhere on a map hundreds of units across, so waiting until
+  // two magazines to think about ammo means a walk that outlasts the rounds:
+  // measured, a bot claimed a crate 371 units away with eleven rounds left, ran
+  // dry a third of the way there and killed nothing for the next thirty
+  // seconds. A crate close enough to be worth a detour is therefore taken
+  // whenever the bot is meaningfully short, not only when it is nearly empty.
+  var ONLINE_BOT_CRATE_TOPUP_MAGAZINES = 4;
+  var ONLINE_BOT_CRATE_TOPUP_RANGE = 30;
   // An empty gun with no crate to walk to is not a reason to stand still. The
   // bot picks somewhere else on the map and goes there, the way a player out of
   // ammo would go looking rather than wait to be resupplied where they ran dry.
-  var ONLINE_BOT_ROAM_MIN_DISTANCE = 30;
-  var ONLINE_BOT_ROAM_MAX_DISTANCE = 75;
+  var ONLINE_BOT_ROAM_MIN_DISTANCE = 24;
+  var ONLINE_BOT_ROAM_MAX_DISTANCE = 55;
   var ONLINE_BOT_ROAM_ARRIVE_RADIUS = 4;
   var ONLINE_BOT_ROAM_TIMEOUT = 14;
-  // Enough to outweigh the wander noise and the pull back toward the human, but
-  // well under a crate: a real destination beats an invented one.
-  var ONLINE_BOT_ROAM_WEIGHT = 12;
+  // A search has to be as committed as a march to a church. At a gentler weight
+  // the keep-away from zombies cancelled it out and the bot drifted back and
+  // forth over the same ten units — measured at under six units of net travel
+  // in five seconds, which reads exactly like the standing still it replaced.
+  var ONLINE_BOT_ROAM_WEIGHT = 26;
 
   // One reading of a bot's ammo, shared by targeting, steering and firing so
   // they cannot disagree about whether the gun is worth pointing at anything.
@@ -100126,6 +100140,39 @@
       getOnlineBackfillSlothTelegraphPenalty(atX, atZ);
   }
 
+  // Something is landing on this spot. Escaping it is not a term in a steering
+  // score to be weighed against a capture or a crate — it is a sprint, decided
+  // in one direction and committed to, exactly like the reactive dodge. The
+  // probe reaches past the widest telegraph so the direction it picks actually
+  // clears the zone rather than merely improving the odds inside it.
+  function findOnlineBackfillHazardEscape(entity) {
+    var here = getOnlineBackfillBossHazardPenalty(entity.x, entity.z);
+    if (here <= 0) return null;
+    var bestX = 0;
+    var bestZ = 0;
+    var bestPenalty = here;
+    for (var i = 0; i < 12; i++) {
+      var angle = (Math.PI * 2 * i) / 12;
+      var moveX = Math.sin(angle);
+      var moveZ = Math.cos(angle);
+      var probeX = entity.x + moveX * 6.5;
+      var probeZ = entity.z + moveZ * 6.5;
+      if (
+        probeX < -ARENA_W / 2 + entity.radius + 0.4 || probeX > ARENA_W / 2 - entity.radius - 0.4 ||
+        probeZ < -ARENA_D / 2 + entity.radius + 0.4 || probeZ > ARENA_D / 2 - entity.radius - 0.4
+      ) continue;
+      if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
+      var penalty = getOnlineBackfillBossHazardPenalty(probeX, probeZ);
+      if (penalty < bestPenalty) {
+        bestPenalty = penalty;
+        bestX = moveX;
+        bestZ = moveZ;
+      }
+    }
+    if (!bestX && !bestZ) return null;
+    return { x: bestX, z: bestZ };
+  }
+
   function findOnlineBackfillBaronTraitor(player, entity) {
     // A player who took the Baron's gold is everyone's enemy while the
     // encounter lasts — the boss truce does not protect a traitor the bot can
@@ -100172,6 +100219,23 @@
     if (!getMultiplayerPlayer(attackerId) || !carries) return;
     victim.backfillVendettaPlayerId = String(attackerId);
     victim.backfillVendettaLife = Math.max(0, victim.deaths || 0);
+  }
+
+  function isOnlineBackfillEndgame() {
+    var localPlayer = getLocalMultiplayerPlayer();
+    return !!(localPlayer && localPlayer.surrendered);
+  }
+
+  // Who a bot will drop the horde to go and settle a score with: the human, and
+  // only the human. With friendly fire live outside boss fights the bots clip
+  // each other constantly, and answering every stray round by chasing the
+  // shooter for nine seconds took two of them out of the wave at a time —
+  // measured over a minute, it cost the party most of its kill rate. Feuding
+  // once the player is out for good is decided separately: that IS the endgame.
+  function isOnlineBackfillFeudTarget(candidate) {
+    return !!(
+      candidate && candidate.alive && !candidate.surrendered && candidate.entity && !candidate.backfillBot
+    );
   }
 
   function pickOnlineBackfillBotTarget(player, entity, endgame, bossTruce) {
@@ -100232,13 +100296,13 @@
         player.backfillVendettaLife === Math.max(0, player.deaths || 0)
       ) {
         var avenged = getMultiplayerPlayer(player.backfillVendettaPlayerId);
-        if (avenged && avenged.alive && !avenged.surrendered && avenged.entity) pvpTargetId = avenged.id;
+        if (isOnlineBackfillFeudTarget(avenged)) pvpTargetId = avenged.id;
       } else if (
         player.lastAttackerPlayerId &&
         state.time - (player.lastAttackerAt || -Infinity) < ONLINE_BOT_BACKFILL_GRUDGE_TIME
       ) {
         var attacker = getMultiplayerPlayer(player.lastAttackerPlayerId);
-        if (attacker && attacker.alive && !attacker.surrendered && attacker.entity) pvpTargetId = attacker.id;
+        if (isOnlineBackfillFeudTarget(attacker)) pvpTargetId = attacker.id;
       }
       if (pvpTargetId) {
         runtime.targetPlayerId = pvpTargetId;
@@ -100286,9 +100350,35 @@
     return true;
   }
 
-  function pickOnlineBackfillBotCrate(player, entity, runtime) {
+  // An empty gun outranks a half-full one. When every crate is spoken for, a dry
+  // bot takes the slot of a claimant that still has rounds to fight with; that
+  // bot re-plans within a fraction of a second and goes back to shooting.
+  function stealOnlineBackfillCrateSlot(crate, player) {
+    for (var index = 0; index < multiplayerState.playerOrder.length; index++) {
+      var otherId = multiplayerState.playerOrder[index];
+      if (otherId === player.id) continue;
+      var other = getMultiplayerPlayer(otherId);
+      if (!other || !other.backfillBot || !other.alive || other.surrendered) continue;
+      var otherRuntime = other.backfillRuntime;
+      if (!otherRuntime || otherRuntime.crateGoal !== crate) continue;
+      if (getOnlineBackfillBotAmmoStatus(other).dry) continue;
+      otherRuntime.crateGoal = null;
+      return true;
+    }
+    return false;
+  }
+
+  function pickOnlineBackfillBotCrate(player, entity, runtime, botAmmo) {
     var crates = Array.isArray(state.ammoCrates) ? state.ammoCrates : [];
     var claimed = runtime.crateGoal;
+    // Nearly empty: any crate on the map is worth the walk. Merely short: only
+    // one close enough to grab without leaving the fight.
+    var reach = botAmmo.low
+      ? Infinity
+      : botAmmo.total < botAmmo.magazineSize * ONLINE_BOT_CRATE_TOPUP_MAGAZINES
+        ? ONLINE_BOT_CRATE_TOPUP_RANGE
+        : 0;
+    if (reach <= 0) return null;
     // Ammo is worth a detour, never a death: a crate sitting inside a live boss
     // telegraph is not a destination until the attack has resolved.
     function usable(crate) {
@@ -100297,21 +100387,39 @@
         !isOnlineBackfillPointUnderBossAttack(crate.x, crate.z) &&
         isOnlineBackfillCrateOpen(crate, player);
     }
-    // Stay with the crate already claimed while it holds up. Re-deciding from
-    // scratch every plan makes a bot oscillate between two near-equal boxes and
-    // arrive at neither, and it would hand its slot to somebody else mid-walk.
-    if (usable(claimed)) return claimed;
+    var claimedDistance = usable(claimed)
+      ? Math.hypot(claimed.x - entity.x, claimed.z - entity.z)
+      : Infinity;
     var best = null;
     var bestDistance = Infinity;
+    var fallback = null;
+    var fallbackDistance = Infinity;
     for (var crateIndex = 0; crateIndex < crates.length; crateIndex++) {
       var crate = crates[crateIndex];
-      if (!usable(crate)) continue;
+      if (!crate || isOnlineBackfillPointUnderBossAttack(crate.x, crate.z)) continue;
       var crateDistance = Math.hypot(crate.x - entity.x, crate.z - entity.z);
-      if (crateDistance < bestDistance) {
-        bestDistance = crateDistance;
-        best = crate;
+      if (crateDistance > reach) continue;
+      if (usable(crate)) {
+        if (crateDistance < bestDistance) {
+          bestDistance = crateDistance;
+          best = crate;
+        }
+      } else if (botAmmo.dry && crateDistance < fallbackDistance) {
+        fallbackDistance = crateDistance;
+        fallback = crate;
       }
     }
+    // Stay with the crate already claimed unless something is MEANINGFULLY
+    // nearer. Re-deciding from scratch every plan makes a bot oscillate between
+    // two near-equal boxes and reach neither; never re-deciding is worse — this
+    // arena is hundreds of units across and crates keep dropping at random, so
+    // a bot that called dibs early walked past three closer ones on its way to
+    // a box on the far side (measured: claim 348 u away, nearest 215 u, thirty
+    // seconds of it).
+    if (claimedDistance < Infinity && (!best || bestDistance > claimedDistance * ONLINE_BOT_CRATE_SWITCH_RATIO)) {
+      return claimed;
+    }
+    if (!best && fallback && stealOnlineBackfillCrateSlot(fallback, player)) return fallback;
     return best;
   }
 
@@ -100363,6 +100471,20 @@
     if (runtime.forcedTimer > 0) {
       runtime.moveX = runtime.forcedX;
       runtime.moveZ = runtime.forcedZ;
+      return;
+    }
+    // Standing where a bell is about to land, or an oil star, or the Land
+    // Eater's burrow. Get out first and argue about the church afterwards: this
+    // used to be one weight among many, which is how bots died in a churchyard
+    // to something they had every chance to walk away from.
+    var hazardEscape = findOnlineBackfillHazardEscape(entity);
+    if (hazardEscape) {
+      runtime.forcedX = hazardEscape.x;
+      runtime.forcedZ = hazardEscape.z;
+      runtime.forcedTimer = 0.3;
+      runtime.moveX = hazardEscape.x;
+      runtime.moveZ = hazardEscape.z;
+      runtime.replanTimer = 0;
       return;
     }
     // Stuck detection is measured against the distance this frame SHOULD have
@@ -100483,12 +100605,35 @@
     // bot circles enemies in silence forever and the wave stalls.
     var lowAmmo = botAmmo.low;
     var outOfAmmo = botAmmo.dry;
-    // The claim is released as soon as the bot stops needing ammo, or the slot
-    // it is holding blocks a crate it is no longer walking to.
-    var crateGoal = lowAmmo ? pickOnlineBackfillBotCrate(player, entity, runtime) : null;
+    // Priorities, in order, and this order is the whole answer to "why is that
+    // bot standing there doing nothing":
+    //
+    //   1. Ammo. A church capture takes the better part of a minute, and a bot
+    //      that spends it in the yard with an empty gun is neither shooting the
+    //      horde the capture attracts nor able to hurt the boss when the shield
+    //      drops. It is just a target. Refill first, come back after.
+    //   2. Getting out of whatever is about to land on it.
+    //   3. The church.
+    //   4. The fight, which continues THROUGH the capture rather than after it.
+    //
+    // The claim is released as soon as the bot stops needing ammo, so the slot
+    // it was holding stops blocking a crate it is no longer walking to.
+    var crateGoal = pickOnlineBackfillBotCrate(player, entity, runtime, botAmmo);
     runtime.crateGoal = crateGoal;
-
-    var churchGoal = findOnlineBackfillBellChurchGoal(entity, player);
+    // A trip the bot NEEDS to make, as opposed to a crate it is picking up in
+    // passing. Only the former overrides the rest of its job.
+    var resupplyRun = !!crateGoal && lowAmmo;
+    // Dry with every crate spoken for: go and find one rather than stand in a
+    // churchyard waiting to be resupplied where it ran out.
+    var roamGoal = outOfAmmo && !crateGoal ? ensureOnlineBackfillRoamGoal(entity, runtime) : null;
+    if (!roamGoal && runtime.roamGoal) runtime.roamUntil = 0;
+    // The church survives a hazard: escaping one is a committed sprint decided
+    // above, so it needs no help from the steering weights, and cancelling the
+    // capture every time a bell fell would stall the shield break for the whole
+    // fight.
+    var churchGoal = resupplyRun || roamGoal
+      ? null
+      : findOnlineBackfillBellChurchGoal(entity, player);
     var churchDistanceNow = churchGoal
       ? Math.hypot((churchGoal.x || 0) - entity.x, (churchGoal.z || 0) - entity.z)
       : 0;
@@ -100508,7 +100653,11 @@
     // Oil Baron behind his derricks); everything else walks to what it shoots.
     var approachRef = (target && (target.approach || target.ref)) || null;
     var orbitActive = false;
-    if (approachRef && !outOfAmmo && !churchGoal) {
+    // Only the RUN to a church switches combat positioning off. Standing in the
+    // yard it does not: the capture is a radius, not a spot, so there is room to
+    // hold a firing distance and orbit inside it, and a bot that stops fighting
+    // for the length of a capture stops scoring for the length of a capture.
+    if (approachRef && !outOfAmmo && !churchTravel) {
       var toTargetX = (approachRef.x || 0) - entity.x;
       var toTargetZ = (approachRef.z || 0) - entity.z;
       var toTargetLength = Math.hypot(toTargetX, toTargetZ);
@@ -100536,20 +100685,15 @@
       enemyAvoidWeight = 5;
       enemyAvoidRadius = 4;
       crateWeight = 12;
+    } else if (roamGoal) {
+      // Searching with an empty gun: the horde is a reason to keep walking, not
+      // a reason to circle. Loosened rather than switched off — there is no
+      // crate in sight to be worth running straight through them for.
+      enemyAvoidWeight = 5;
+      enemyAvoidRadius = 4;
     }
 
-    // Out of ammo with nowhere to get any — either the map has no crate up or
-    // the ones it has are already spoken for. Standing on the spot waiting for
-    // one to appear is the one thing a player would never do, so the bot goes
-    // looking. Any real goal outranks this, and it is dropped the moment one
-    // turns up.
-    var roamGoal = null;
-    if (outOfAmmo && !crateGoal && !churchGoal) {
-      roamGoal = ensureOnlineBackfillRoamGoal(entity, runtime);
-    } else if (runtime.roamGoal) {
-      runtime.roamUntil = 0;
-    }
-    runtime.progressGoal = churchGoal || crateGoal || roamGoal || approachRef || null;
+    runtime.progressGoal = crateGoal || roamGoal || churchGoal || approachRef || null;
 
     var bestScore = -Infinity;
     var bestX = 0;
@@ -100573,7 +100717,7 @@
         if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
       }
       var score = nextBackfillBotRandom(runtime) * 6;
-      if (approachRef && !outOfAmmo && !churchGoal) {
+      if (approachRef && !outOfAmmo && !churchTravel) {
         var targetDistance = Math.hypot((approachRef.x || 0) - probeX, (approachRef.z || 0) - probeZ);
         score -= Math.abs(targetDistance - idealRange) * 6;
       }
@@ -100616,11 +100760,15 @@
     }
     if (
       !target && !crateGoal && !churchGoal && !roamGoal && !endgame &&
-      !isOnlineBackfillPointUnderBossAttack(entity.x, entity.z) &&
+      getOnlineBackfillBossHazardPenalty(entity.x, entity.z) <= 0 &&
+      getOnlineBackfillHazardPenalty(entity.x, entity.z) <= 0 &&
       nextBackfillBotRandom(runtime) < 0.22
     ) {
       // Players do just stand still sometimes — but not while they are on their
-      // way to an objective, and never inside a boss attack.
+      // way to an objective, and never with something landing on them. This
+      // used to ask isOnlineBackfillPointUnderBossAttack, which only knows the
+      // Archbishop's telegraphs and the Land Eater's doomed cells: a bot with an
+      // empty gun could and did choose to stand still under a falling bell.
       runtime.moveX = 0;
       runtime.moveZ = 0;
       runtime.replanTimer = 0.55 + nextBackfillBotRandom(runtime) * 0.9;
@@ -100730,13 +100878,18 @@
     var trueAngle = Math.atan2((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
     if (Math.abs(wrapOnlineBackfillAngle(trueAngle - runtime.aimAngle)) > 0.12) return true;
     if (findBlockingObstacle(entity.x, entity.z, ref.x || 0, ref.z || 0, 0.2, null)) return true;
-    // Friendly fire only counts as friendly during a boss encounter. That is
-    // the one stretch where the other players are allies — damage between them
-    // is muted and the boss is the shared problem — so a shot that would clip
-    // one is worth holding. On an ordinary wave it is a free-for-all at full
-    // damage: hitting somebody is the point, not an accident, and a bot that
-    // politely refused would just be an easier target.
-    if (!isBossEncounterActiveForPvp()) return false;
+    // During a boss encounter everyone is an ally: damage between players is
+    // muted, the boss is the shared problem, and a shot that would clip anybody
+    // is worth holding. On an ordinary wave the human is fair game — that is a
+    // free-for-all at full damage, where hitting somebody is the point rather
+    // than an accident, and a bot that politely refused would just be an easier
+    // target. The other BOTS stay off limits even then: they cannot win
+    // anything off each other, every stray round is a round not spent on the
+    // horde, and the return fire it provoked used to pull the whole party off
+    // the wave. Once the player is out for good that flips — the endgame is the
+    // bots fighting each other, so nothing is held back.
+    var bossFight = isBossEncounterActiveForPvp();
+    if (!bossFight && isOnlineBackfillEndgame()) return false;
     // A splash weapon is judged twice: down the lane like any bullet, and again
     // around the point the shell will actually burst, because during a boss
     // fight everybody is crowded onto the same target.
@@ -100751,6 +100904,8 @@
       if (blocked || otherId === player.id || otherId === target.playerId) return;
       var other = getMultiplayerPlayer(otherId);
       if (!other || !other.alive || other.surrendered || !other.entity) return;
+      // Outside a boss fight the courtesy is between bots only.
+      if (!bossFight && !other.backfillBot) return;
       // Whoever took the Baron's gold is not an ally: they fight for the boss,
       // they take full damage, and nobody holds a shot for them.
       if (other.oilBaronAlly) return;

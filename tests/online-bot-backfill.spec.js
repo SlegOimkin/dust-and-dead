@@ -608,13 +608,16 @@ test("an empty gun with no crate to walk to sends the bot looking", async ({ pag
   expect(searching.roaming).toBe(true);
 
   // Net displacement, not path length: a bot jittering on the spot covers
-  // ground without going anywhere, and that is the thing being fixed.
+  // ground without going anywhere, and that is the thing being fixed. The bar
+  // is well under the ~20 units it walks in five seconds — a roam goal can be
+  // reached and replaced mid-window, and the pull back toward the human bends
+  // the line — but far above the two or three a bot managed while idling.
   await advanceMs(page, 5000);
   const travelled = await page.evaluate((args) => {
     const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
     return Math.hypot(bot.x - args.start.x, bot.z - args.start.z);
   }, { botId: bots[0].id, start });
-  expect(travelled).toBeGreaterThan(15);
+  expect(travelled).toBeGreaterThan(10);
 });
 
 test("no more than two bots walk to the same ammo crate", async ({ page }) => {
@@ -645,6 +648,75 @@ test("no more than two bots walk to the same ammo crate", async ({ page }) => {
   const leftOut = claims.filter((bot) => bot.crateGoalIndex < 0);
   expect(leftOut.length).toBe(1);
   expect(leftOut[0].roaming).toBe(true);
+});
+
+test("a bot shot by another bot does not drop the horde to answer it", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+
+  // A zombie to be busy with, far enough out that it is an ordinary target
+  // rather than the point-blank self-defence case.
+  await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    multi.spawnEnemyAt(bot.x + 10, bot.z, "walker", 4000);
+  }, bots[0].id);
+  await advanceMs(page, 500);
+
+  // Clipped by another bot. With friendly fire live outside boss fights this
+  // happens constantly, and answering it used to send both of them across the
+  // map for nine seconds at a time.
+  await page.evaluate((args) => window.__dustMultiplayerTest.damagePlayer(args.victimId, 15, args.shooterId),
+    { victimId: bots[0].id, shooterId: bots[1].id });
+  await advanceMs(page, 1000);
+  const shrugged = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(shrugged.targetPlayerId).toBe("");
+  expect(shrugged.targetKind).toBe("enemy");
+
+  // The human is a different matter: that is a real opponent, and it does
+  // answer. Without this the rule would just be "bots never fight back".
+  await page.evaluate((args) => window.__dustMultiplayerTest.damagePlayer(args.victimId, 15, args.shooterId),
+    { victimId: bots[0].id, shooterId: localId });
+  await advanceMs(page, 1000);
+  const answered = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(answered.targetPlayerId).toBe(localId);
+  expect(answered.targetKind).toBe("player");
+});
+
+test("an empty gun outranks a church capture", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.clearEnemies();
+    window.__dustAndDeadTest.clearAmmoCrates();
+    // The Bell Ringer opens shielded, so every bot is assigned a church and
+    // walks off to hold it — the run this test has to outrank.
+    window.__dustAndDeadTest.forceWaveState(10, 0, 0, "bellRinger");
+  });
+  await advanceMs(page, 1500);
+  const called = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(called.churchGoal).toBeGreaterThanOrEqual(0);
+
+  // Empty gun, crate within reach. A bot that spends the capture standing in
+  // the yard with nothing to shoot is neither holding the church nor able to
+  // hurt the boss when the shield drops, so the crate wins.
+  await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    multi.setProgression(botId, { ammo: { revolver: 0 }, ammoReserve: { revolver: 0 } });
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    window.__dustAndDeadTest.spawnAmmoCrateAt(bot.x + 14, bot.z);
+  }, bots[0].id);
+  await advanceMs(page, 5000);
+  const fed = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(fed.ammoTotal).toBeGreaterThan(0);
 });
 
 test("bots restock at two magazines, not at the last round", async ({ page }) => {
