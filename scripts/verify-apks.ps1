@@ -17,13 +17,13 @@ if ([string]::IsNullOrWhiteSpace($PlaytestApkPath)) {
   -ApkPath $StandardApkPath `
   -ExpectedBuildChannel "standard" `
   -ExpectedAppLabel "Dust and Dead" `
-  -ExpectedVersionCode "50" `
-  -ExpectedVersionName "1.49"
+  -ExpectedVersionCode "51" `
+  -ExpectedVersionName "1.50"
 
 & (Join-Path $PSScriptRoot "verify-apk.ps1") `
   -ApkPath $PlaytestApkPath `
   -ExpectedBuildChannel "test-all" `
   -ExpectedAppLabel "Dust and Dead Test" `
-  -ExpectedVersionCode "50" `
-  -ExpectedVersionName "1.49-test" `
+  -ExpectedVersionCode "51" `
+  -ExpectedVersionName "1.50-test" `
   -CompatibleWithApkPath $StandardApkPath
