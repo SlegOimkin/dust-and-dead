@@ -75616,6 +75616,7 @@
   function update(dt, skipFrameWork) {
     if (!skipFrameWork) updateRenderFrameMaintenance(dt);
     updateOnlineMultiplayerCountdown(false);
+    updateOnlineBotBackfill(dt);
     flushPendingDoppelgangerWorldCleanup();
     if (state.paused) {
       if (state.enemyAnimationPreview) updateEnemyBestiaryAnimationPreview(dt);
@@ -98712,6 +98713,1215 @@
     updateModeClass();
   }
 
+  // ---------------------------------------------------------------------------
+  // Online bot backfill.
+  // When a public-queue player has waited alone in a server room for
+  // ONLINE_BOT_BACKFILL_DELAY_MS, the client silently leaves the real queue and
+  // an in-page emulation of the matchmaking server takes over the lobby: bot
+  // players join one by one, ready up, and the match starts as a LOCAL
+  // host-authoritative match that follows every online rule (points, paid
+  // revives, drawer drafts, overlay-only pause, spectator, standings). The
+  // room snapshots, timings and wire shapes mirror server/room.js so the lobby
+  // is indistinguishable from a live one; a search code always disables the
+  // feature because coded rooms are for friends who are actually coming.
+  // ---------------------------------------------------------------------------
+
+  var ONLINE_BOT_BACKFILL_DELAY_MS = 12000;
+  var ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS = 5000;
+  var ONLINE_BOT_BACKFILL_JOIN_JITTER_MS = 1200;
+  var ONLINE_BOT_BACKFILL_FIRST_JOIN_MS = 350;
+  var ONLINE_BOT_BACKFILL_READY_MIN_MS = 800;
+  var ONLINE_BOT_BACKFILL_READY_MAX_MS = 2300;
+  var ONLINE_BOT_BACKFILL_PREPARE_MS = 950;
+  var ONLINE_BOT_BACKFILL_AUTO_START_MS = 40000;
+  var ONLINE_BOT_BACKFILL_POST_MATCH_RETURN_MS = 90000;
+  var ONLINE_BOT_BACKFILL_GRUDGE_TIME = 9;
+  var ONLINE_BOT_NAME_POOL = [
+    "DustyPete", "Maverick", "El_Paso_Kid", "SilverSpur", "Hondo",
+    "GraveDigger77", "Cactus Jack", "LoneStar", "Buckshot_Billy", "RattlerJake",
+    "MissClementine", "Deadeye_Dan", "Sundown", "IronMule", "CopperCanyon",
+    "WhiskeyJim", "TumbleWade", "SixGunSam", "PrairieWolf", "OldYeller42",
+    "BountyKing", "QuickdrawQuinn", "MesaMarch", "RustyNail", "HollowCreek",
+    "Kolya_Hunter", "Stepan99", "Volchara", "SibirskiyVolk", "Ataman",
+    "NightMarshal", "GoldToothGus", "CoyoteLuke", "SageBrush", "TinStarTom",
+    "BorislavT", "RedRiverRex", "PalladinoJoe", "SmokeStack", "VultureBait",
+    "CheyenneRose", "DocHolliday_x", "MuleSkinner", "FortyNiner",
+  ];
+  var ONLINE_BOT_COMMON_COWBOYS = [
+    "trailwornDrifter", "trailwornDrifter", "trailwornDrifter",
+    "ashenProspector", "mesaRanger", "crimsonLawman", "moonlitOutlaw",
+    "stormPoncho", "trailMaster", "smokingDuelist",
+  ];
+  var ONLINE_BOT_COMMON_HATS = [
+    "weatheredCattleman", "weatheredCattleman", "weatheredCattleman",
+    "gamblersBlack", "prairieWhite", "marshalStar", "undertaker", "railmanCap",
+  ];
+  var ONLINE_BOT_WEAPON_IDEAL_RANGE = { revolver: 9, rifle: 14.5, launcher: 11.5, coachGun: 5.2 };
+  var ONLINE_BOT_WEAPON_MAX_RANGE = { revolver: 22, rifle: 30, launcher: 26, coachGun: 10 };
+  var ONLINE_BOT_STEER_DIRECTIONS = 10;
+  var ONLINE_BOT_TRAITOR_HUNT_RANGE = 24;
+
+  var onlineBotBackfillState = {
+    aloneMs: 0,
+    active: false,
+    matchBots: false,
+    room: null,
+    bots: [],
+    pendingJoins: [],
+    joinTimerMs: 0,
+    prepareTimerMs: 0,
+    startPending: false,
+    postMatchReturnMs: 0,
+    rngState: 1,
+    testConfig: null,
+    standardUpgradeIdSet: null,
+  };
+
+  function isOnlineBotBackfillEnabled() {
+    if (dedicatedServerHeadless) return false;
+    if (window.__dustOnlineBotBackfillDisabled) return false;
+    var config = window.DustAndDeadOnlineConfig || {};
+    return config.botBackfill !== false;
+  }
+
+  function getOnlineBotBackfillSetting(key, fallback) {
+    var testConfig = onlineBotBackfillState.testConfig;
+    if (testConfig && Number.isFinite(Number(testConfig[key]))) return Number(testConfig[key]);
+    var config = window.DustAndDeadOnlineConfig || {};
+    if (key === "delayMs" && Number.isFinite(Number(config.botBackfillDelayMs))) {
+      return Number(config.botBackfillDelayMs);
+    }
+    return fallback;
+  }
+
+  function nextOnlineBackfillRandom() {
+    onlineBotBackfillState.rngState = (onlineBotBackfillState.rngState * 1664525 + 1013904223) >>> 0;
+    return onlineBotBackfillState.rngState / 4294967296;
+  }
+
+  function nextBackfillBotRandom(runtime) {
+    runtime.rngState = (runtime.rngState * 1664525 + 1013904223) >>> 0;
+    return runtime.rngState / 4294967296;
+  }
+
+  function createOnlineBackfillBotId() {
+    var id = "player_";
+    for (var i = 0; i < 10; i++) id += Math.floor(nextOnlineBackfillRandom() * 36).toString(36);
+    return id;
+  }
+
+  function getOnlineBackfillBranchMapForClass(classId) {
+    if (classId === "gunslinger") return REVOLVER_UPGRADES;
+    if (classId === "ranger") return RIFLE_UPGRADES;
+    if (classId === "demolitionist") return LAUNCHER_UPGRADES;
+    if (classId === "marshal") return MARSHAL_UPGRADES;
+    return null;
+  }
+
+  function getOnlineBackfillPreferredCards(classId) {
+    if (classId === "ranger") return ["steadyHand", "longReach", "quickReload", "swiftBoots", "grit"];
+    if (classId === "demolitionist") return ["quickReload", "grit", "swiftBoots", "desertMender", "scavengerLuck"];
+    return ["steadyHand", "hairTrigger", "quickReload", "grit", "swiftBoots"];
+  }
+
+  function createOnlineBackfillBotUnlocks(classId, branchId) {
+    var classes = [classId];
+    Object.keys(PLAYER_CLASSES).forEach(function (id) {
+      if (id !== classId && nextOnlineBackfillRandom() < 0.4) classes.push(id);
+    });
+    var branches = [branchId];
+    var branchMap = getOnlineBackfillBranchMapForClass(classId);
+    Object.keys(branchMap || {}).forEach(function (id) {
+      if (id !== branchId && nextOnlineBackfillRandom() < 0.3) branches.push(id);
+    });
+    var lockedCards = careerUnlockCatalog && Array.isArray(careerUnlockCatalog.cards)
+      ? careerUnlockCatalog.cards.filter(function (entry) { return entry && !entry.core; }).map(function (entry) { return entry.id; })
+      : [];
+    var purchased = [];
+    var cardCount = Math.min(lockedCards.length, 4 + Math.floor(nextOnlineBackfillRandom() * 9));
+    while (purchased.length < cardCount && lockedCards.length) {
+      purchased.push(lockedCards.splice(Math.floor(nextOnlineBackfillRandom() * lockedCards.length), 1)[0]);
+    }
+    return { version: 1, classes: classes, branches: branches, purchasedCards: purchased, markedCards: [] };
+  }
+
+  function createOnlineBackfillBotPersona(usedNames) {
+    var name = "";
+    for (var attempt = 0; attempt < 40 && !name; attempt++) {
+      var candidate = ONLINE_BOT_NAME_POOL[Math.floor(nextOnlineBackfillRandom() * ONLINE_BOT_NAME_POOL.length)];
+      if (!usedNames[candidate]) name = candidate;
+    }
+    if (!name) name = "Cowboy" + Math.floor(nextOnlineBackfillRandom() * 900 + 100);
+    usedNames[name] = true;
+    var classIds = Object.keys(PLAYER_CLASSES);
+    var classId = classIds[Math.floor(nextOnlineBackfillRandom() * classIds.length)] || "gunslinger";
+    var branchMap = getOnlineBackfillBranchMapForClass(classId) || {};
+    var branchIds = Object.keys(branchMap);
+    var branchId = branchIds[Math.floor(nextOnlineBackfillRandom() * branchIds.length)] || "";
+    return {
+      id: createOnlineBackfillBotId(),
+      name: normalizeMultiplayerName(name),
+      classId: classId,
+      branchId: branchId,
+      preferredCards: getOnlineBackfillPreferredCards(classId),
+      cosmetics: serializeCowboyCosmetics({
+        cowboyId: ONLINE_BOT_COMMON_COWBOYS[Math.floor(nextOnlineBackfillRandom() * ONLINE_BOT_COMMON_COWBOYS.length)],
+        hatId: ONLINE_BOT_COMMON_HATS[Math.floor(nextOnlineBackfillRandom() * ONLINE_BOT_COMMON_HATS.length)],
+      }),
+      unlocks: createOnlineBackfillBotUnlocks(classId, branchId),
+      skill: {
+        reactionTime: 0.3 + nextOnlineBackfillRandom() * 0.08,
+        aimJitter: 0.035 + nextOnlineBackfillRandom() * 0.025,
+        dodgeThreshold: 105 + nextOnlineBackfillRandom() * 30,
+        dodgeChance: 0.5 + nextOnlineBackfillRandom() * 0.25,
+        dodgeCooldown: 1.2 + nextOnlineBackfillRandom() * 0.7,
+        triggerHesitation: 0.1 + nextOnlineBackfillRandom() * 0.12,
+      },
+      readyAtMs: null,
+    };
+  }
+
+  function createOnlineBackfillSocket() {
+    var socket = {
+      readyState: 1,
+      __backfill: true,
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+      send: function (raw) {
+        var message = null;
+        try { message = JSON.parse(String(raw)); } catch (error) {}
+        if (message) handleOnlineBackfillClientMessage(message);
+      },
+      close: function () { socket.readyState = 3; },
+    };
+    return socket;
+  }
+
+  function emitOnlineBackfillRoom() {
+    var room = onlineBotBackfillState.room;
+    if (!room || !onlineBotBackfillState.active) return;
+    room.revision += 1;
+    var players = room.players.map(function (entry) {
+      return {
+        id: entry.id,
+        name: entry.name,
+        ready: !!entry.ready,
+        connected: entry.connected !== false,
+        autoReady: !!entry.autoReady,
+        cosmetics: serializeCowboyCosmetics(entry.cosmetics),
+      };
+    });
+    handleOnlineMultiplayerMessage({
+      type: "room.state",
+      room: {
+        id: room.id,
+        revision: room.revision,
+        phase: room.phase,
+        searchCode: "",
+        players: players,
+        playerCount: players.length,
+        readyCount: players.filter(function (entry) { return entry.ready; }).length,
+        minPlayers: room.minPlayers,
+        maxPlayers: room.maxPlayers,
+        autoStartAt: room.autoStartAt,
+        serverNow: Date.now(),
+        startReason: room.startReason,
+        matchId: room.matchId,
+        mapSeed: room.mapSeed,
+        error: "",
+      },
+    });
+  }
+
+  function activateOnlineBotBackfill() {
+    var liveRoom = onlineMultiplayerState.room;
+    var playerId = String(onlineMultiplayerState.playerId || "");
+    if (!liveRoom || !playerId || onlineBotBackfillState.active) return false;
+    var players = Array.isArray(liveRoom.players) ? liveRoom.players : [];
+    var localEntry = players.find(function (entry) {
+      return String(entry && entry.id || "") === playerId;
+    });
+    if (!localEntry) return false;
+    onlineBotBackfillState.rngState = ((Date.now() & 0xffffffff) ^ ((MAP_SEED * 2654435761) >>> 0)) >>> 0 || 1;
+    var maxPlayers = clamp(Math.floor(Number(liveRoom.maxPlayers) || MULTIPLAYER_MAX_PLAYERS), 2, MULTIPLAYER_MAX_PLAYERS);
+    var usedNames = Object.create(null);
+    usedNames[normalizeMultiplayerName(localEntry.name)] = true;
+    var bots = [];
+    for (var i = 0; i < maxPlayers - 1; i++) bots.push(createOnlineBackfillBotPersona(usedNames));
+
+    // Leave the real matchmaking quietly: the server frees the room while this
+    // client keeps rendering it. The stored session dies with it so a reload
+    // cannot try to resume a session the server has already forgotten.
+    if (isOnlineSocketOpen()) sendOnlineEnvelope({ type: "queue.leave" });
+    if (onlineMultiplayerState.reconnectTimer) {
+      window.clearTimeout(onlineMultiplayerState.reconnectTimer);
+      onlineMultiplayerState.reconnectTimer = 0;
+    }
+    onlineMultiplayerState.shouldReconnect = false;
+    onlineMultiplayerState.intentionalClose = true;
+    var socket = onlineMultiplayerState.socket;
+    if (socket) {
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      try { socket.close(1000, "client_leave"); } catch (error) {}
+    }
+    // The server session dies with the queue.leave, so the stored resume
+    // credentials must go — but playerId stays: it is how the client
+    // recognises itself in every room snapshot from here on.
+    onlineMultiplayerState.sessionId = "";
+    onlineMultiplayerState.resumeToken = "";
+    try {
+      if (window.sessionStorage) window.sessionStorage.removeItem(ONLINE_SESSION_STORAGE_KEY);
+    } catch (error) {}
+    onlineMultiplayerState.socketGeneration += 1;
+    onlineMultiplayerState.socket = createOnlineBackfillSocket();
+
+    onlineBotBackfillState.room = {
+      id: String(liveRoom.id || createMultiplayerId("room")),
+      revision: Math.max(0, Math.floor(Number(liveRoom.revision) || 0)),
+      phase: "lobby",
+      players: [{
+        id: playerId,
+        name: normalizeMultiplayerName(localEntry.name),
+        ready: !!localEntry.ready,
+        connected: true,
+        autoReady: !!localEntry.autoReady,
+        cosmetics: serializeCowboyCosmetics(localEntry.cosmetics),
+      }],
+      minPlayers: Math.max(2, Math.floor(Number(liveRoom.minPlayers) || 2)),
+      maxPlayers: maxPlayers,
+      autoStartAt: 0,
+      startReason: "",
+      matchId: "",
+      mapSeed: 0,
+    };
+    onlineBotBackfillState.bots = bots;
+    onlineBotBackfillState.pendingJoins = bots.slice();
+    onlineBotBackfillState.joinTimerMs = getOnlineBotBackfillSetting("firstJoinMs", ONLINE_BOT_BACKFILL_FIRST_JOIN_MS);
+    onlineBotBackfillState.startPending = false;
+    onlineBotBackfillState.prepareTimerMs = 0;
+    onlineBotBackfillState.postMatchReturnMs = 0;
+    onlineBotBackfillState.active = true;
+    onlineBotBackfillState.aloneMs = 0;
+    return true;
+  }
+
+  function deactivateOnlineBotBackfill() {
+    onlineBotBackfillState.active = false;
+    onlineBotBackfillState.matchBots = false;
+    onlineBotBackfillState.room = null;
+    onlineBotBackfillState.bots = [];
+    onlineBotBackfillState.pendingJoins = [];
+    onlineBotBackfillState.startPending = false;
+    onlineBotBackfillState.aloneMs = 0;
+    onlineBotBackfillState.postMatchReturnMs = 0;
+    var socket = onlineMultiplayerState.socket;
+    if (socket && socket.__backfill) {
+      socket.readyState = 3;
+      onlineMultiplayerState.socket = null;
+      onlineMultiplayerState.socketGeneration += 1;
+    }
+  }
+
+  function handleOnlineBackfillClientMessage(message) {
+    if (!onlineBotBackfillState.active || !message) return;
+    var room = onlineBotBackfillState.room;
+    if (message.type === "room.ready" && room && room.phase === "lobby") {
+      var localEntry = room.players.find(function (entry) {
+        return String(entry.id) === String(onlineMultiplayerState.playerId || "");
+      });
+      if (!localEntry) return;
+      localEntry.ready = !!message.ready;
+      localEntry.autoReady = false;
+      evaluateOnlineBackfillStart();
+      emitOnlineBackfillRoom();
+      return;
+    }
+    if (message.type === "queue.leave" || message.type === "match.leave") {
+      deactivateOnlineBotBackfill();
+    }
+    // "game" envelopes and everything else vanish exactly like they would on a
+    // socket to a server that no longer routes this session anywhere.
+  }
+
+  function evaluateOnlineBackfillStart() {
+    var room = onlineBotBackfillState.room;
+    if (!room || room.phase !== "lobby") return;
+    var readyCount = room.players.filter(function (entry) { return entry.ready; }).length;
+    // The emulated matchmaker keeps seating queued players, so all-ready only
+    // starts the match once the room has filled to its cap.
+    if (
+      !onlineBotBackfillState.pendingJoins.length &&
+      room.players.length >= room.minPlayers &&
+      readyCount === room.players.length
+    ) {
+      beginOnlineBackfillPrepare("all-ready");
+      return;
+    }
+    var unreadyCount = room.players.length - readyCount;
+    if (room.players.length >= room.minPlayers && unreadyCount === 1) {
+      if (!room.autoStartAt) {
+        room.autoStartAt = Date.now() + getOnlineBotBackfillSetting("autoStartMs", ONLINE_BOT_BACKFILL_AUTO_START_MS);
+      }
+    } else if (room.autoStartAt) {
+      room.autoStartAt = 0;
+    }
+  }
+
+  function beginOnlineBackfillPrepare(reason) {
+    var room = onlineBotBackfillState.room;
+    if (!room || room.phase !== "lobby") return;
+    room.phase = "preparing";
+    room.startReason = reason;
+    room.autoStartAt = 0;
+    onlineBotBackfillState.startPending = true;
+    onlineBotBackfillState.prepareTimerMs = getOnlineBotBackfillSetting("prepareMs", ONLINE_BOT_BACKFILL_PREPARE_MS);
+    emitOnlineBackfillRoom();
+  }
+
+  function startOnlineBackfillMatch() {
+    var room = onlineBotBackfillState.room;
+    var playerId = String(onlineMultiplayerState.playerId || "");
+    onlineBotBackfillState.startPending = false;
+    if (!room || !playerId) return false;
+    var localName = getOnlineMultiplayerDisplayName();
+    releaseMultiplayerPlayerEntities();
+    resetMultiplayerSessionState();
+    installOnlineMultiplayerBridge();
+    multiplayerState.role = "host";
+    multiplayerState.localPlayerId = playerId;
+    multiplayerState.hostPlayerId = playerId;
+    // No endpoints are registered on purpose: with an empty connectedEndpoints
+    // map the host wire layer never transmits — snapshot fan-out, backpressure
+    // and finish acknowledgements all skip endpoint-less roster players.
+    var local = ensureMultiplayerPlayer(playerId, localName, "", true);
+    local.ready = true;
+    local.connected = true;
+    onlineBotBackfillState.bots.forEach(function (persona) {
+      var bot = ensureMultiplayerPlayer(persona.id, persona.name, "", false);
+      bot.ready = true;
+      bot.connected = true;
+      bot.cosmetics = serializeCowboyCosmetics(persona.cosmetics);
+      bot.careerUnlockProfile = buildCareerUnlockProfile(persona.unlocks);
+      bot.backfillBot = true;
+      bot.backfillPersona = persona;
+    });
+    var mapSeed = createDistinctMapSeed(MAP_SEED, (Date.now() & 0xffff) + 1);
+    multiplayerState.mapSeed = mapSeed;
+    if (MAP_SEED !== mapSeed) rebuildMapForSeed(mapSeed);
+    var startId = createMultiplayerId("match");
+    beginMultiplayerMatch({
+      type: "start",
+      authority: "server",
+      startId: startId,
+      version: MULTIPLAYER_PROTOCOL_VERSION,
+      mapSeed: mapSeed,
+      hostPlayerId: playerId,
+      players: getSerializableLobbyPlayers().map(function (entry) {
+        entry.ready = true;
+        return entry;
+      }),
+    });
+    if (multiplayerState.phase !== "match") {
+      deactivateOnlineBotBackfill();
+      setOnlineConnectionState("error");
+      setOnlineMultiplayerStatus("multiplayer.online.error.generic", "Online matchmaking failed. Try again.", null, true);
+      syncOnlineMultiplayerUi();
+      return false;
+    }
+    onlineBotBackfillState.matchBots = true;
+    initializeOnlineBackfillBotRuntimes();
+    room.phase = "match";
+    room.matchId = multiplayerState.matchId;
+    room.mapSeed = mapSeed;
+    onlineBotBackfillState.postMatchReturnMs = 0;
+    emitOnlineBackfillRoom();
+    onlineMultiplayerState.readyPending = false;
+    onlineMultiplayerState.queued = false;
+    syncMultiplayerModeCopy();
+    return true;
+  }
+
+  function resetOnlineBackfillRoomToLobby() {
+    var room = onlineBotBackfillState.room;
+    if (!room) return;
+    room.phase = "lobby";
+    room.matchId = "";
+    room.mapSeed = 0;
+    room.startReason = "";
+    room.autoStartAt = 0;
+    room.players.forEach(function (entry) {
+      entry.ready = false;
+      entry.autoReady = false;
+    });
+    onlineBotBackfillState.bots.forEach(function (persona) {
+      persona.readyAtMs = 1200 + Math.floor(nextOnlineBackfillRandom() * 2600);
+    });
+    onlineBotBackfillState.postMatchReturnMs = 0;
+    emitOnlineBackfillRoom();
+  }
+
+  function tickOnlineBackfillRoom(dt) {
+    var room = onlineBotBackfillState.room;
+    if (!room) return;
+    var elapsedMs = dt * 1000;
+
+    if (room.phase === "match" && multiplayerState.phase === "ended") {
+      room.phase = "ended";
+      onlineBotBackfillState.postMatchReturnMs = getOnlineBotBackfillSetting(
+        "postMatchReturnMs",
+        ONLINE_BOT_BACKFILL_POST_MATCH_RETURN_MS
+      );
+      emitOnlineBackfillRoom();
+      return;
+    }
+    if ((room.phase === "match" || room.phase === "ended") && multiplayerState.phase === "lobby") {
+      // The host (this player) used "return to room"; mirror the server
+      // resetting everyone to unready.
+      resetOnlineBackfillRoomToLobby();
+      return;
+    }
+    if (room.phase === "ended") {
+      // Server parity: idling on the results screen auto-returns the room.
+      onlineBotBackfillState.postMatchReturnMs -= elapsedMs;
+      if (onlineBotBackfillState.postMatchReturnMs <= 0 && multiplayerState.phase === "ended") {
+        resetOnlineBackfillRoomToLobby();
+      }
+      return;
+    }
+    if (room.phase === "preparing") {
+      if (onlineBotBackfillState.startPending) {
+        onlineBotBackfillState.prepareTimerMs -= elapsedMs;
+        if (onlineBotBackfillState.prepareTimerMs <= 0) startOnlineBackfillMatch();
+      }
+      return;
+    }
+    if (room.phase !== "lobby") return;
+
+    var dirty = false;
+    if (onlineBotBackfillState.pendingJoins.length && room.players.length < room.maxPlayers) {
+      onlineBotBackfillState.joinTimerMs -= elapsedMs;
+      if (onlineBotBackfillState.joinTimerMs <= 0) {
+        var persona = onlineBotBackfillState.pendingJoins.shift();
+        room.players.push({
+          id: persona.id,
+          name: persona.name,
+          ready: false,
+          connected: true,
+          autoReady: false,
+          cosmetics: persona.cosmetics,
+        });
+        persona.readyAtMs = getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS) +
+          Math.floor(nextOnlineBackfillRandom() * Math.max(
+            1,
+            getOnlineBotBackfillSetting("readyMaxMs", ONLINE_BOT_BACKFILL_READY_MAX_MS) -
+              getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS)
+          ));
+        var jitter = getOnlineBotBackfillSetting("joinJitterMs", ONLINE_BOT_BACKFILL_JOIN_JITTER_MS);
+        onlineBotBackfillState.joinTimerMs = getOnlineBotBackfillSetting("joinIntervalMs", ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS) +
+          Math.floor((nextOnlineBackfillRandom() * 2 - 1) * jitter);
+        dirty = true;
+      }
+    }
+    for (var botIndex = 0; botIndex < onlineBotBackfillState.bots.length; botIndex++) {
+      var readyPersona = onlineBotBackfillState.bots[botIndex];
+      if (readyPersona.readyAtMs == null) continue;
+      var entry = room.players.find(function (roomEntry) { return roomEntry.id === readyPersona.id; });
+      if (!entry || entry.ready) {
+        readyPersona.readyAtMs = null;
+        continue;
+      }
+      readyPersona.readyAtMs -= elapsedMs;
+      if (readyPersona.readyAtMs <= 0) {
+        readyPersona.readyAtMs = null;
+        entry.ready = true;
+        dirty = true;
+      }
+    }
+    if (room.autoStartAt && Date.now() >= room.autoStartAt) {
+      room.players.forEach(function (roomEntry) {
+        if (!roomEntry.ready) {
+          roomEntry.ready = true;
+          roomEntry.autoReady = true;
+        }
+      });
+      room.autoStartAt = 0;
+      emitOnlineBackfillRoom();
+      beginOnlineBackfillPrepare("timer");
+      return;
+    }
+    if (dirty) {
+      evaluateOnlineBackfillStart();
+      emitOnlineBackfillRoom();
+    }
+  }
+
+  function updateOnlineBotBackfill(dt) {
+    if (onlineBotBackfillState.active) {
+      if (!onlineMultiplayerState.open && multiplayerState.phase !== "match" && multiplayerState.phase !== "ended") {
+        deactivateOnlineBotBackfill();
+        return;
+      }
+      tickOnlineBackfillRoom(dt);
+      return;
+    }
+    if (!isOnlineBotBackfillEnabled() || !onlineMultiplayerState.open) {
+      onlineBotBackfillState.aloneMs = 0;
+      return;
+    }
+    var room = onlineMultiplayerState.room;
+    var players = room && Array.isArray(room.players) ? room.players : [];
+    var eligible = !!(
+      room &&
+      room.phase === "lobby" &&
+      players.length === 1 &&
+      String((players[0] || {}).id || "") === String(onlineMultiplayerState.playerId || "") &&
+      !onlineMultiplayerState.searchCode &&
+      onlineMultiplayerState.connectionState === "room" &&
+      isOnlineSocketOpen() &&
+      multiplayerState.phase === "lobby"
+    );
+    if (!eligible) {
+      onlineBotBackfillState.aloneMs = 0;
+      return;
+    }
+    onlineBotBackfillState.aloneMs += dt * 1000;
+    if (onlineBotBackfillState.aloneMs >= getOnlineBotBackfillSetting("delayMs", ONLINE_BOT_BACKFILL_DELAY_MS)) {
+      activateOnlineBotBackfill();
+    }
+  }
+
+  // --------------------------- in-match bot brains ---------------------------
+
+  function initializeOnlineBackfillBotRuntimes() {
+    multiplayerState.playerOrder.forEach(function (id, index) {
+      var player = getMultiplayerPlayer(id);
+      if (!player || !player.backfillBot) return;
+      player.backfillRuntime = {
+        rngState: ((index + 1) * 2246822519) >>> 0 || 7,
+        replanTimer: 0,
+        moveX: 0,
+        moveZ: 0,
+        aimAngle: player.input ? player.input.aimAngle : 0,
+        aimDistance: 14,
+        aimUpdateIn: 0,
+        aimPointX: null,
+        aimPointZ: null,
+        targetKind: "",
+        targetPlayerId: "",
+        lastTargetKey: "",
+        acquireHoldUntil: 0,
+        fireHoldUntil: 0,
+        flickError: 0,
+        orbitDirection: index % 2 ? -1 : 1,
+        orbitFlipAt: 0,
+        wanderAngle: (index + 1) * 2.1,
+        targetLastX: null,
+        targetLastZ: null,
+        targetVelX: 0,
+        targetVelZ: 0,
+        targetSampleAt: 0,
+        dodgeTimer: 0,
+        dodgeCooldown: 0,
+        dodgeX: 0,
+        dodgeZ: 0,
+        draftDelay: 3 + index * 1.7,
+        decisionAt: 0,
+        stuckTimer: 0,
+        forcedTimer: 0,
+        forcedX: 0,
+        forcedZ: 0,
+        lastX: null,
+        lastZ: null,
+      };
+    });
+  }
+
+  function isOnlineBackfillBossFightActive() {
+    if (!isBossWave(state.wave)) return false;
+    var doppelganger = state.doppelganger;
+    var doppelgangerActive = !!(doppelganger && doppelganger.active && !doppelganger.defeated);
+    return !!(
+      state.bellRinger || state.ghostTrain || state.oilBaron || state.slothArchbishop ||
+      state.hordeheart || state.landEater || doppelgangerActive
+    );
+  }
+
+  function wrapOnlineBackfillAngle(angle) {
+    while (angle > Math.PI) angle -= Math.PI * 2;
+    while (angle < -Math.PI) angle += Math.PI * 2;
+    return angle;
+  }
+
+  function getOnlineBackfillBotThreatAt(player, entity, atX, atZ, outDodge) {
+    var threat = 0;
+    for (var i = 0; i < state.bullets.length; i++) {
+      var bullet = state.bullets[i];
+      if (!bullet || (!bullet.ownerPlayerId && !bullet.faction)) continue;
+      if (bullet.ownerPlayerId === player.id) continue;
+      var vx = (bullet.dirX || 0) * (bullet.speed || 0);
+      var vz = (bullet.dirZ || 0) * (bullet.speed || 0);
+      var speedSq = vx * vx + vz * vz;
+      if (speedSq < 1) continue;
+      var relX = atX - bullet.x;
+      var relZ = atZ - bullet.z;
+      var t = clamp((relX * vx + relZ * vz) / speedSq, 0, Math.min(0.6, Math.max(0, bullet.life || 0)));
+      var missX = relX - vx * t;
+      var missZ = relZ - vz * t;
+      var miss = Math.hypot(missX, missZ);
+      var danger = (entity.radius || 0.72) + 1.3;
+      if (miss < danger) {
+        threat += (danger - miss) * 95;
+        if (outDodge && (outDodge.weight || 0) < (danger - miss)) {
+          outDodge.weight = danger - miss;
+          // dodge perpendicular to the incoming shot
+          var length = Math.sqrt(speedSq);
+          var side = (relX * vz - relZ * vx) >= 0 ? 1 : -1;
+          outDodge.x = (-vz / length) * side;
+          outDodge.z = (vx / length) * side;
+        }
+      }
+    }
+    return threat;
+  }
+
+  function getOnlineBackfillHazardPenalty(atX, atZ) {
+    var penalty = 0;
+    var lists = [state.firePatches, state.delayedExplosions, state.acidPuddles];
+    for (var listIndex = 0; listIndex < lists.length; listIndex++) {
+      var list = lists[listIndex];
+      if (!Array.isArray(list)) continue;
+      for (var i = 0; i < list.length; i++) {
+        var hazard = list[i];
+        if (!hazard) continue;
+        var radius = Math.max(1.2, Number(hazard.radius) || 1.5) + 0.9;
+        var distance = Math.hypot(atX - (hazard.x || 0), atZ - (hazard.z || 0));
+        if (distance < radius) penalty += (radius - distance) * 60;
+      }
+    }
+    var oilBaron = state.oilBaron;
+    if (oilBaron && oilBaron.bribeState === "offered") {
+      // Bots never take the Baron's gold: an allied bot would have to gun down
+      // players mid-boss, which the truce rule forbids.
+      var chestDistance = Math.hypot(atX - (oilBaron.bribeChestX || 0), atZ - (oilBaron.bribeChestZ || 0));
+      if (chestDistance < 4.5) penalty += (4.5 - chestDistance) * 220;
+    }
+    return penalty;
+  }
+
+  function collectOnlineBackfillBossTargets(entity) {
+    var targets = [];
+    forEachActiveBossDamageTarget(function (target) {
+      if (!target || target.active === false) return;
+      if (target.hp != null && target.hp <= 0) return;
+      targets.push(target);
+    });
+    targets.sort(function (a, b) {
+      var da = Math.hypot((a.x || 0) - entity.x, (a.z || 0) - entity.z);
+      var db = Math.hypot((b.x || 0) - entity.x, (b.z || 0) - entity.z);
+      return da - db;
+    });
+    return targets;
+  }
+
+  function findOnlineBackfillBaronTraitor(player, entity) {
+    // A player who took the Baron's gold is everyone's enemy while the
+    // encounter lasts — the boss truce does not protect a traitor the bot can
+    // actually see (line of sight, hunt range).
+    if (!state.oilBaron || !getActiveOilBaronBoss()) return null;
+    var best = null;
+    var bestDistance = Infinity;
+    for (var i = 0; i < multiplayerState.playerOrder.length; i++) {
+      var other = getMultiplayerPlayer(multiplayerState.playerOrder[i]);
+      if (!other || other.id === player.id || !other.oilBaronAlly) continue;
+      if (!other.alive || other.surrendered || !other.entity) continue;
+      var distance = Math.hypot(other.entity.x - entity.x, other.entity.z - entity.z);
+      if (distance > ONLINE_BOT_TRAITOR_HUNT_RANGE || distance >= bestDistance) continue;
+      if (findBlockingObstacle(entity.x, entity.z, other.entity.x, other.entity.z, 0.2, null)) continue;
+      bestDistance = distance;
+      best = other;
+    }
+    return best;
+  }
+
+  function pickOnlineBackfillBotTarget(player, entity, endgame, bossTruce) {
+    var runtime = player.backfillRuntime;
+    var nearestEnemy = null;
+    var nearestEnemyDistance = Infinity;
+    for (var i = 0; i < state.enemies.length; i++) {
+      var enemy = state.enemies[i];
+      if (!enemy || enemy.active === false || (enemy.hp || 0) <= 0) continue;
+      var enemyDistance = Math.hypot(enemy.x - entity.x, enemy.z - entity.z);
+      if (enemyDistance < nearestEnemyDistance) {
+        nearestEnemyDistance = enemyDistance;
+        nearestEnemy = enemy;
+      }
+    }
+    // Self defence beats everything: a zombie in claw range gets shot no matter
+    // the mode.
+    if (nearestEnemy && nearestEnemyDistance < 4.5) {
+      return { kind: "enemy", ref: nearestEnemy };
+    }
+    var traitor = findOnlineBackfillBaronTraitor(player, entity);
+    if (traitor) {
+      runtime.targetPlayerId = traitor.id;
+      return { kind: "player", ref: traitor.entity, playerId: traitor.id };
+    }
+    if (!bossTruce) {
+      var pvpTargetId = "";
+      // The wave check, not just the encounter check: a player lost during a
+      // boss wave means the bots finish the boss and clear the wave together,
+      // and only turn on each other once a regular wave begins.
+      if (endgame && !isBossWave(state.wave)) {
+        var best = null;
+        var bestDistance = Infinity;
+        multiplayerState.playerOrder.forEach(function (otherId) {
+          if (otherId === player.id) return;
+          var other = getMultiplayerPlayer(otherId);
+          if (!other || !other.alive || other.surrendered || !other.entity) return;
+          var otherDistance = Math.hypot(other.entity.x - entity.x, other.entity.z - entity.z);
+          if (otherDistance < bestDistance) {
+            bestDistance = otherDistance;
+            best = other;
+          }
+        });
+        if (best) pvpTargetId = best.id;
+      } else if (
+        player.lastAttackerPlayerId &&
+        state.time - (player.lastAttackerAt || -Infinity) < ONLINE_BOT_BACKFILL_GRUDGE_TIME
+      ) {
+        var attacker = getMultiplayerPlayer(player.lastAttackerPlayerId);
+        if (attacker && attacker.alive && !attacker.surrendered && attacker.entity) pvpTargetId = attacker.id;
+      }
+      if (pvpTargetId) {
+        runtime.targetPlayerId = pvpTargetId;
+        return { kind: "player", ref: getMultiplayerPlayer(pvpTargetId).entity, playerId: pvpTargetId };
+      }
+    }
+    runtime.targetPlayerId = "";
+    if (bossTruce) {
+      var bossTargets = collectOnlineBackfillBossTargets(entity);
+      if (bossTargets.length) return { kind: "boss", ref: bossTargets[0] };
+    }
+    if (nearestEnemy && nearestEnemyDistance < 30) return { kind: "enemy", ref: nearestEnemy };
+    return null;
+  }
+
+  function updateOnlineBackfillBotSteering(player, entity, runtime, persona, target, endgame, dt) {
+    runtime.replanTimer -= dt;
+    runtime.dodgeTimer -= dt;
+    runtime.dodgeCooldown -= dt;
+    runtime.forcedTimer -= dt;
+
+    // Committed dodge burst overrides steering.
+    if (runtime.dodgeTimer > 0) {
+      runtime.moveX = runtime.dodgeX;
+      runtime.moveZ = runtime.dodgeZ;
+      return;
+    }
+    // Unstuck kick.
+    if (runtime.forcedTimer > 0) {
+      runtime.moveX = runtime.forcedX;
+      runtime.moveZ = runtime.forcedZ;
+      return;
+    }
+    if (runtime.lastX != null && Math.hypot(runtime.moveX, runtime.moveZ) > 0.3) {
+      if (Math.hypot(entity.x - runtime.lastX, entity.z - runtime.lastZ) < 0.02) runtime.stuckTimer += dt;
+      else runtime.stuckTimer = 0;
+    }
+    runtime.lastX = entity.x;
+    runtime.lastZ = entity.z;
+    if (runtime.stuckTimer > 0.7) {
+      runtime.stuckTimer = 0;
+      var kickAngle = nextBackfillBotRandom(runtime) * Math.PI * 2;
+      runtime.forcedX = Math.sin(kickAngle);
+      runtime.forcedZ = Math.cos(kickAngle);
+      runtime.forcedTimer = 0.5;
+      return;
+    }
+
+    // Reactive dodge: weaker than the doppelganger on purpose — higher trigger
+    // threshold, a failure chance, and a longer cooldown.
+    var dodge = { weight: 0, x: 0, z: 0 };
+    var currentThreat = getOnlineBackfillBotThreatAt(player, entity, entity.x, entity.z, dodge);
+    if (currentThreat >= persona.skill.dodgeThreshold && runtime.dodgeCooldown <= 0) {
+      runtime.dodgeCooldown = persona.skill.dodgeCooldown;
+      if (nextBackfillBotRandom(runtime) < persona.skill.dodgeChance && dodge.weight > 0) {
+        runtime.dodgeTimer = 0.26;
+        runtime.dodgeX = dodge.x;
+        runtime.dodgeZ = dodge.z;
+        runtime.moveX = dodge.x;
+        runtime.moveZ = dodge.z;
+        return;
+      }
+    }
+
+    if (runtime.replanTimer > 0) return;
+    runtime.replanTimer = 0.13 + nextBackfillBotRandom(runtime) * 0.09;
+
+    var localPlayer = getLocalMultiplayerPlayer();
+    var anchorEntity = null;
+    if (!endgame && localPlayer && localPlayer.alive && !localPlayer.surrendered && localPlayer.entity && localPlayer.id !== player.id) {
+      anchorEntity = localPlayer.entity;
+    }
+    var nearbyEnemies = [];
+    for (var enemyIndex = 0; enemyIndex < state.enemies.length && nearbyEnemies.length < 24; enemyIndex++) {
+      var enemy = state.enemies[enemyIndex];
+      if (!enemy || enemy.active === false || (enemy.hp || 0) <= 0) continue;
+      if (Math.hypot(enemy.x - entity.x, enemy.z - entity.z) < 13) nearbyEnemies.push(enemy);
+    }
+    var progression = player.progression || {};
+    var weaponId = String(progression.weapon || "revolver");
+    var idealRange = ONLINE_BOT_WEAPON_IDEAL_RANGE[weaponId] || 9;
+    var ammoMap = progression.ammo || {};
+    var reserveMap = progression.ammoReserve || {};
+    var lowAmmo = (Number(ammoMap[weaponId]) || 0) <= 3 && (Number(reserveMap[weaponId]) || 0) <= 6;
+    // A dry weapon flips the priorities: stop orbiting targets at ideal range
+    // (there is nothing to shoot with) and march to a crate instead, or the
+    // bot circles enemies in silence forever and the wave stalls.
+    var outOfAmmo = (Number(ammoMap[weaponId]) || 0) <= 0 && (Number(reserveMap[weaponId]) || 0) <= 0;
+    var nearestCrate = null;
+    var nearestCrateDistance = Infinity;
+    if (lowAmmo && Array.isArray(state.ammoCrates)) {
+      for (var crateIndex = 0; crateIndex < state.ammoCrates.length; crateIndex++) {
+        var crate = state.ammoCrates[crateIndex];
+        if (!crate) continue;
+        var crateDistance = Math.hypot(crate.x - entity.x, crate.z - entity.z);
+        if (crateDistance < nearestCrateDistance) {
+          nearestCrateDistance = crateDistance;
+          nearestCrate = crate;
+        }
+      }
+    }
+
+    // Circle-strafe: inside the comfortable range band players orbit their
+    // target rather than standing square; the orbit side flips now and then.
+    if (state.time >= (runtime.orbitFlipAt || 0)) {
+      runtime.orbitFlipAt = state.time + 6 + nextBackfillBotRandom(runtime) * 9;
+      if (nextBackfillBotRandom(runtime) < 0.5) runtime.orbitDirection = -(runtime.orbitDirection || 1);
+    }
+    var orbitTangentX = 0;
+    var orbitTangentZ = 0;
+    var orbitActive = false;
+    if (target && target.ref && !outOfAmmo) {
+      var toTargetX = (target.ref.x || 0) - entity.x;
+      var toTargetZ = (target.ref.z || 0) - entity.z;
+      var toTargetLength = Math.hypot(toTargetX, toTargetZ);
+      if (toTargetLength > 0.001 && Math.abs(toTargetLength - idealRange) < 3.5) {
+        orbitActive = true;
+        orbitTangentX = (-toTargetZ / toTargetLength) * (runtime.orbitDirection || 1);
+        orbitTangentZ = (toTargetX / toTargetLength) * (runtime.orbitDirection || 1);
+      }
+    }
+
+    var bestScore = -Infinity;
+    var bestX = 0;
+    var bestZ = 0;
+    var probeDistance = Math.max(1.2, (entity.speed || BASE_PLAYER_SPEED) * 0.45);
+    for (var direction = 0; direction <= ONLINE_BOT_STEER_DIRECTIONS; direction++) {
+      var moveX = 0;
+      var moveZ = 0;
+      if (direction < ONLINE_BOT_STEER_DIRECTIONS) {
+        var angle = (Math.PI * 2 * direction) / ONLINE_BOT_STEER_DIRECTIONS + (runtime.rngState % 7) * 0.09;
+        moveX = Math.sin(angle);
+        moveZ = Math.cos(angle);
+      }
+      var probeX = entity.x + moveX * probeDistance;
+      var probeZ = entity.z + moveZ * probeDistance;
+      if (
+        probeX < -ARENA_W / 2 + entity.radius + 0.4 || probeX > ARENA_W / 2 - entity.radius - 0.4 ||
+        probeZ < -ARENA_D / 2 + entity.radius + 0.4 || probeZ > ARENA_D / 2 - entity.radius - 0.4
+      ) continue;
+      if (moveX !== 0 || moveZ !== 0) {
+        if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
+      }
+      var score = nextBackfillBotRandom(runtime) * 6;
+      if (target && target.ref && !outOfAmmo) {
+        var targetDistance = Math.hypot((target.ref.x || 0) - probeX, (target.ref.z || 0) - probeZ);
+        score -= Math.abs(targetDistance - idealRange) * 6;
+      }
+      for (var nearIndex = 0; nearIndex < nearbyEnemies.length; nearIndex++) {
+        var nearEnemy = nearbyEnemies[nearIndex];
+        var nearDistance = Math.hypot(nearEnemy.x - probeX, nearEnemy.z - probeZ);
+        if (nearDistance < 7) score -= (7 - nearDistance) * 14;
+      }
+      score -= getOnlineBackfillHazardPenalty(probeX, probeZ);
+      score -= getOnlineBackfillBotThreatAt(player, entity, probeX, probeZ, null) * 0.8;
+      multiplayerState.playerOrder.forEach(function (otherId) {
+        if (otherId === player.id) return;
+        var other = getMultiplayerPlayer(otherId);
+        if (!other || !other.alive || other.surrendered || !other.entity) return;
+        var separation = Math.hypot(other.entity.x - probeX, other.entity.z - probeZ);
+        if (separation < 2.2) score -= (2.2 - separation) * 18;
+      });
+      if (anchorEntity) {
+        var anchorDistance = Math.hypot(anchorEntity.x - probeX, anchorEntity.z - probeZ);
+        if (anchorDistance > 18) score -= (anchorDistance - 18) * 2.4;
+      }
+      if (nearestCrate) {
+        score -= Math.hypot(nearestCrate.x - probeX, nearestCrate.z - probeZ) * (outOfAmmo ? 9 : 4);
+      }
+      if (orbitActive) score += (moveX * orbitTangentX + moveZ * orbitTangentZ) * 7;
+      if (score > bestScore) {
+        bestScore = score;
+        bestX = moveX;
+        bestZ = moveZ;
+      }
+    }
+    if (!target && !nearestCrate && !endgame && nextBackfillBotRandom(runtime) < 0.22) {
+      // Players do just stand still sometimes.
+      runtime.moveX = 0;
+      runtime.moveZ = 0;
+      runtime.replanTimer = 0.55 + nextBackfillBotRandom(runtime) * 0.9;
+      return;
+    }
+    // Heading inertia: commit to a direction instead of re-optimizing into a
+    // visible zig-zag every tick.
+    runtime.moveX = bestX * 0.72 + runtime.moveX * 0.28;
+    runtime.moveZ = bestZ * 0.72 + runtime.moveZ * 0.28;
+  }
+
+  function updateOnlineBackfillBotAim(player, entity, runtime, persona, target, dt) {
+    runtime.aimUpdateIn -= dt;
+    var ref = target && target.ref;
+    if (!ref && runtime.aimUpdateIn <= 0) {
+      // Nothing to shoot: pan the view around lazily like a player scanning
+      // the horizon instead of freezing on the last aim point.
+      runtime.aimUpdateIn = 0.7 + nextBackfillBotRandom(runtime) * 0.9;
+      runtime.wanderAngle = (runtime.wanderAngle || 0) + (nextBackfillBotRandom(runtime) * 2 - 1) * 1.2;
+      runtime.aimPointX = entity.x + Math.sin(runtime.wanderAngle) * 9;
+      runtime.aimPointZ = entity.z + Math.cos(runtime.wanderAngle) * 9;
+    }
+    if (ref && runtime.aimUpdateIn <= 0) {
+      runtime.aimUpdateIn = persona.skill.reactionTime * (0.75 + nextBackfillBotRandom(runtime) * 0.5);
+      var now = state.time;
+      if (runtime.targetLastX != null && now > runtime.targetSampleAt) {
+        var sampleDt = Math.min(0.5, now - runtime.targetSampleAt);
+        if (sampleDt > 0.001) {
+          runtime.targetVelX = ((ref.x || 0) - runtime.targetLastX) / sampleDt;
+          runtime.targetVelZ = ((ref.z || 0) - runtime.targetLastZ) / sampleDt;
+        }
+      }
+      runtime.targetLastX = ref.x || 0;
+      runtime.targetLastZ = ref.z || 0;
+      runtime.targetSampleAt = now;
+      var distance = Math.hypot((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
+      var leadTime = clamp(distance / 26, 0, 0.4);
+      var aimX = (ref.x || 0) + runtime.targetVelX * leadTime;
+      var aimZ = (ref.z || 0) + runtime.targetVelZ * leadTime;
+      // Aim noise: the doppelganger's error is pure latency; bots also miss.
+      var leadDistance = Math.max(1.5, Math.hypot(aimX - entity.x, aimZ - entity.z));
+      var jitterAngle = Math.atan2(aimX - entity.x, aimZ - entity.z) +
+        (nextBackfillBotRandom(runtime) * 2 - 1) * persona.skill.aimJitter;
+      runtime.aimPointX = entity.x + Math.sin(jitterAngle) * leadDistance;
+      runtime.aimPointZ = entity.z + Math.cos(jitterAngle) * leadDistance;
+    }
+    if (runtime.aimPointX == null) return;
+    // The flick error decays as the "hand" settles after a target switch.
+    var desired = Math.atan2(runtime.aimPointX - entity.x, runtime.aimPointZ - entity.z) + (runtime.flickError || 0);
+    runtime.flickError = (runtime.flickError || 0) * Math.exp(-6 * dt);
+    var turn = 1 - Math.exp(-10 * dt);
+    runtime.aimAngle += wrapOnlineBackfillAngle(desired - runtime.aimAngle) * turn;
+    runtime.aimDistance = clamp(
+      Math.hypot(runtime.aimPointX - entity.x, runtime.aimPointZ - entity.z),
+      1.5,
+      34
+    );
+  }
+
+  function shouldOnlineBackfillBotHoldFire(player, entity, runtime, target) {
+    var ref = target && target.ref;
+    if (!ref) return true;
+    var targetDistance = Math.hypot((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
+    var progression = player.progression || {};
+    var weaponId = String(progression.weapon || "revolver");
+    var maxRange = ONLINE_BOT_WEAPON_MAX_RANGE[weaponId] || 22;
+    if (targetDistance > maxRange) return true;
+    var trueAngle = Math.atan2((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
+    if (Math.abs(wrapOnlineBackfillAngle(trueAngle - runtime.aimAngle)) > 0.12) return true;
+    if (findBlockingObstacle(entity.x, entity.z, ref.x || 0, ref.z || 0, 0.2, null)) return true;
+    // Never clip a teammate who is not the intended target.
+    var dirX = Math.sin(runtime.aimAngle);
+    var dirZ = Math.cos(runtime.aimAngle);
+    var blocked = false;
+    multiplayerState.playerOrder.forEach(function (otherId) {
+      if (blocked || otherId === player.id || otherId === target.playerId) return;
+      var other = getMultiplayerPlayer(otherId);
+      if (!other || !other.alive || other.surrendered || !other.entity) return;
+      var relX = other.entity.x - entity.x;
+      var relZ = other.entity.z - entity.z;
+      var along = relX * dirX + relZ * dirZ;
+      if (along <= 0 || along > targetDistance + 2) return;
+      var cross = Math.abs(relX * dirZ - relZ * dirX);
+      if (cross < 1.15) blocked = true;
+    });
+    return blocked;
+  }
+
+  function updateOnlineBackfillBotCombat(player, entity, runtime, persona, target) {
+    var progression = player.progression || {};
+    var weaponId = String(progression.weapon || "revolver");
+    var magazine = Number(progression.ammo && progression.ammo[weaponId]) || 0;
+    var reserve = Number(progression.ammoReserve && progression.ammoReserve[weaponId]) || 0;
+    var reloading = !!(progression.reloadTimers && Number(progression.reloadTimers[weaponId]) > 0);
+    if (magazine <= 0 && reserve > 0 && !reloading && (player.pendingReloadAfterFireSequence == null || player.pendingReloadAfterFireSequence < 0)) {
+      queueRemoteMultiplayerReload(player, {
+        requestId: createMultiplayerId("bot-reload"),
+        matchId: multiplayerState.matchId,
+        lifeSequence: Math.max(0, player.deaths || 0),
+        afterFireSequence: Math.max(0, player.lastFireActionSequence || 0),
+        weaponId: weaponId,
+      });
+      return;
+    }
+    if (!target || magazine <= 0 || reloading) return;
+    if ((player.pendingFireActions || []).length) return;
+    if ((entity.cooldown || 0) > 0.02) return;
+    // Human trigger rhythm: a beat after acquiring a target, and occasional
+    // pauses between bursts instead of metronome fire.
+    if (state.time < (runtime.acquireHoldUntil || 0) || state.time < (runtime.fireHoldUntil || 0)) return;
+    if (shouldOnlineBackfillBotHoldFire(player, entity, runtime, target)) return;
+    if (nextBackfillBotRandom(runtime) < persona.skill.triggerHesitation) return;
+    var queued = queueRemoteMultiplayerFireAction(player, {
+      matchId: multiplayerState.matchId,
+      lifeSequence: Math.max(0, player.deaths || 0),
+      fireSequence: Math.max(0, player.lastFireActionSequence || 0) + 1,
+      lifeFireSequence: Math.max(0, player.lastLifeFireActionSequence || 0) + 1,
+      aimAngle: runtime.aimAngle,
+      aimDistance: runtime.aimDistance,
+      weaponId: weaponId,
+      originX: entity.x,
+      originZ: entity.z,
+      actionAgeMs: 0,
+    });
+    if (queued && nextBackfillBotRandom(runtime) < 0.3) {
+      runtime.fireHoldUntil = state.time + 0.25 + nextBackfillBotRandom(runtime) * 0.45;
+    }
+  }
+
+  function getOnlineBackfillStandardUpgradeIdSet() {
+    if (!onlineBotBackfillState.standardUpgradeIdSet) {
+      var set = Object.create(null);
+      STANDARD_UPGRADES.forEach(function (spec) { set[spec.id] = true; });
+      onlineBotBackfillState.standardUpgradeIdSet = set;
+    }
+    return onlineBotBackfillState.standardUpgradeIdSet;
+  }
+
+  function pickOnlineBackfillBotUpgrade(player) {
+    var offer = ensureMultiplayerUpgradeOffer(player);
+    if (!offer || !offer.choices || !offer.choices.length) return false;
+    var persona = player.backfillPersona || {};
+    var runtime = player.backfillRuntime;
+    var roll = runtime
+      ? nextBackfillBotRandom(runtime)
+      : 0.5;
+    var choice = "";
+    if (offer.kind === "class") {
+      choice = offer.choices.indexOf(persona.classId) !== -1
+        ? persona.classId
+        : offer.choices[Math.floor(roll * offer.choices.length) % offer.choices.length];
+    } else if (offer.kind === "standard") {
+      var standardIds = getOnlineBackfillStandardUpgradeIdSet();
+      var specials = offer.choices.filter(function (id) { return !standardIds[id]; });
+      if (specials.length) {
+        choice = specials[Math.floor(roll * specials.length) % specials.length];
+      } else {
+        var preferred = (persona.preferredCards || []).filter(function (id) {
+          return offer.choices.indexOf(id) !== -1;
+        });
+        choice = preferred.length
+          ? preferred[0]
+          : offer.choices[Math.floor(roll * offer.choices.length) % offer.choices.length];
+      }
+    } else {
+      choice = offer.choices.indexOf(persona.branchId) !== -1
+        ? persona.branchId
+        : offer.choices[Math.floor(roll * offer.choices.length) % offer.choices.length];
+    }
+    return applyMultiplayerUpgradeChoice(player, offer.id, choice, createMultiplayerId("bot-choice"));
+  }
+
+  function updateOnlineBackfillBotDeathDecision(player, runtime, endgame) {
+    if (getMultiplayerDeathDecisionRemaining(player) <= 0) return;
+    if (!runtime.decisionAt) {
+      runtime.decisionAt = state.time + 2.5 + nextBackfillBotRandom(runtime) * 4.5;
+      return;
+    }
+    if (state.time < runtime.decisionAt) return;
+    runtime.decisionAt = 0;
+    if (!endgame && player.points >= player.reviveCost) {
+      reviveMultiplayerPlayer(player, createMultiplayerId("bot-revive"));
+      runtime.aimPointX = null;
+      runtime.aimPointZ = null;
+      runtime.dodgeTimer = 0;
+      runtime.forcedTimer = 0;
+      runtime.targetLastX = null;
+    } else {
+      // Either the bot cannot afford the revive, or the real player is gone and
+      // the remaining bots are winding the match down.
+      surrenderMultiplayerPlayer(player);
+    }
+  }
+
+  function updateOnlineBackfillBots(dt) {
+    if (!onlineBotBackfillState.matchBots || multiplayerState.matchFinishPending) return;
+    var localPlayer = getLocalMultiplayerPlayer();
+    var endgame = !!(localPlayer && localPlayer.surrendered);
+    var bossTruce = isOnlineBackfillBossFightActive();
+    for (var i = 0; i < multiplayerState.playerOrder.length; i++) {
+      var player = getMultiplayerPlayer(multiplayerState.playerOrder[i]);
+      if (!player || !player.backfillBot || !player.backfillRuntime) continue;
+      var runtime = player.backfillRuntime;
+      if (player.surrendered) continue;
+      if (!player.alive) {
+        updateOnlineBackfillBotDeathDecision(player, runtime, endgame);
+        continue;
+      }
+      runtime.decisionAt = 0;
+      var entity = player.entity;
+      if (!entity) continue;
+      var persona = player.backfillPersona || { skill: {} };
+      var target = pickOnlineBackfillBotTarget(player, entity, endgame, bossTruce);
+      // A human takes a beat to register a NEW threat: switching targets adds
+      // a short trigger hold and a flick error the aim has to settle out of.
+      var targetKey = target
+        ? target.kind + ":" + String(target.playerId || (target.ref && (target.ref.networkId || target.ref.id)) || "x")
+        : "";
+      if (targetKey !== runtime.lastTargetKey) {
+        runtime.lastTargetKey = targetKey;
+        if (target) {
+          runtime.acquireHoldUntil = state.time + 0.25 + nextBackfillBotRandom(runtime) * 0.35;
+          runtime.flickError = (nextBackfillBotRandom(runtime) < 0.5 ? -1 : 1) *
+            (0.05 + nextBackfillBotRandom(runtime) * 0.07);
+        }
+      }
+      updateOnlineBackfillBotSteering(player, entity, runtime, persona, target, endgame, dt);
+      updateOnlineBackfillBotAim(player, entity, runtime, persona, target, dt);
+      applyRemoteMultiplayerInput(player, {
+        matchId: multiplayerState.matchId,
+        lifeSequence: Math.max(0, player.deaths || 0),
+        sequence: (player.lastInputSequence || 0) + 1,
+        moveX: runtime.moveX,
+        moveZ: runtime.moveZ,
+        aimAngle: runtime.aimAngle,
+        aimDistance: runtime.aimDistance,
+      });
+      updateOnlineBackfillBotCombat(player, entity, runtime, persona, target);
+      if (player.currentUpgradeOffer || (player.pendingUpgradeLevels || []).length) {
+        runtime.draftDelay -= dt;
+        if (runtime.draftDelay <= 0) {
+          runtime.draftDelay = 4 + nextBackfillBotRandom(runtime) * 8;
+          pickOnlineBackfillBotUpgrade(player);
+        }
+      }
+    }
+  }
+
   // Local play is carried by the Nearby Connections plugin, which exists only
   // in the Android build. A browser that offers the mode can open the lobby and
   // then never find anyone, so the menu hides the entry instead. The class also
@@ -103094,6 +104304,12 @@
       player.lastDamageCombatSequence || 0,
       multiplayerState.combatEventSequence || 0
     );
+    if (attackerId && attackerId !== player.id && multiplayerState.players[attackerId]) {
+      // Victim-side attacker memory: revenge behaviours (backfill bots) key off
+      // who last hurt this player. Mirrors clone.lastAttackerPlayerId.
+      player.lastAttackerPlayerId = String(attackerId);
+      player.lastAttackerAt = state.time;
+    }
     state.shake = player.local ? Math.min(1.2, state.shake + 0.35) : state.shake;
     addShockwave(x == null ? entity.x : x, z == null ? entity.z : z, 1.1, 0.18, 0xd83a2e);
     if (entity.hp <= 0) eliminateMultiplayerPlayer(player, "player", attackerId);
@@ -104002,6 +105218,7 @@
 
   function updateMultiplayerHost(dt) {
     if (!isMultiplayerHostMatch()) return;
+    updateOnlineBackfillBots(dt);
     updateMultiplayerAdaptiveSnapshotRate();
     expireMultiplayerDeathDecisions();
     enforceMultiplayerClientBackpressure();
@@ -127335,6 +128552,24 @@
     beginMatchmaking: beginOnlineMatchmaking,
     cancelMatchmaking: cancelOnlineMatchmaking,
     receiveEnvelope: handleOnlineMultiplayerMessage,
+    configureBackfillForTest: function (options) {
+      onlineBotBackfillState.testConfig = options && typeof options === "object" ? options : null;
+      return true;
+    },
+    getBackfillState: function () {
+      return {
+        enabled: isOnlineBotBackfillEnabled(),
+        aloneMs: Math.round(onlineBotBackfillState.aloneMs),
+        active: onlineBotBackfillState.active,
+        matchBots: onlineBotBackfillState.matchBots,
+        pendingJoins: onlineBotBackfillState.pendingJoins.length,
+        botIds: onlineBotBackfillState.bots.map(function (persona) { return persona.id; }),
+        botNames: onlineBotBackfillState.bots.map(function (persona) { return persona.name; }),
+        room: onlineBotBackfillState.room
+          ? JSON.parse(JSON.stringify(onlineBotBackfillState.room))
+          : null,
+      };
+    },
     updateCountdown: function () { updateOnlineMultiplayerCountdown(true); },
     selectRegion: function (directorUrl, searchCode) {
       return selectOnlineRegion(
@@ -127392,6 +128627,54 @@
   };
 
   window.__dustMultiplayerTest = {
+    getBackfillBotDiagnostics: function () {
+      return multiplayerState.playerOrder.map(function (id) {
+        var player = getMultiplayerPlayer(id);
+        if (!player || !player.backfillBot) return null;
+        var runtime = player.backfillRuntime || {};
+        return {
+          id: player.id,
+          name: player.name,
+          alive: !!player.alive,
+          surrendered: !!player.surrendered,
+          connected: player.connected !== false,
+          points: player.points,
+          deaths: player.deaths,
+          reviveCost: player.reviveCost,
+          zombieKills: player.zombieKills,
+          playerKills: player.playerKills,
+          x: player.entity ? Number(player.entity.x.toFixed(3)) : null,
+          z: player.entity ? Number(player.entity.z.toFixed(3)) : null,
+          weapon: player.progression ? player.progression.weapon : "",
+          level: player.progression ? player.progression.level : 0,
+          playerClass: player.progression ? player.progression.playerClass : "",
+          pendingUpgradeLevels: (player.pendingUpgradeLevels || []).length,
+          hasUpgradeOffer: !!player.currentUpgradeOffer,
+          grudgeAttackerId: player.lastAttackerPlayerId || "",
+          targetPlayerId: runtime.targetPlayerId || "",
+          moveX: Number((runtime.moveX || 0).toFixed(3)),
+          moveZ: Number((runtime.moveZ || 0).toFixed(3)),
+          lastFireActionSequence: player.lastFireActionSequence || 0,
+          decisionAt: Number(runtime.decisionAt || 0),
+          decisionRemaining: Number(getMultiplayerDeathDecisionRemaining(player).toFixed(3)),
+          simTime: Number(state.time.toFixed(3)),
+        };
+      }).filter(Boolean);
+    },
+    setOilBaronAllyForTest: function (playerId, allied) {
+      var player = getMultiplayerPlayer(playerId);
+      if (!player) return false;
+      player.oilBaronAlly = allied !== false;
+      if (player.entity) {
+        player.entity.oilBaronAlly = player.oilBaronAlly;
+        syncOilBaronAllegianceVisual(player.entity, player.oilBaronAlly);
+      }
+      if (state.oilBaron) {
+        state.oilBaron.boughtPlayerId = player.oilBaronAlly ? player.id : "";
+      }
+      syncMultiplayerPlayerNameplates();
+      return true;
+    },
     // Positional truth for both sides of a match, so a test can measure how far
     // a guest's replica of a player has drifted from the authority's own copy.
     getMultiplayerSyncDiagnostics: function () {

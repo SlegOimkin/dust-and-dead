@@ -141,6 +141,7 @@ async function openOnlineLobby(page, config) {
     reconnect: true,
     regionProbeLimit: 4,
     regionProbeTimeoutMs: 2000,
+    botBackfill: false,
   }, config || {}));
   await page.locator("#online-multiplayer-btn").click();
   await expect(page.locator("#online-multiplayer-lobby")).toBeVisible();

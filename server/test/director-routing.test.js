@@ -89,6 +89,9 @@ async function openClient(browser, pageUrl, directorHttpUrl, searchCode, name) {
       reconnect: true,
       regionProbeLimit: 4,
       regionProbeTimeoutMs: 3000,
+      // A public-pool client idling alone must stay on the real server: bot
+      // backfill would silently detach it after 12 seconds.
+      botBackfill: false,
     };
   }, directorHttpUrl);
   await page.keyboard.press("KeyM");

@@ -57,7 +57,7 @@ async function openOnlineLobby(page) {
   await page.goto(fileUrl("index.html"));
   await page.keyboard.press("KeyM");
   await page.evaluate(() => {
-    window.DustAndDeadOnlineConfig = { url: "ws://online.test/online", path: "/online", reconnect: true };
+    window.DustAndDeadOnlineConfig = { url: "ws://online.test/online", path: "/online", reconnect: true, botBackfill: false };
   });
   await page.locator("#online-multiplayer-btn").click();
   await expect(page.locator("#online-multiplayer-lobby")).toBeVisible();
