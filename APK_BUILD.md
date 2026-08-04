@@ -80,7 +80,7 @@ npm run build:apks
 - `DustAndDead-debug.apk`;
 - `DustAndDead-playtest.apk`.
 
-Скрипты выполняют чистую Gradle-сборку и автоматически проверяют package id, версию, build profile, содержимое APK и debug-подпись. Текущие параметры Android-приложения: `versionCode 49`, `versionName 1.48`, package id `com.testproject.dustanddead`.
+Скрипты выполняют чистую Gradle-сборку и автоматически проверяют package id, версию, build profile, содержимое APK и debug-подпись. Текущие параметры Android-приложения: `versionCode 50`, `versionName 1.49`, package id `com.testproject.dustanddead`.
 
 Повторная проверка уже собранных файлов:
 
