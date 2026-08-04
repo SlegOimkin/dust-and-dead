@@ -36,5 +36,5 @@ Copy-Item $sourceApk $targetApk -Force
   -ApkPath $targetApk `
   -ExpectedBuildChannel "standard" `
   -ExpectedAppLabel "Dust and Dead" `
-  -ExpectedVersionCode "54" `
-  -ExpectedVersionName "1.53"
+  -ExpectedVersionCode "55" `
+  -ExpectedVersionName "1.54"
