@@ -584,6 +584,69 @@ test("an empty gun stops a bot pretending to fight and sends it through the hord
   expect(fed.targetKind).not.toBe("");
 });
 
+test("an empty gun with no crate to walk to sends the bot looking", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.clearEnemies();
+    // Nothing to shoot and nothing to collect: the exact spot where bots used
+    // to stand and wait for a crate to appear under them.
+    window.__dustAndDeadTest.clearAmmoCrates();
+  });
+
+  const start = await page.evaluate((botId) => {
+    const multi = window.__dustMultiplayerTest;
+    multi.setProgression(botId, { ammo: { revolver: 0 }, ammoReserve: { revolver: 0 } });
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
+    return { x: bot.x, z: bot.z };
+  }, bots[0].id);
+
+  await advanceMs(page, 1000);
+  const searching = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(searching.roaming).toBe(true);
+
+  // Net displacement, not path length: a bot jittering on the spot covers
+  // ground without going anywhere, and that is the thing being fixed.
+  await advanceMs(page, 5000);
+  const travelled = await page.evaluate((args) => {
+    const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+    return Math.hypot(bot.x - args.start.x, bot.z - args.start.z);
+  }, { botId: bots[0].id, start });
+  expect(travelled).toBeGreaterThan(15);
+});
+
+test("no more than two bots walk to the same ammo crate", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.clearEnemies();
+    window.__dustAndDeadTest.clearAmmoCrates();
+  });
+
+  // Every bot dry, and exactly one crate on the map: without the cap all three
+  // filed toward it in a queue.
+  await page.evaluate((botIds) => {
+    const multi = window.__dustMultiplayerTest;
+    botIds.forEach((id) => multi.setProgression(id, { ammo: { revolver: 0 }, ammoReserve: { revolver: 0 } }));
+    const bot = multi.getBackfillBotDiagnostics()[0];
+    // Far enough that nobody arrives and collects it while the claims are
+    // being read, which would free a slot and hide the cap.
+    window.__dustAndDeadTest.spawnAmmoCrateAt(bot.x + 60, bot.z);
+  }, bots.map((bot) => bot.id));
+
+  await advanceMs(page, 1000);
+  const claims = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+  const takers = claims.filter((bot) => bot.crateGoalIndex === 0);
+  expect(takers.length).toBe(2);
+  // And the one left out does not stand around waiting its turn.
+  const leftOut = claims.filter((bot) => bot.crateGoalIndex < 0);
+  expect(leftOut.length).toBe(1);
+  expect(leftOut[0].roaming).toBe(true);
+});
+
 test("bots restock at two magazines, not at the last round", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);

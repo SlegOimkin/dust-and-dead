@@ -99041,6 +99041,20 @@
   // Two magazines left is when a player starts thinking about resupply rather
   // than when they are already helpless.
   var ONLINE_BOT_RESUPPLY_MAGAZINES = 2;
+  // At most two of them walk to the same crate. Everyone taking the nearest one
+  // put the whole party in a queue behind one box, and only whoever arrives
+  // first gets the ammo anyway — the rest of them go and find their own.
+  var ONLINE_BOT_CRATE_CLAIM_LIMIT = 2;
+  // An empty gun with no crate to walk to is not a reason to stand still. The
+  // bot picks somewhere else on the map and goes there, the way a player out of
+  // ammo would go looking rather than wait to be resupplied where they ran dry.
+  var ONLINE_BOT_ROAM_MIN_DISTANCE = 30;
+  var ONLINE_BOT_ROAM_MAX_DISTANCE = 75;
+  var ONLINE_BOT_ROAM_ARRIVE_RADIUS = 4;
+  var ONLINE_BOT_ROAM_TIMEOUT = 14;
+  // Enough to outweigh the wander noise and the pull back toward the human, but
+  // well under a crate: a real destination beats an invented one.
+  var ONLINE_BOT_ROAM_WEIGHT = 12;
 
   // One reading of a bot's ammo, shared by targeting, steering and firing so
   // they cannot disagree about whether the gun is worth pointing at anything.
@@ -99737,6 +99751,13 @@
         stuckStrikes: 0,
         noProgressTimer: 0,
         lastGoalDistance: -1,
+        // The crate this bot has called dibs on, the point it is roaming to
+        // when there is none, and whichever of them the stuck watchdog should
+        // be measuring against this tick.
+        crateGoal: null,
+        roamGoal: null,
+        roamUntil: 0,
+        progressGoal: null,
         forcedTimer: 0,
         forcedX: 0,
         forcedZ: 0,
@@ -100247,6 +100268,85 @@
     return null;
   }
 
+  // A crate is available to this bot while fewer than the limit have already
+  // called dibs on it. Claims live on the runtimes, so this counts intent, not
+  // proximity: two bots converging from opposite corners still fill it.
+  function isOnlineBackfillCrateOpen(crate, player) {
+    var claims = 0;
+    for (var index = 0; index < multiplayerState.playerOrder.length; index++) {
+      var otherId = multiplayerState.playerOrder[index];
+      if (otherId === player.id) continue;
+      var other = getMultiplayerPlayer(otherId);
+      if (!other || !other.backfillBot || !other.alive || other.surrendered) continue;
+      var otherRuntime = other.backfillRuntime;
+      if (!otherRuntime || otherRuntime.crateGoal !== crate) continue;
+      claims += 1;
+      if (claims >= ONLINE_BOT_CRATE_CLAIM_LIMIT) return false;
+    }
+    return true;
+  }
+
+  function pickOnlineBackfillBotCrate(player, entity, runtime) {
+    var crates = Array.isArray(state.ammoCrates) ? state.ammoCrates : [];
+    var claimed = runtime.crateGoal;
+    // Ammo is worth a detour, never a death: a crate sitting inside a live boss
+    // telegraph is not a destination until the attack has resolved.
+    function usable(crate) {
+      return !!crate &&
+        crates.indexOf(crate) !== -1 &&
+        !isOnlineBackfillPointUnderBossAttack(crate.x, crate.z) &&
+        isOnlineBackfillCrateOpen(crate, player);
+    }
+    // Stay with the crate already claimed while it holds up. Re-deciding from
+    // scratch every plan makes a bot oscillate between two near-equal boxes and
+    // arrive at neither, and it would hand its slot to somebody else mid-walk.
+    if (usable(claimed)) return claimed;
+    var best = null;
+    var bestDistance = Infinity;
+    for (var crateIndex = 0; crateIndex < crates.length; crateIndex++) {
+      var crate = crates[crateIndex];
+      if (!usable(crate)) continue;
+      var crateDistance = Math.hypot(crate.x - entity.x, crate.z - entity.z);
+      if (crateDistance < bestDistance) {
+        bestDistance = crateDistance;
+        best = crate;
+      }
+    }
+    return best;
+  }
+
+  // Somewhere else on the map, far enough that walking there covers ground
+  // instead of shuffling in place. Re-picked on arrival, or when the walk has
+  // taken long enough that it was probably never going to finish.
+  function ensureOnlineBackfillRoamGoal(entity, runtime) {
+    var goal = runtime.roamGoal;
+    var arrived = !!goal &&
+      Math.hypot(goal.x - entity.x, goal.z - entity.z) <= ONLINE_BOT_ROAM_ARRIVE_RADIUS;
+    if (goal && !arrived && state.time < (runtime.roamUntil || 0)) return goal;
+    var pickedX = entity.x;
+    var pickedZ = entity.z;
+    for (var attempt = 0; attempt < 10; attempt++) {
+      var angle = nextBackfillBotRandom(runtime) * Math.PI * 2;
+      var distance = ONLINE_BOT_ROAM_MIN_DISTANCE +
+        nextBackfillBotRandom(runtime) * (ONLINE_BOT_ROAM_MAX_DISTANCE - ONLINE_BOT_ROAM_MIN_DISTANCE);
+      var candidateX = clamp(entity.x + Math.sin(angle) * distance, -ARENA_W / 2 + 6, ARENA_W / 2 - 6);
+      var candidateZ = clamp(entity.z + Math.cos(angle) * distance, -ARENA_D / 2 + 6, ARENA_D / 2 - 6);
+      if (pointHitsObstacle(candidateX, candidateZ, entity.radius * 0.85)) continue;
+      pickedX = candidateX;
+      pickedZ = candidateZ;
+      break;
+    }
+    // Mutated in place rather than replaced: the stuck watchdog measures the
+    // distance to this object across frames.
+    if (!goal) goal = runtime.roamGoal = { x: pickedX, z: pickedZ };
+    else {
+      goal.x = pickedX;
+      goal.z = pickedZ;
+    }
+    runtime.roamUntil = state.time + ONLINE_BOT_ROAM_TIMEOUT;
+    return goal;
+  }
+
   function updateOnlineBackfillBotSteering(player, entity, runtime, persona, target, endgame, dt) {
     runtime.replanTimer -= dt;
     runtime.dodgeTimer -= dt;
@@ -100286,7 +100386,11 @@
     // a greedy steerer in a local minimum for the whole wave. Watch the
     // distance to whatever the bot is heading for, and if it stops shrinking
     // while the bot is clearly trying, commit to a detour around the blockage.
-    var progressGoal = churchGoal || (target && (target.approach || target.ref)) || null;
+    // Whatever the last plan committed to walk to — church, crate, roam point,
+    // or the thing it is shooting. Read off the runtime rather than recomputed
+    // here: this runs every frame, the plan is only refreshed a few times a
+    // second, and the goals it needs are declared further down the function.
+    var progressGoal = runtime.progressGoal || (target && (target.approach || target.ref)) || null;
     if (progressGoal && desiredMove > 0.3) {
       var goalDistance = Math.hypot((progressGoal.x || 0) - entity.x, (progressGoal.z || 0) - entity.z);
       if (runtime.lastGoalDistance >= 0 && goalDistance > runtime.lastGoalDistance - 0.05 && goalDistance > 12) {
@@ -100379,22 +100483,10 @@
     // bot circles enemies in silence forever and the wave stalls.
     var lowAmmo = botAmmo.low;
     var outOfAmmo = botAmmo.dry;
-    var nearestCrate = null;
-    var nearestCrateDistance = Infinity;
-    if (lowAmmo && Array.isArray(state.ammoCrates)) {
-      for (var crateIndex = 0; crateIndex < state.ammoCrates.length; crateIndex++) {
-        var crate = state.ammoCrates[crateIndex];
-        if (!crate) continue;
-        // Ammo is worth a detour, never a death: a crate sitting inside a live
-        // boss telegraph is not a destination until the attack has resolved.
-        if (isOnlineBackfillPointUnderBossAttack(crate.x, crate.z)) continue;
-        var crateDistance = Math.hypot(crate.x - entity.x, crate.z - entity.z);
-        if (crateDistance < nearestCrateDistance) {
-          nearestCrateDistance = crateDistance;
-          nearestCrate = crate;
-        }
-      }
-    }
+    // The claim is released as soon as the bot stops needing ammo, or the slot
+    // it is holding blocks a crate it is no longer walking to.
+    var crateGoal = lowAmmo ? pickOnlineBackfillBotCrate(player, entity, runtime) : null;
+    runtime.crateGoal = crateGoal;
 
     var churchGoal = findOnlineBackfillBellChurchGoal(entity, player);
     var churchDistanceNow = churchGoal
@@ -100436,15 +100528,28 @@
     var enemyAvoidWeight = 14;
     var enemyAvoidRadius = 7;
     var crateWeight = 4;
-    if (outOfAmmo && nearestCrate) {
+    if (outOfAmmo && crateGoal) {
       enemyAvoidWeight = 0;
       enemyAvoidRadius = 0;
       crateWeight = 30;
-    } else if (lowAmmo && nearestCrate) {
+    } else if (lowAmmo && crateGoal) {
       enemyAvoidWeight = 5;
       enemyAvoidRadius = 4;
       crateWeight = 12;
     }
+
+    // Out of ammo with nowhere to get any — either the map has no crate up or
+    // the ones it has are already spoken for. Standing on the spot waiting for
+    // one to appear is the one thing a player would never do, so the bot goes
+    // looking. Any real goal outranks this, and it is dropped the moment one
+    // turns up.
+    var roamGoal = null;
+    if (outOfAmmo && !crateGoal && !churchGoal) {
+      roamGoal = ensureOnlineBackfillRoamGoal(entity, runtime);
+    } else if (runtime.roamGoal) {
+      runtime.roamUntil = 0;
+    }
+    runtime.progressGoal = churchGoal || crateGoal || roamGoal || approachRef || null;
 
     var bestScore = -Infinity;
     var bestX = 0;
@@ -100497,8 +100602,10 @@
         var anchorDistance = Math.hypot(anchorEntity.x - probeX, anchorEntity.z - probeZ);
         if (anchorDistance > 18) score -= (anchorDistance - 18) * 2.4;
       }
-      if (nearestCrate) {
-        score -= Math.hypot(nearestCrate.x - probeX, nearestCrate.z - probeZ) * crateWeight;
+      if (crateGoal) {
+        score -= Math.hypot(crateGoal.x - probeX, crateGoal.z - probeZ) * crateWeight;
+      } else if (roamGoal) {
+        score -= Math.hypot(roamGoal.x - probeX, roamGoal.z - probeZ) * ONLINE_BOT_ROAM_WEIGHT;
       }
       if (orbitActive) score += (moveX * orbitTangentX + moveZ * orbitTangentZ) * 7;
       if (score > bestScore) {
@@ -100508,7 +100615,7 @@
       }
     }
     if (
-      !target && !nearestCrate && !churchGoal && !endgame &&
+      !target && !crateGoal && !churchGoal && !roamGoal && !endgame &&
       !isOnlineBackfillPointUnderBossAttack(entity.x, entity.z) &&
       nextBackfillBotRandom(runtime) < 0.22
     ) {
@@ -129608,6 +129715,11 @@
           vendettaLife: Number(player.backfillVendettaLife || 0),
           targetKind: runtime.targetKind || "",
           targetPlayerId: runtime.targetPlayerId || "",
+          // The crate this bot has called dibs on, as an index into
+          // state.ammoCrates. The two-per-crate cap counts claims, not
+          // proximity, so it cannot be read back off positions.
+          crateGoalIndex: runtime.crateGoal ? state.ammoCrates.indexOf(runtime.crateGoal) : -1,
+          roaming: !!(runtime.roamGoal && state.time < (runtime.roamUntil || 0)),
           churchGoal: (function () {
             var church = player.entity ? findOnlineBackfillBellChurchGoal(player.entity, player) : null;
             return church ? church.index : -1;
