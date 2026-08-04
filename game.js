@@ -98971,21 +98971,25 @@
 
   // ---------------------------------------------------------------------------
   // Online bot backfill.
-  // When a public-queue player has waited alone in a server room for
-  // ONLINE_BOT_BACKFILL_DELAY_MS, the client silently leaves the real queue and
-  // an in-page emulation of the matchmaking server takes over the lobby: bot
-  // players join one by one, ready up, and the match starts as a LOCAL
-  // host-authoritative match that follows every online rule (points, paid
-  // revives, drawer drafts, overlay-only pause, spectator, standings). The
-  // room snapshots, timings and wire shapes mirror server/room.js so the lobby
-  // is indistinguishable from a live one; a search code always disables the
-  // feature because coded rooms are for friends who are actually coming.
+  // A public match is a match against bots. The moment the matchmaker seats a
+  // codeless player the client silently leaves the real queue and an in-page
+  // emulation of the matchmaking server takes over the lobby: bot players join
+  // one by one, ready up, and the match starts as a LOCAL host-authoritative
+  // match that follows every online rule (points, paid revives, drawer drafts,
+  // overlay-only pause, spectator, standings). The room snapshots, timings and
+  // wire shapes mirror server/room.js so the lobby is indistinguishable from a
+  // live one. A search code always disables the feature: a coded room is how
+  // friends meet, and they play each other over the real server.
   // ---------------------------------------------------------------------------
 
-  var ONLINE_BOT_BACKFILL_DELAY_MS = 12000;
+  // The public queue hands the lobby straight over. The knob survives so a
+  // deployment can put a real-player window back in front of the emulation.
+  var ONLINE_BOT_BACKFILL_DELAY_MS = 0;
   var ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS = 5000;
   var ONLINE_BOT_BACKFILL_JOIN_JITTER_MS = 1200;
-  var ONLINE_BOT_BACKFILL_FIRST_JOIN_MS = 350;
+  // How long the room sits empty before the first player walks in: this is the
+  // entire "waiting for players" wait as the player experiences it.
+  var ONLINE_BOT_BACKFILL_FIRST_JOIN_MS = 7000;
   var ONLINE_BOT_BACKFILL_READY_MIN_MS = 800;
   var ONLINE_BOT_BACKFILL_READY_MAX_MS = 2300;
   var ONLINE_BOT_BACKFILL_PREPARE_MS = 950;
@@ -98994,6 +98998,11 @@
   // past it, and gives a straggling bot room to land.
   var ONLINE_BOT_BACKFILL_ALL_READY_COUNTDOWN_MS = 5000;
   var ONLINE_BOT_BACKFILL_ALL_READY_START_MS = 5500;
+  // How far into a running countdown the next seat is taken. The arrival drops
+  // the timer while the newcomer settles, and readying brings it back at five —
+  // that stutter is the point, it is what a room filling with people looks
+  // like. One arrival per countdown, so the room fills at a readable pace.
+  var ONLINE_BOT_BACKFILL_FILL_JOIN_FRACTION = 0.4;
   var ONLINE_BOT_BACKFILL_AUTO_START_MS = 40000;
   var ONLINE_BOT_BACKFILL_POST_MATCH_RETURN_MS = 90000;
   var ONLINE_BOT_BACKFILL_GRUDGE_TIME = 9;
@@ -99071,7 +99080,7 @@
   }
 
   var onlineBotBackfillState = {
-    aloneSince: 0,
+    roomSince: 0,
     active: false,
     matchBots: false,
     room: null,
@@ -99316,7 +99325,7 @@
     onlineBotBackfillState.allReadyStartAt = 0;
     onlineBotBackfillState.postMatchReturnAt = 0;
     onlineBotBackfillState.active = true;
-    onlineBotBackfillState.aloneSince = 0;
+    onlineBotBackfillState.roomSince = 0;
     return true;
   }
 
@@ -99327,7 +99336,7 @@
     onlineBotBackfillState.bots = [];
     onlineBotBackfillState.pendingJoins = [];
     onlineBotBackfillState.startPending = false;
-    onlineBotBackfillState.aloneSince = 0;
+    onlineBotBackfillState.roomSince = 0;
     onlineBotBackfillState.allReadyStartAt = 0;
     onlineBotBackfillState.postMatchReturnAt = 0;
     var socket = onlineMultiplayerState.socket;
@@ -99359,51 +99368,61 @@
     // socket to a server that no longer routes this session anywhere.
   }
 
+  // The next seat is taken part way through the running countdown rather than
+  // on the lobby's lazy cadence: the room fills at a pace the player can read,
+  // and every arrival interrupts the timer instead of arriving after it fired.
+  // Never pushes an arrival later than it was already due.
+  function scheduleOnlineBackfillFinalJoins(now) {
+    if (!onlineBotBackfillState.pendingJoins.length) return;
+    // Named windowMs, not window: this file has a global `window` to protect.
+    var windowMs = Math.max(0, onlineBotBackfillState.allReadyStartAt - now);
+    var joinAt = now + Math.max(1, Math.floor(windowMs * ONLINE_BOT_BACKFILL_FILL_JOIN_FRACTION));
+    if (joinAt < onlineBotBackfillState.nextJoinAt) onlineBotBackfillState.nextJoinAt = joinAt;
+  }
+
   function evaluateOnlineBackfillStart() {
     var room = onlineBotBackfillState.room;
     if (!room || room.phase !== "lobby") return;
     var now = getOnlineBackfillNow();
     var readyCount = room.players.filter(function (entry) { return entry.ready; }).length;
-    // The emulated matchmaker keeps seating queued players, so all-ready only
-    // arms the start once the room has filled to its cap.
+
     var presentAllReady = room.players.length >= room.minPlayers && readyCount === room.players.length;
-    if (presentAllReady && onlineBotBackfillState.pendingJoins.length) {
-      // Everyone here is ready but the room is still filling. Without this the
-      // lobby sat on "the server is starting the match" with no countdown for
-      // as long as it took the remaining bots to walk in — the player is told
-      // the match is imminent and then nothing visibly happens. Show the real
-      // arrival time instead; it is recomputed on every roster change, so it
-      // keeps counting down and lands on the true start.
-      var perBot = getOnlineBotBackfillSetting("joinIntervalMs", ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS) +
-        getOnlineBotBackfillSetting("readyMaxMs", ONLINE_BOT_BACKFILL_READY_MAX_MS);
-      onlineBotBackfillState.allReadyStartAt = 0;
-      room.autoStartAt = now + onlineBotBackfillState.pendingJoins.length * perBot +
-        getOnlineBotBackfillSetting("allReadyStartMs", ONLINE_BOT_BACKFILL_ALL_READY_START_MS);
-      room.startReason = "filling";
-      return;
-    }
-    var everyoneReady = presentAllReady && !onlineBotBackfillState.pendingJoins.length;
-    if (everyoneReady) {
-      // Not an instant start: the player gets a countdown to read the full
-      // room, and a bot still walking in has time to take its seat.
+    if (presentAllReady) {
+      // Not an instant start: the player gets a countdown to read the room, and
+      // a seat that is still empty is taken part way through it.
       if (!onlineBotBackfillState.allReadyStartAt) {
         onlineBotBackfillState.allReadyStartAt = now +
           getOnlineBotBackfillSetting("allReadyStartMs", ONLINE_BOT_BACKFILL_ALL_READY_START_MS);
         room.autoStartAt = now +
           getOnlineBotBackfillSetting("allReadyCountdownMs", ONLINE_BOT_BACKFILL_ALL_READY_COUNTDOWN_MS);
         room.startReason = "all-ready";
+        scheduleOnlineBackfillFinalJoins(now);
       }
       return;
     }
-    // Someone took their readiness back (or a late bot arrived): drop the
-    // countdown instead of starting a match nobody is waiting on.
+    // Somebody walked in and has not settled yet, or the player took their
+    // readiness back: drop the countdown. It comes back at its full length the
+    // moment the room is all-ready again, and that stutter is deliberate — a
+    // lobby where the timer never flinches does not feel like it has people in
+    // it.
     if (onlineBotBackfillState.allReadyStartAt) {
       onlineBotBackfillState.allReadyStartAt = 0;
       room.autoStartAt = 0;
       room.startReason = "";
     }
-    var unreadyCount = room.players.length - readyCount;
-    if (room.players.length >= room.minPlayers && unreadyCount === 1) {
+    var unready = room.players.filter(function (entry) { return !entry.ready; });
+    // Two guards on the forty second force-ready, both about not putting a
+    // countdown on screen that means nothing. A room that is still filling is
+    // not waiting on a holdout — the next arrival would cancel it anyway. And
+    // the only player who can actually hold this room up is the local one: a
+    // bot presses ready a second or two after sitting down, so arming it for a
+    // bot would flash "forty seconds" every time somebody walked in.
+    if (
+      !onlineBotBackfillState.pendingJoins.length &&
+      room.players.length >= room.minPlayers &&
+      unready.length === 1 &&
+      String(unready[0].id) === String(onlineMultiplayerState.playerId || "")
+    ) {
       if (!room.autoStartAt) {
         room.autoStartAt = now + getOnlineBotBackfillSetting("autoStartMs", ONLINE_BOT_BACKFILL_AUTO_START_MS);
       }
@@ -99412,9 +99431,35 @@
     }
   }
 
+  // Whatever has not taken its seat by the time the countdown fires takes it
+  // now. The match roster is built from the full persona list, so a bot left in
+  // the queue would appear in the game without ever appearing in the lobby.
+  function seatRemainingOnlineBackfillJoins() {
+    var room = onlineBotBackfillState.room;
+    if (!room) return;
+    while (onlineBotBackfillState.pendingJoins.length && room.players.length < room.maxPlayers) {
+      var persona = onlineBotBackfillState.pendingJoins.shift();
+      persona.readyAt = null;
+      room.players.push({
+        id: persona.id,
+        name: persona.name,
+        ready: true,
+        connected: true,
+        autoReady: false,
+        cosmetics: persona.cosmetics,
+      });
+    }
+    var botIds = Object.create(null);
+    onlineBotBackfillState.bots.forEach(function (bot) { botIds[bot.id] = true; });
+    room.players.forEach(function (entry) {
+      if (botIds[entry.id]) entry.ready = true;
+    });
+  }
+
   function beginOnlineBackfillPrepare(reason) {
     var room = onlineBotBackfillState.room;
     if (!room || room.phase !== "lobby") return;
+    seatRemainingOnlineBackfillJoins();
     room.phase = "preparing";
     room.startReason = reason;
     room.autoStartAt = 0;
@@ -99565,6 +99610,9 @@
             getOnlineBotBackfillSetting("readyMinMs", ONLINE_BOT_BACKFILL_READY_MIN_MS)
         ));
       var jitter = getOnlineBotBackfillSetting("joinJitterMs", ONLINE_BOT_BACKFILL_JOIN_JITTER_MS);
+      // The lazy cadence is the fallback. When this arrival readies, the
+      // countdown it interrupted is re-armed and pulls the next seat forward
+      // into it — that is where the room's real pace comes from.
       onlineBotBackfillState.nextJoinAt = now +
         getOnlineBotBackfillSetting("joinIntervalMs", ONLINE_BOT_BACKFILL_JOIN_INTERVAL_MS) +
         Math.floor((nextOnlineBackfillRandom() * 2 - 1) * jitter);
@@ -99616,19 +99664,22 @@
       return;
     }
     if (!isOnlineBotBackfillEnabled() || !onlineMultiplayerState.open) {
-      onlineBotBackfillState.aloneSince = 0;
+      onlineBotBackfillState.roomSince = 0;
       return;
     }
     var room = onlineMultiplayerState.room;
     var players = room && Array.isArray(room.players) ? room.players : [];
+    var localId = String(onlineMultiplayerState.playerId || "");
     var eligible = !!(
       room &&
       room.phase === "lobby" &&
-      players.length === 1 &&
-      String((players[0] || {}).id || "") === String(onlineMultiplayerState.playerId || "") &&
+      localId &&
+      players.some(function (entry) { return String(entry && entry.id || "") === localId; }) &&
       // Both the local intent and the room the server actually put us in must
-      // be codeless. A coded room belongs to friends who are still coming, and
-      // the server's own copy is the ground truth if the two ever disagree.
+      // be codeless. Nobody was invited to a public room, so nobody is waiting
+      // for a particular face in it; a coded room belongs to friends who are
+      // still coming, and the server's own copy of the code is the ground truth
+      // if the two ever disagree.
       !onlineMultiplayerState.searchCode &&
       !String(room.searchCode || "") &&
       onlineMultiplayerState.connectionState === "room" &&
@@ -99636,12 +99687,12 @@
       multiplayerState.phase === "lobby"
     );
     if (!eligible) {
-      onlineBotBackfillState.aloneSince = 0;
+      onlineBotBackfillState.roomSince = 0;
       return;
     }
     var now = getOnlineBackfillNow();
-    if (!onlineBotBackfillState.aloneSince) onlineBotBackfillState.aloneSince = now;
-    if (now - onlineBotBackfillState.aloneSince >= getOnlineBotBackfillSetting("delayMs", ONLINE_BOT_BACKFILL_DELAY_MS)) {
+    if (!onlineBotBackfillState.roomSince) onlineBotBackfillState.roomSince = now;
+    if (now - onlineBotBackfillState.roomSince >= getOnlineBotBackfillSetting("delayMs", ONLINE_BOT_BACKFILL_DELAY_MS)) {
       activateOnlineBotBackfill();
     }
   }
@@ -129451,9 +129502,12 @@
     getBackfillState: function () {
       return {
         enabled: isOnlineBotBackfillEnabled(),
-        aloneMs: onlineBotBackfillState.aloneSince
-          ? Math.round(getOnlineBackfillNow() - onlineBotBackfillState.aloneSince)
+        roomMs: onlineBotBackfillState.roomSince
+          ? Math.round(getOnlineBackfillNow() - onlineBotBackfillState.roomSince)
           : 0,
+        // The clock every lobby deadline in the snapshot is measured against, so
+        // a spec can read "how long is left" without mixing in its own Date.now.
+        now: getOnlineBackfillNow(),
         active: onlineBotBackfillState.active,
         matchBots: onlineBotBackfillState.matchBots,
         pendingJoins: onlineBotBackfillState.pendingJoins.length,
@@ -129540,6 +129594,11 @@
           x: player.entity ? Number(player.entity.x.toFixed(3)) : null,
           z: player.entity ? Number(player.entity.z.toFixed(3)) : null,
           weapon: player.progression ? player.progression.weapon : "",
+          // The one ammo reading targeting, steering and firing all share, so a
+          // spec can assert the resupply threshold itself instead of inferring
+          // it from where an idle bot happened to wander.
+          ammoTotal: getOnlineBackfillBotAmmoStatus(player).total,
+          ammoLow: getOnlineBackfillBotAmmoStatus(player).low,
           level: player.progression ? player.progression.level : 0,
           playerClass: player.progression ? player.progression.playerClass : "",
           pendingUpgradeLevels: (player.pendingUpgradeLevels || []).length,

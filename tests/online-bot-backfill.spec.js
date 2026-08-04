@@ -40,8 +40,11 @@ async function installFakeWebSocket(page) {
 }
 
 const FAST_BACKFILL = {
-  delayMs: 1200,
-  firstJoinMs: 100,
+  // Zero is also the shipped value: a public room hands the lobby straight to
+  // the emulation. It stays spelled out here because the helpers below wait it
+  // out, and because a deployment may put a real-player window back in front.
+  delayMs: 0,
+  firstJoinMs: 2000,
   joinIntervalMs: 400,
   joinJitterMs: 0,
   readyMinMs: 150,
@@ -129,7 +132,7 @@ function backfillState(page) {
 
 async function fillRoomWithBots(page) {
   await page.evaluate((config) => window.__dustOnlineTest.configureBackfillForTest(config), FAST_BACKFILL);
-  await advanceMs(page, FAST_BACKFILL.delayMs + 100);
+  await advanceMs(page, FAST_BACKFILL.delayMs + 500);
   expect((await backfillState(page)).active).toBe(true);
   // First bot joins, then the rest at the configured interval; every bot
   // presses ready shortly after joining.
@@ -151,17 +154,17 @@ async function startBackfillMatch(page) {
   return page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
 }
 
-test("waiting alone in the public queue for 12 seconds fills the room with bots", async ({ page }) => {
+test("a codeless match is handed to bots as soon as the room is found", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);
   await page.evaluate((config) => window.__dustOnlineTest.configureBackfillForTest(config), FAST_BACKFILL);
 
-  await advanceMs(page, FAST_BACKFILL.delayMs - 300);
-  expect((await backfillState(page)).active).toBe(false);
-  await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(1);
-
-  await advanceMs(page, 400);
+  // Finding a public room is itself the trigger: there is no window in which a
+  // stranger could turn up, because nobody is being waited for. The room is
+  // still empty though — the first player is not due for another beat.
+  await advanceMs(page, 500);
   expect((await backfillState(page)).active).toBe(true);
+  await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(1);
 
   // The client silently left the real queue when the emulation took over.
   const sent = await page.evaluate(() => window.__onlineSent.map((message) => message.type));
@@ -170,9 +173,7 @@ test("waiting alone in the public queue for 12 seconds fills the room with bots"
   expect(storedSession).toBe(null);
 
   // Bots trickle in on the join cadence and ready up like players would.
-  await advanceMs(page, 200);
-  await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(2);
-  await advanceMs(page, 4000);
+  await advanceMs(page, 4500);
   await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(4);
   await expect(page.locator("#online-multiplayer-player-count")).toHaveText("4 / 4");
   await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row.is-ready")).toHaveCount(3);
@@ -204,52 +205,31 @@ test("a search code always waits for real friends instead of bots", async ({ pag
   await bootLobby(page);
   await findPublicMatch(page, { searchCode: "POSSE" });
   await page.evaluate((config) => window.__dustOnlineTest.configureBackfillForTest(config), FAST_BACKFILL);
-  await advanceMs(page, FAST_BACKFILL.delayMs * 4);
+  // Long past the point where a public room would have filled itself.
+  await advanceMs(page, FAST_BACKFILL.firstJoinMs * 4);
   expect((await backfillState(page)).active).toBe(false);
   await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(1);
 });
 
-test("a real player joining resets the lonely timer", async ({ page }) => {
+test("the shipped public queue needs no waiting period at all", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);
-  await page.evaluate((config) => window.__dustOnlineTest.configureBackfillForTest(config), FAST_BACKFILL);
+  // Deliberately no delayMs override: this is the value the game ships with,
+  // and it is what makes every codeless match a bot match.
+  await page.evaluate(() => window.__dustOnlineTest.configureBackfillForTest(null));
 
-  await advanceMs(page, FAST_BACKFILL.delayMs - 300);
-  await page.evaluate(() => {
-    const socket = window.__onlineSockets[window.__onlineSockets.length - 1];
-    const players = [
-      { id: "player_local1", name: "Ranger Jane", ready: false, connected: true },
-      { id: "player_other", name: "Stranger", ready: false, connected: true },
-    ];
-    socket.serverSend({
-      type: "room.state",
-      room: {
-        id: "room-1", revision: 2, phase: "lobby", searchCode: "", players,
-        playerCount: 2, readyCount: 0, minPlayers: 2, maxPlayers: 4,
-        autoStartAt: 0, serverNow: Date.now(), startReason: "", matchId: "", mapSeed: 0, error: "",
-      },
-    });
-  });
-  await advanceMs(page, FAST_BACKFILL.delayMs);
-  expect((await backfillState(page)).active).toBe(false);
-
-  // The stranger leaves; only a fresh full wait may summon bots.
-  await page.evaluate(() => {
-    const socket = window.__onlineSockets[window.__onlineSockets.length - 1];
-    socket.serverSend({
-      type: "room.state",
-      room: {
-        id: "room-1", revision: 3, phase: "lobby", searchCode: "",
-        players: [{ id: "player_local1", name: "Ranger Jane", ready: false, connected: true }],
-        playerCount: 1, readyCount: 0, minPlayers: 2, maxPlayers: 4,
-        autoStartAt: 0, serverNow: Date.now(), startReason: "", matchId: "", mapSeed: 0, error: "",
-      },
-    });
-  });
-  await advanceMs(page, FAST_BACKFILL.delayMs - 300);
-  expect((await backfillState(page)).active).toBe(false);
-  await advanceMs(page, 400);
+  await advanceMs(page, 500);
   expect((await backfillState(page)).active).toBe(true);
+  const sent = await page.evaluate(() => window.__onlineSent.map((message) => message.type));
+  expect(sent).toContain("queue.leave");
+
+  // Seven seconds of empty room, and then the first player walks in. The
+  // margins are wide because these deadlines are wall clock: the real time a
+  // Playwright round trip takes counts towards them too.
+  await advanceMs(page, 3000);
+  await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(1);
+  await advanceMs(page, 5000);
+  await expect(page.locator("#online-multiplayer-player-list .multiplayer-player-row")).toHaveCount(2);
 });
 
 test("cancelling a backfilled room returns to the real matchmaking path", async ({ page }) => {
@@ -610,57 +590,142 @@ test("bots restock at two magazines, not at the last round", async ({ page }) =>
   const bots = await startBackfillMatch(page);
   await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
 
-  const crate = await page.evaluate((botId) => {
-    const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId);
-    const point = { cx: bot.x + 20, cz: bot.z };
-    window.__dustAndDeadTest.spawnAmmoCrateAt(point.cx, point.cz);
-    return point;
-  }, bots[0].id);
+  // Personas draw a random weapon and the threshold under test is quoted in
+  // revolver magazines — six rounds. Pin it, or the ammo the spec sets belongs
+  // to a gun the bot is not holding and nothing happens, for the wrong reason.
+  await page.evaluate((id) => window.__dustMultiplayerTest.setProgression(id, { weapon: "revolver" }), bots[0].id);
 
-  const distance = () => page.evaluate((args) => {
-    const bot = window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === args.id);
-    return Math.hypot(bot.x - args.cx, bot.z - args.cz);
-  }, { id: bots[0].id, cx: crate.cx, cz: crate.cz });
+  const botState = () => page.evaluate((id) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id), bots[0].id);
 
-  const settleWith = async (magazine, reserve) => {
-    await page.evaluate((args) => window.__dustMultiplayerTest.setProgression(args.id, {
-      ammo: { revolver: args.magazine },
-      ammoReserve: { revolver: args.reserve },
-    }), { id: bots[0].id, magazine, reserve });
-    await advanceMs(page, 4000);
-    return distance();
+  // Sets the bot's rounds and drops a crate a given distance away, then reports
+  // whether it counts as low on ammo. The bot's own position is never the
+  // measurement: an empty arena leaves it wandering at about the speed it would
+  // walk to a crate, so where it ends up proves nothing. Whether it picked the
+  // crate up does.
+  const stageCrate = async (magazine, reserve, crateDistance) => {
+    return page.evaluate((args) => {
+      const multi = window.__dustMultiplayerTest;
+      multi.setProgression(args.id, {
+        ammo: { revolver: args.magazine },
+        ammoReserve: { revolver: args.reserve },
+      });
+      const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.id);
+      window.__dustAndDeadTest.spawnAmmoCrateAt(bot.x + args.crateDistance, bot.z);
+      return multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.id).ammoLow;
+    }, { id: bots[0].id, magazine, reserve, crateDistance });
   };
 
-  // A bot with rounds to spare drifts around fighting; it must not commit to
-  // the crate. The revolver holds six, so thirteen rounds is over two mags.
-  expect(await settleWith(6, 7)).toBeGreaterThan(8);
-  // At exactly two magazines it goes and gets them.
-  expect(await settleWith(6, 6)).toBeLessThan(4);
+  // Exactly two magazines is the threshold: the bot sets out and collects the
+  // crate, which is what "restocks" means — arriving is not enough, and a bot
+  // covers roughly four units a second, so sixteen is a comfortable walk.
+  expect(await stageCrate(6, 6, 16)).toBe(true);
+  await advanceMs(page, 5000);
+  expect((await botState()).ammoTotal).toBeGreaterThan(12);
+
+  // One round more is not low, and nothing is collected. The crate sits well
+  // beyond anything the bot could stumble into while wandering, so a gain in
+  // ammo could only mean it went shopping. Firing at whatever the wave sends
+  // can only lower the count, never raise it.
+  expect(await stageCrate(6, 7, 34)).toBe(false);
+  await advanceMs(page, 4000);
+  const idle = await botState();
+  expect(idle.ammoTotal).toBeLessThanOrEqual(13);
+  expect(idle.ammoLow).toBe(false);
 });
 
-test("the lobby keeps counting down while the room is still filling", async ({ page }) => {
+// Everything the player can read off the lobby, sampled on the lobby's own
+// clock. Mixing the spec's Date.now into the countdown would measure the round
+// trip instead of the timer.
+function readLobby(page) {
+  return page.evaluate(() => {
+    window.__dustOnlineTest.updateCountdown();
+    const state = window.__dustOnlineTest.getBackfillState();
+    const room = state.room || { players: [], autoStartAt: 0 };
+    const value = document.getElementById("online-multiplayer-countdown-value");
+    return {
+      players: room.players.length,
+      readyCount: room.players.filter((entry) => entry.ready).length,
+      pendingJoins: state.pendingJoins,
+      autoStartAt: room.autoStartAt,
+      remainingMs: room.autoStartAt ? room.autoStartAt - state.now : 0,
+      shown: Number(value && value.textContent),
+      countdownVisible: !document.getElementById("online-multiplayer-countdown").hidden,
+    };
+  });
+}
+
+async function advanceUntilLobby(page, describe, predicate) {
+  let reading = await readLobby(page);
+  for (let slice = 0; slice < 40 && !predicate(reading); slice += 1) {
+    await advanceMs(page, 300);
+    reading = await readLobby(page);
+  }
+  expect(predicate(reading), `lobby never reached: ${describe}`).toBe(true);
+  return reading;
+}
+
+test("every arrival drops the countdown and readying brings it back at five", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);
+  // The shipped lobby timings, at full length: this test is about what the
+  // player reads off the clock, so scaling them down would measure nothing.
+  // Only the ready delay is pinned, and pinned long, so that "walked in" and
+  // "pressed ready" are two separate moments a spec can stand between.
   await page.evaluate((config) => window.__dustOnlineTest.configureBackfillForTest(config), {
     ...FAST_BACKFILL,
-    joinIntervalMs: 2000,
+    firstJoinMs: 7000,
+    joinIntervalMs: 5000,
+    readyMinMs: 2000,
+    readyMaxMs: 2001,
     allReadyCountdownMs: 5000,
     allReadyStartMs: 5500,
+    prepareMs: 950,
   });
 
-  await advanceMs(page, FAST_BACKFILL.delayMs + 400);
-  await advanceMs(page, 1000);
-  await page.locator("#online-multiplayer-ready-btn").click();
+  // One player has walked in and readied up; two seats are still empty.
   await advanceMs(page, 500);
+  await advanceMs(page, 9500);
+  const seated = await readLobby(page);
+  expect(seated.players).toBe(2);
+  expect(seated.readyCount).toBe(1);
 
-  // Everyone present is ready but bots are still walking in. The lobby used to
-  // claim the match was starting and show nothing at all; it must show the
-  // player when it will actually begin.
-  const filling = await page.evaluate(() => window.__dustOnlineTest.getBackfillState());
-  expect(filling.pendingJoins).toBeGreaterThan(0);
-  await expect(page.locator("#online-multiplayer-countdown")).toBeVisible();
-  const shown = Number(await page.locator("#online-multiplayer-countdown-value").textContent());
-  expect(shown).toBeGreaterThan(0);
+  await page.locator("#online-multiplayer-ready-btn").click();
+  const armed = await readLobby(page);
+  // Quoting the empty seats' natural arrival time instead used to put twenty
+  // seconds on screen, for a room the player had already committed to.
+  expect(armed.pendingJoins).toBe(2);
+  expect(armed.countdownVisible).toBe(true);
+  expect(armed.remainingMs).toBeLessThanOrEqual(5000);
+  expect(armed.remainingMs).toBeGreaterThan(4000);
+  expect(armed.shown).toBe(5);
+
+  // Somebody walks in part way through: the timer goes away while they settle,
+  // then comes back at a full five when they press ready. That stutter is what
+  // makes the room feel like it has people in it.
+  const interrupted = await advanceUntilLobby(page, "a third player", (state) => state.players === 3);
+  expect(interrupted.autoStartAt).toBe(0);
+  expect(interrupted.countdownVisible).toBe(false);
+
+  const rearmed = await advanceUntilLobby(page, "the countdown again", (state) => state.autoStartAt > 0);
+  expect(rearmed.readyCount).toBe(3);
+  expect(rearmed.pendingJoins).toBe(1);
+  expect(rearmed.remainingMs).toBeGreaterThan(4000);
+  expect(rearmed.shown).toBe(5);
+
+  // And again for the last seat.
+  const lastArrival = await advanceUntilLobby(page, "a fourth player", (state) => state.players === 4);
+  expect(lastArrival.autoStartAt).toBe(0);
+  const finalCountdown = await advanceUntilLobby(page, "the last countdown", (state) => state.autoStartAt > 0);
+  expect(finalCountdown.pendingJoins).toBe(0);
+  expect(finalCountdown.readyCount).toBe(4);
+  expect(finalCountdown.shown).toBe(5);
+
+  // Nothing interrupts this one, so it runs out and the match starts full.
+  await advanceMs(page, 7000);
+  await expect.poll(() => page.evaluate(() => window.__dustMultiplayerTest.getState().phase)).toBe("match");
+  const roster = await page.evaluate(() => window.__dustMultiplayerTest.getState().players.length);
+  expect(roster).toBe(4);
 });
 
 test("derricks do not hold the bots back from the Baron himself", async ({ page }) => {
@@ -807,7 +872,9 @@ test("bots only watch their line of fire while a boss is on the field", async ({
     multi.setPlayerPosition(args.localId, bot.x + 6, bot.z);
   }, { botId, localId });
   const before = await fireCount();
-  for (let i = 0; i < 6; i += 1) {
+  // Long enough for a short-ranged gun to close the distance first: a coach gun
+  // reaches ten units and the zombie is dropped at twelve.
+  for (let i = 0; i < 12; i += 1) {
     await page.evaluate((args) => {
       const multi = window.__dustMultiplayerTest;
       const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
@@ -828,11 +895,25 @@ test("bots only watch their line of fire while a boss is on the field", async ({
   });
   await advanceMs(page, 500);
   const bossBefore = await fireCount();
-  for (let i = 0; i < 8; i += 1) {
-    await page.evaluate((args) => {
+  // Re-pinned every 100 ms, not every 500: a bot covers four units in half a
+  // second, which slides the player clean off its line to the Baron. Measured
+  // at the old cadence the gap grew past the rule's own threshold, so the shots
+  // that followed were legal ones and the test was watching drift, not the
+  // rule.
+  let worstOffLane = 0;
+  for (let i = 0; i < 40; i += 1) {
+    const offLane = await page.evaluate((args) => {
       const multi = window.__dustMultiplayerTest;
       const boss = window.__dustAndDeadTest.getOilBaronDiagnostics().boss;
       const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+      const local = multi.getState().players.find((entry) => entry.id === args.localId);
+      // How far the player has slid off the bot's line to the Baron since the
+      // last pin. This is what has to stay small, or "the bot never fired"
+      // proves nothing.
+      const reach = Math.max(0.001, Math.hypot(boss.x - bot.x, boss.z - bot.z));
+      const dirX = (boss.x - bot.x) / reach;
+      const dirZ = (boss.z - bot.z) / reach;
+      const drift = Math.abs((local.x - bot.x) * dirZ - (local.z - bot.z) * dirX);
       // Park the bot in range of the Baron and the player exactly between them.
       const dx = bot.x - boss.x;
       const dz = bot.z - boss.z;
@@ -840,9 +921,13 @@ test("bots only watch their line of fire while a boss is on the field", async ({
       multi.setPlayerPosition(args.botId, boss.x + (dx / length) * 14, boss.z + (dz / length) * 14);
       multi.setPlayerPosition(args.localId, boss.x + (dx / length) * 7, boss.z + (dz / length) * 7);
       multi.setHealth(args.localId, 120);
+      return drift;
     }, { botId, localId });
-    await advanceMs(page, 500);
+    // The first reading predates the first pin, so it measures nothing.
+    if (i > 0) worstOffLane = Math.max(worstOffLane, offLane);
+    await advanceMs(page, 100);
   }
+  expect(worstOffLane).toBeLessThan(1);
   expect(await fireCount()).toBe(bossBefore);
 });
 
