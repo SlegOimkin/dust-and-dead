@@ -1191,3 +1191,169 @@ test("a bot leaves the ground slam sideways instead of running down it", async (
   expect(moved.along).toBeLessThan(17);
   expect(moved.alive).toBe(true);
 });
+
+test("the odds a bot turns on the player start after wave five and climb every wave", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  await startBackfillMatch(page);
+
+  const odds = await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    const multi = window.__dustMultiplayerTest;
+    const read = (wave, bossKind) => {
+      game.forceWaveState(wave, 0, 0, bossKind || undefined);
+      return Number(multi.getBotAggroChanceForTest().toFixed(4));
+    };
+    return {
+      wave4: read(4),
+      wave5: read(5),
+      wave6: read(6),
+      wave7: read(7),
+      // A boss wave rolls nobody, but the count behind the odds keeps running.
+      wave10Boss: read(10, "bellRinger"),
+      wave11: read(11),
+    };
+  });
+
+  // Nothing before the sixth wave: the run has to be properly under way first.
+  expect(odds.wave4).toBe(0);
+  expect(odds.wave5).toBe(0);
+  expect(odds.wave6).toBeCloseTo(0.05, 4);
+  expect(odds.wave7).toBeCloseTo(0.08, 4);
+  // Three per wave straight through the boss wave, which is why the wave after
+  // one is more dangerous than the wave before it.
+  expect(odds.wave10Boss).toBeCloseTo(0.17, 4);
+  expect(odds.wave11).toBeCloseTo(0.20, 4);
+});
+
+test("a bot rolls on every fresh sighting and gives the player five seconds to break away", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+  const botId = bots[0].id;
+
+  const place = (distance) => page.evaluate((args) => {
+    const multi = window.__dustMultiplayerTest;
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+    multi.setPlayerPosition(args.localId, bot.x + args.distance, bot.z);
+    multi.setHealth(args.localId, 120);
+  }, { botId, localId, distance });
+
+  const readBot = () => page.evaluate((id) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id), botId);
+
+  await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    game.clearEnemies();
+    game.forceWaveState(6, 0, 0);
+    // Pin the odds: this is about the behaviour, not the dice.
+    window.__dustMultiplayerTest.setBotAggroChanceForTest(1);
+  });
+
+  // Well out of sight: nothing to roll for.
+  await place(90);
+  await advanceMs(page, 500);
+  const unseen = await readBot();
+  expect(unseen.aggroPlayerId).toBe("");
+
+  // Walking into view is the encounter, and the roll lands.
+  await place(8);
+  await advanceMs(page, 500);
+  const aggroed = await readBot();
+  expect(aggroed.aggroPlayerId).toBe(localId);
+  expect(aggroed.targetKind).toBe("player");
+  expect(aggroed.targetPlayerId).toBe(localId);
+
+  // Breaking line of sight does not shake it off immediately — the bot keeps
+  // hunting for five seconds.
+  await place(90);
+  await advanceMs(page, 3000);
+  const stillHunting = await readBot();
+  expect(stillHunting.aggroPlayerId).toBe(localId);
+
+  // Past five seconds it goes back to the wave.
+  await advanceMs(page, 3000);
+  const forgotten = await readBot();
+  expect(forgotten.aggroPlayerId).toBe("");
+  expect(forgotten.targetPlayerId).toBe("");
+
+  // And a later sighting is a new encounter with its own roll, which this time
+  // cannot land.
+  await page.evaluate(() => window.__dustMultiplayerTest.setBotAggroChanceForTest(0));
+  await place(8);
+  await advanceMs(page, 500);
+  const spared = await readBot();
+  expect(spared.aggroPlayerId).toBe("");
+});
+
+test("shooting a bot still earns a grudge whether or not it had already come for you", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+  const botId = bots[0].id;
+
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.clearEnemies();
+    window.__dustAndDeadTest.forceWaveState(6, 0, 0);
+    // Nobody self-aggroes in this test: the point is that the other reasons
+    // work on their own, untouched by the new one.
+    window.__dustMultiplayerTest.setBotAggroChanceForTest(0);
+  });
+  await page.evaluate((args) => {
+    const multi = window.__dustMultiplayerTest;
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+    multi.setPlayerPosition(args.localId, bot.x + 8, bot.z);
+    multi.setHealth(args.localId, 120);
+  }, { botId, localId });
+  await advanceMs(page, 500);
+  const calm = await page.evaluate((id) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id), botId);
+  expect(calm.aggroPlayerId).toBe("");
+  expect(calm.targetPlayerId).toBe("");
+
+  await page.evaluate((args) => window.__dustMultiplayerTest.damagePlayer(args.botId, 15, args.localId),
+    { botId, localId });
+  await advanceMs(page, 500);
+  const answered = await page.evaluate((id) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id), botId);
+  // The grudge stands on its own — and it is not the self-aggro flag.
+  expect(answered.targetPlayerId).toBe(localId);
+  expect(answered.aggroPlayerId).toBe("");
+});
+
+test("nobody turns on the player during a boss wave", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+
+  await page.evaluate((args) => {
+    const game = window.__dustAndDeadTest;
+    const multi = window.__dustMultiplayerTest;
+    game.clearEnemies();
+    game.forceWaveState(10, 0, 0, "bellRinger");
+    multi.setBotAggroChanceForTest(1);
+    // Everyone standing right next to the human, which on a normal wave would
+    // be a roll each.
+    multi.getBackfillBotDiagnostics().forEach((bot, index) => {
+      multi.setPlayerPosition(bot.id, bot.x, bot.z);
+      multi.setPlayerPosition(args.localId, bot.x + 5 + index, bot.z + 1);
+    });
+    multi.setHealth(args.localId, 120);
+  }, { localId });
+  await advanceMs(page, 1500);
+
+  const duringBoss = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+  for (const bot of duringBoss) {
+    expect(bot.aggroPlayerId).toBe("");
+    expect(bot.targetPlayerId).toBe("");
+  }
+
+  // The wave after it is a different matter: the odds carried straight through.
+  await page.evaluate(() => window.__dustAndDeadTest.startWaveNow(11));
+  await advanceMs(page, 1000);
+  const afterBoss = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+  expect(afterBoss.some((bot) => bot.aggroPlayerId === localId)).toBe(true);
+});

@@ -99087,6 +99087,19 @@
   // the 0.25-0.60 s acquire hold — a bot in a crowd could spend most of the
   // wave holding its trigger for a target it had already swapped away from.
   var ONLINE_BOT_TARGET_SWITCH_RATIO = 0.75;
+  // Bots stop being purely cooperative once the run is properly under way: from
+  // this wave on, each one that gets a clear look at the human rolls once per
+  // wave to spend that wave hunting them instead. Five percent to start, three
+  // more with every wave, and the count keeps rising through boss waves even
+  // though nobody rolls during one.
+  var ONLINE_BOT_AGGRO_FIRST_WAVE = 6;
+  var ONLINE_BOT_AGGRO_BASE_CHANCE = 0.05;
+  var ONLINE_BOT_AGGRO_CHANCE_PER_WAVE = 0.03;
+  var ONLINE_BOT_AGGRO_SIGHT_RANGE = 26;
+  // How long a bot keeps hunting after losing sight of the player — and, the
+  // same number the other way round, how long they have to stay unseen before
+  // walking back into view counts as a fresh encounter worth another roll.
+  var ONLINE_BOT_AGGRO_FORGET_TIME = 5;
   // Boss resolvers test their radius PLUS the victim's radius, so a model built
   // from the bare constants is a player's width too small.
   var ONLINE_BOT_TELEGRAPH_PAD = 1.1;
@@ -99173,6 +99186,9 @@
     clockOffsetMs: 0,
     rngState: 1,
     testConfig: null,
+    // Test-only: pins the per-wave aggro chance so a spec can assert the
+    // behaviour instead of the odds.
+    aggroChanceOverride: null,
     standardUpgradeIdSet: null,
   };
 
@@ -99802,6 +99818,11 @@
         orbitFlipAt: 0,
         wanderAngle: (index + 1) * 2.1,
         targetEnemy: null,
+        // Who this bot decided to hunt on its own, and when it last had eyes on
+        // them. Null rather than 0 so the very first sighting counts as an
+        // encounter instead of a continuation.
+        aggroPlayerId: "",
+        aggroSeenAt: null,
         targetLastX: null,
         targetLastZ: null,
         targetVelX: 0,
@@ -100534,6 +100555,70 @@
     return best;
   }
 
+  // From wave six on, a bot that gets a clear look at the human may simply
+  // decide to make them the problem. The roll is taken on every ENCOUNTER —
+  // each time the player comes into view having been out of it — not once per
+  // wave and not every frame they stay in sight, which would turn five percent
+  // into a certainty in under a second. Losing sight of them ends it after five
+  // seconds, and the same five seconds is what makes the next sighting count as
+  // a new meeting rather than a continuation of this one.
+  //
+  // None of this touches the other reasons a bot fights back. Being shot still
+  // buys a grudge and dying still rolls a vendetta, both on their own clocks,
+  // and a bot that came for the player of its own accord can be given further
+  // reasons on top.
+  // Boss waves never roll: the party has a shared problem then. The odds keep
+  // climbing through them anyway, so the wave after a boss is more dangerous
+  // than the one before it.
+  function getOnlineBackfillBotAggroChance() {
+    if (onlineBotBackfillState.aggroChanceOverride != null) {
+      return clamp(Number(onlineBotBackfillState.aggroChanceOverride) || 0, 0, 1);
+    }
+    var wave = Math.max(0, Math.floor(Number(state.wave) || 0));
+    if (wave < ONLINE_BOT_AGGRO_FIRST_WAVE) return 0;
+    return clamp(
+      ONLINE_BOT_AGGRO_BASE_CHANCE + (wave - ONLINE_BOT_AGGRO_FIRST_WAVE) * ONLINE_BOT_AGGRO_CHANCE_PER_WAVE,
+      0,
+      1
+    );
+  }
+
+  // "In view" is the same test the Baron traitor hunt uses: close enough to
+  // matter and nothing solid in between.
+  function canOnlineBackfillBotSeePlayer(entity, target) {
+    if (!target || !target.entity) return false;
+    var distance = Math.hypot(target.entity.x - entity.x, target.entity.z - entity.z);
+    if (distance > ONLINE_BOT_AGGRO_SIGHT_RANGE) return false;
+    return !findBlockingObstacle(entity.x, entity.z, target.entity.x, target.entity.z, 0.2, null);
+  }
+
+  function updateOnlineBackfillBotAggro(player, entity, runtime) {
+    var local = getLocalMultiplayerPlayer();
+    // A boss wave counts as not seeing them at all: nobody rolls during one,
+    // anything already running lapses, and — because the clock below stops
+    // being stamped — the first look after the boss is over is a fresh
+    // encounter with the by-then higher odds behind it.
+    var bossWave = isBossWave(Math.max(0, Math.floor(Number(state.wave) || 0)));
+    var visible = !bossWave && !!(
+      local && local.alive && !local.surrendered && local.id !== player.id &&
+      canOnlineBackfillBotSeePlayer(entity, local)
+    );
+    var lastSeenAt = runtime.aggroSeenAt == null ? -Infinity : runtime.aggroSeenAt;
+    var unseenFor = state.time - lastSeenAt;
+    if (!visible) {
+      // Given the slip, the bot goes back to the wave. Only its own decision
+      // expires here — a grudge or a vendetta is the player's doing and keeps
+      // its own clock.
+      if (runtime.aggroPlayerId && unseenFor >= ONLINE_BOT_AGGRO_FORGET_TIME) runtime.aggroPlayerId = "";
+      return;
+    }
+    if (!runtime.aggroPlayerId && unseenFor >= ONLINE_BOT_AGGRO_FORGET_TIME) {
+      var chance = getOnlineBackfillBotAggroChance();
+      if (chance > 0 && nextBackfillBotRandom(runtime) < chance) runtime.aggroPlayerId = local.id;
+    }
+    runtime.aggroSeenAt = state.time;
+  }
+
   // Runs on every elimination, for both sides of it.
   //
   // A grudge is settled by taking the shot: once the bot kills the player it
@@ -100661,6 +100746,13 @@
       ) {
         var attacker = getMultiplayerPlayer(player.lastAttackerPlayerId);
         if (isOnlineBackfillFeudTarget(attacker)) pvpTargetId = attacker.id;
+      } else if (runtime.aggroPlayerId) {
+        // Last, deliberately: being shot or being killed are the player's own
+        // doing and outrank a bot's private decision to come for them. They
+        // stack rather than replace — a self-aggroed bot that then takes a
+        // bullet is answering the bullet, and still hunting afterwards.
+        var aggroTarget = getMultiplayerPlayer(runtime.aggroPlayerId);
+        if (isOnlineBackfillFeudTarget(aggroTarget)) pvpTargetId = aggroTarget.id;
       }
       if (pvpTargetId) {
         runtime.targetPlayerId = pvpTargetId;
@@ -101463,6 +101555,7 @@
       var entity = player.entity;
       if (!entity) continue;
       var persona = player.backfillPersona || { skill: {} };
+      updateOnlineBackfillBotAggro(player, entity, runtime);
       var target = pickOnlineBackfillBotTarget(player, entity, endgame, bossTruce);
       // A human takes a beat to register a NEW threat: switching targets adds
       // a short trigger hold and a flick error the aim has to settle out of.
@@ -130287,6 +130380,10 @@
           pendingUpgradeLevels: (player.pendingUpgradeLevels || []).length,
           hasUpgradeOffer: !!player.currentUpgradeOffer,
           grudgeAttackerId: player.lastAttackerPlayerId || "",
+          aggroPlayerId: runtime.aggroPlayerId || "",
+          aggroSeenAgo: runtime.aggroSeenAt == null
+            ? -1
+            : Number((state.time - runtime.aggroSeenAt).toFixed(3)),
           vendettaPlayerId: player.backfillVendettaPlayerId || "",
           vendettaLife: Number(player.backfillVendettaLife || 0),
           targetKind: runtime.targetKind || "",
@@ -130341,6 +130438,15 @@
     // yes/no predicate.
     getBossHazardPenaltyForTest: function (x, z) {
       return getOnlineBackfillBossHazardPenalty(Number(x) || 0, Number(z) || 0);
+    },
+    // The odds a bot turns on the player this wave, and a way to pin them so a
+    // spec can test the behaviour rather than the dice. Pass null to release.
+    getBotAggroChanceForTest: function () {
+      return getOnlineBackfillBotAggroChance();
+    },
+    setBotAggroChanceForTest: function (chance) {
+      onlineBotBackfillState.aggroChanceOverride = chance == null ? null : Number(chance);
+      return onlineBotBackfillState.aggroChanceOverride;
     },
     setOilBaronAllyForTest: function (playerId, allied) {
       var player = getMultiplayerPlayer(playerId);
