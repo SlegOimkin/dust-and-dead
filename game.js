@@ -1267,6 +1267,15 @@
   ];
   var ZOMBIE_INSTANCING_THRESHOLD = 48;
   var ZOMBIE_INSTANCING_RELEASE_THRESHOLD = 24;
+  // Boss encounters hold the live crowd well below the normal activation
+  // count (the Ghost Train mows the wave down to ~24-45 alive), which used to
+  // leave every zombie on the individual multi-mesh path for the entire
+  // fight — the single largest draw-call load of the boss wave. The boss is
+  // already the most expensive scene, so batch the crowd from a lower
+  // population while one is presenting. Both bands keep an 8-wide hysteresis
+  // so the handoff cannot thrash on one population value.
+  var ZOMBIE_INSTANCING_BOSS_THRESHOLD = 24;
+  var ZOMBIE_INSTANCING_BOSS_RELEASE_THRESHOLD = 16;
   var ZOMBIE_INSTANCE_CHUNK_CAPACITY = 1024;
   // A 1024px PCF map remains sharp at the orthographic gameplay scale and
   // avoids paying four times the shadow pixels before crowd budgeting begins.
@@ -28898,6 +28907,23 @@
     return result;
   }
 
+  // 1 on screen, fading to 0 at ONE further screen out. Screen size is taken
+  // from the camera's own ground rect, so it follows the viewport rather than a
+  // guessed constant.
+  function getLocalExplosionShakeFalloff(x, z) {
+    var rect = getCurrentVisibleGroundRect();
+    var screenRadius = Math.max(
+      1,
+      Math.hypot((rect.maxX - rect.minX) * 0.5, (rect.maxZ - rect.minZ) * 0.5)
+    );
+    var distance = Math.hypot(
+      (Number(x) || 0) - (rect.targetX || 0),
+      (Number(z) || 0) - (rect.targetZ || 0)
+    );
+    if (distance <= screenRadius) return 1;
+    return clamp(1 - (distance - screenRadius) / screenRadius, 0, 1);
+  }
+
   function pointOutsideVisibleGround(x, z, pad, rect) {
     var r = rect || getCurrentVisibleGroundRect();
     var p = pad || 0;
@@ -35913,13 +35939,19 @@
     ghostTrainVisualBundleGpuRewarmDelayFrames = state.ghostTrain ? 2 : 0;
   }
 
+  function isGhostTrainGpuRewarmOpeningWindowActive() {
+    var activeTrain = state.ghostTrain;
+    return !!(
+      activeTrain && activeTrain.visualBundle && !activeTrain.defeated &&
+      activeTrain.phase === 0 && activeTrain.action === "spectral" &&
+      !activeTrain.materialized
+    );
+  }
+
   function processGhostTrainVisualBundleGpuRewarm() {
     var activeTrain = state.ghostTrain;
     var activeBundle = activeTrain && activeTrain.visualBundle;
-    var canUseActiveOpeningBundle = !!(
-      activeBundle && !activeTrain.defeated && activeTrain.phase === 0 &&
-      activeTrain.action === "spectral" && !activeTrain.materialized
-    );
+    var canUseActiveOpeningBundle = isGhostTrainGpuRewarmOpeningWindowActive();
     if (
       !ghostTrainVisualBundleGpuRewarmPending || renderDiagnostics.contextLost ||
       ghostTrainVisualBundlePrewarm.pending && !ghostTrainVisualBundlePrewarm.completed ||
@@ -74551,9 +74583,16 @@
     // transforms and triangles. Keep batching active until only a small group
     // remains so crossing one exact population value cannot multiply draw
     // calls in the middle of a late wave.
+    var bossPresentation = hasActiveBossPresentationForHeavyPrewarm();
+    var activationThreshold = bossPresentation
+      ? ZOMBIE_INSTANCING_BOSS_THRESHOLD
+      : ZOMBIE_INSTANCING_THRESHOLD;
+    var releaseThreshold = bossPresentation
+      ? ZOMBIE_INSTANCING_BOSS_RELEASE_THRESHOLD
+      : ZOMBIE_INSTANCING_RELEASE_THRESHOLD;
     zombieInstancingActive = zombieInstancingActive
-      ? count >= ZOMBIE_INSTANCING_RELEASE_THRESHOLD
-      : count >= ZOMBIE_INSTANCING_THRESHOLD;
+      ? count >= releaseThreshold
+      : count >= activationThreshold;
     return zombieInstancingActive;
   }
 
@@ -75115,6 +75154,9 @@
       active: zombieInstancingActive,
       threshold: ZOMBIE_INSTANCING_THRESHOLD,
       releaseThreshold: ZOMBIE_INSTANCING_RELEASE_THRESHOLD,
+      bossThreshold: ZOMBIE_INSTANCING_BOSS_THRESHOLD,
+      bossReleaseThreshold: ZOMBIE_INSTANCING_BOSS_RELEASE_THRESHOLD,
+      bossPresentation: hasActiveBossPresentationForHeavyPrewarm(),
       batches: zombieInstanceBatchList.length,
       chunks: chunks,
       drawCalls: drawCalls,
@@ -75258,9 +75300,16 @@
 
   function isGhostTrainHeavyPrewarmPending() {
     if (ghostTrainVisualBundlePrewarm.gpuCompilePending) return false;
-    return !!(
-      ghostTrainVisualBundlePrewarm.pending && !ghostTrainVisualBundlePrewarm.completed ||
-      ghostTrainVisualBundleGpuRewarmPending
+    if (ghostTrainVisualBundlePrewarm.pending && !ghostTrainVisualBundlePrewarm.completed) return true;
+    if (!ghostTrainVisualBundleGpuRewarmPending) return false;
+    // Past the opening spectral window the GPU rewarm refuses to touch an
+    // active fight's bundle, so every slot granted to it would no-op while
+    // starving the other prewarm jobs for the whole encounter. Report it not
+    // pending until the fight releases the bundle; the flag itself stays set,
+    // so the rewarm resumes in the calm frames after the wave.
+    return !(
+      (state.ghostTrain || ghostTrainVisualBundleInUse > 0) &&
+      !isGhostTrainGpuRewarmOpeningWindowActive()
     );
   }
 
@@ -75403,10 +75452,16 @@
       state.mode !== "playing" ||
       multiplayerState.active && multiplayerState.phase === "ended"
     );
+    // The urgent bypass exists so a cold-started or context-restored opening
+    // can compile and upload while the spectral train is still immaterial.
+    // Once the opening window closes the rewarm job no-ops against an active
+    // fight, so keeping the bypass would burn every scheduler slot on it for
+    // the rest of the encounter (and starve zombie/boss/effect prewarm).
     var urgentGhostRecovery = !!(
       state.ghostTrain &&
       ghostTrainVisualBundleGpuRewarmPending &&
-      !renderDiagnostics.contextLost
+      !renderDiagnostics.contextLost &&
+      isGhostTrainGpuRewarmOpeningWindowActive()
     );
     if (
       liveRunMode &&
@@ -82009,7 +82064,11 @@
         true
       );
     }
-    state.shake = Math.min(1.4, state.shake + (options.kind === "cluster" ? 0.46 : 0.75));
+    // A grenade going off across the map used to rattle the whole screen. The
+    // shake is a proximity cue, so it falls off with distance from whoever is
+    // watching: full strength on screen, nothing beyond about two screens out.
+    var explosionShake = (options.kind === "cluster" ? 0.46 : 0.75) * getLocalExplosionShakeFalloff(x, z);
+    if (explosionShake > 0.001) state.shake = Math.min(1.4, state.shake + explosionShake);
     handleLauncherExplosionAftermath(x, z, blastRadius, blastDamage, source, options);
     return source;
   }
@@ -100422,6 +100481,20 @@
     runtime.moveZ = bestZ * 0.72 + runtime.moveZ * 0.28;
   }
 
+  function getOnlineBackfillBotProjectileSpeed(player) {
+    var weapon = WEAPONS[getOnlineBackfillBotAmmoStatus(player).weaponId] || WEAPONS.revolver;
+    return Math.max(1, Number(weapon.speed) || 29);
+  }
+
+  // Splash weapons can kill the people they are supposed to be helping. A
+  // launcher shell is judged by where it will actually land, not by the lane it
+  // flies down, so an ally standing near the impact point vetoes the shot.
+  function getOnlineBackfillBotBlastRadius(player) {
+    var weapon = WEAPONS[getOnlineBackfillBotAmmoStatus(player).weaponId];
+    if (!weapon || !(Number(weapon.blastRadius) > 0)) return 0;
+    return Number(weapon.blastRadius) * LAUNCHER_BLAST_RADIUS_MULTIPLIER;
+  }
+
   function updateOnlineBackfillBotAim(player, entity, runtime, persona, target, dt) {
     runtime.aimUpdateIn -= dt;
     var ref = target && target.ref;
@@ -100447,7 +100520,22 @@
       runtime.targetLastZ = ref.z || 0;
       runtime.targetSampleAt = now;
       var distance = Math.hypot((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
-      var leadTime = clamp(distance / 26, 0, 0.4);
+      // Lead by the shell's ACTUAL flight time. The old fixed 26 u/s assumed
+      // every gun was a revolver; a launcher shell travels at 15.5, so grenades
+      // aimed straight at a moving target — the Ghost Train most obviously —
+      // landed where it used to be. Solved iteratively because the flight time
+      // depends on where the target will be, which depends on the flight time.
+      var projectileSpeed = getOnlineBackfillBotProjectileSpeed(player);
+      var leadTime = clamp(distance / projectileSpeed, 0, 1.6);
+      for (var solve = 0; solve < 3; solve++) {
+        var futureX = (ref.x || 0) + runtime.targetVelX * leadTime;
+        var futureZ = (ref.z || 0) + runtime.targetVelZ * leadTime;
+        leadTime = clamp(
+          Math.hypot(futureX - entity.x, futureZ - entity.z) / projectileSpeed,
+          0,
+          1.6
+        );
+      }
       var aimX = (ref.x || 0) + runtime.targetVelX * leadTime;
       var aimZ = (ref.z || 0) + runtime.targetVelZ * leadTime;
       // Aim noise: the doppelganger's error is pure latency; bots also miss.
@@ -100484,20 +100572,34 @@
     var trueAngle = Math.atan2((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
     if (Math.abs(wrapOnlineBackfillAngle(trueAngle - runtime.aimAngle)) > 0.12) return true;
     if (findBlockingObstacle(entity.x, entity.z, ref.x || 0, ref.z || 0, 0.2, null)) return true;
-    // Never clip a teammate who is not the intended target.
+    // Never clip a teammate who is not the intended target. A splash weapon is
+    // judged twice: down the lane like any bullet, and again around the point
+    // the shell will actually burst — during a boss fight everybody is crowded
+    // onto the same target, which is exactly when a careless grenade lands on
+    // the people it was meant to help.
     var dirX = Math.sin(runtime.aimAngle);
     var dirZ = Math.cos(runtime.aimAngle);
+    var blastRadius = getOnlineBackfillBotBlastRadius(player);
+    var blastGuard = blastRadius > 0
+      ? blastRadius + (isBossEncounterActiveForPvp() ? 1.6 : 0.8)
+      : 0;
+    var impactX = entity.x + dirX * targetDistance;
+    var impactZ = entity.z + dirZ * targetDistance;
     var blocked = false;
     multiplayerState.playerOrder.forEach(function (otherId) {
       if (blocked || otherId === player.id || otherId === target.playerId) return;
       var other = getMultiplayerPlayer(otherId);
       if (!other || !other.alive || other.surrendered || !other.entity) return;
+      if (blastGuard > 0 && Math.hypot(other.entity.x - impactX, other.entity.z - impactZ) < blastGuard) {
+        blocked = true;
+        return;
+      }
       var relX = other.entity.x - entity.x;
       var relZ = other.entity.z - entity.z;
       var along = relX * dirX + relZ * dirZ;
       if (along <= 0 || along > targetDistance + 2) return;
       var cross = Math.abs(relX * dirZ - relZ * dirX);
-      if (cross < 1.15) blocked = true;
+      if (cross < (blastGuard > 0 ? Math.max(1.15, blastGuard) : 1.15)) blocked = true;
     });
     return blocked;
   }
@@ -129320,6 +129422,26 @@
       updateOnlineBotBackfill();
       return onlineBotBackfillState.clockOffsetMs;
     },
+    // Persona classes must be uniform across the four; sampling the generator
+    // directly is the only honest way to show that.
+    samplePersonaClassesForTest: function (seed) {
+      // Production reseeds the stream once per match and then draws exactly
+      // three personas, so a sampling run has to do the same or it measures a
+      // single long walk the game never takes.
+      if (Number.isFinite(Number(seed))) onlineBotBackfillState.rngState = (Number(seed) >>> 0) || 1;
+      var used = Object.create(null);
+      var picks = [];
+      for (var i = 0; i < 3; i++) picks.push(createOnlineBackfillBotPersona(used).classId);
+      return picks;
+    },
+    // What a fresh backfilled match does to the world: a new map, and a boss
+    // order reseeded by resetRun so two matches in a row cannot line up.
+    startFreshBackfillWorldForTest: function () {
+      var seed = createDistinctMapSeed(MAP_SEED, (Date.now() & 0xffff) + 1);
+      rebuildMapForSeed(seed);
+      resetRun("playing");
+      return MAP_SEED;
+    },
     getBackfillState: function () {
       return {
         enabled: isOnlineBotBackfillEnabled(),
@@ -129452,6 +129574,10 @@
         });
       });
       return audit;
+    },
+    peekNextBossKindForTest: function () {
+      state.wave = BOSS_FIRST_WAVE + BOSS_WAVE_INTERVAL;
+      return chooseWave10BossKind();
     },
     isPointUnderBossAttackForTest: function (x, z) {
       return isOnlineBackfillPointUnderBossAttack(Number(x) || 0, Number(z) || 0);

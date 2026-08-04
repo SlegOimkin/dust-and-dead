@@ -16,6 +16,36 @@ async function openGame(page) {
   await page.waitForFunction(() => Boolean(window.__dustAndDeadTest && window.__dustMultiplayerTest));
 }
 
+test("a grenade only shakes the screen it goes off on", async ({ page }) => {
+  await openGame(page);
+
+  const result = await page.evaluate(() => {
+    const api = window.__dustAndDeadTest;
+    api.startWaveNow(1);
+    api.clearEnemies();
+    const player = JSON.parse(window.render_game_to_text()).player;
+
+    const shakeFrom = (offsetX) => {
+      api.setCameraShakeForTest(0);
+      api.triggerLauncherExplosionAt(player.x + offsetX, player.z, "main", 3.15, 4, { silent: true });
+      return api.getCameraShakeDiagnosticsForTest().shake;
+    };
+
+    // One screen is roughly this wide in world units; sample well inside it,
+    // just outside it, and far beyond two screens away.
+    return {
+      onScreen: shakeFrom(4),
+      nextDoor: shakeFrom(70),
+      acrossTheMap: shakeFrom(260),
+    };
+  });
+
+  expect(result.onScreen).toBeGreaterThan(0.5);
+  expect(result.nextDoor).toBeLessThan(result.onScreen);
+  // A blast several screens away must not move the camera at all.
+  expect(result.acrossTheMap).toBe(0);
+});
+
 test("boss weapon progress only advances after authoritative damage and dual revolvers ramp", async ({ page }) => {
   await openGame(page);
 
