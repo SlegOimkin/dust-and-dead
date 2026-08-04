@@ -15,6 +15,18 @@ async function openClient(browser, url, name, code) {
     viewport: { width: 960, height: 540 },
     reducedMotion: "reduce",
   });
+  // The shipped online-config points every client at the production server.
+  // Integration clients must resolve same-origin back to the app under test,
+  // and the lock survives both reloads and online-config.js reassigning it —
+  // this test reloads mid-match, so a one-shot evaluate would not be enough.
+  await context.addInitScript(() => {
+    const testConfig = Object.freeze({ url: "", path: "/online", reconnect: true, botBackfill: false });
+    Object.defineProperty(window, "DustAndDeadOnlineConfig", {
+      configurable: false,
+      get() { return testConfig; },
+      set() {},
+    });
+  });
   const page = await context.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => !!window.__dustOnlineTest);
