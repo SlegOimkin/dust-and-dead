@@ -99087,9 +99087,9 @@
   // the 0.25-0.60 s acquire hold — a bot in a crowd could spend most of the
   // wave holding its trigger for a target it had already swapped away from.
   var ONLINE_BOT_TARGET_SWITCH_RATIO = 0.75;
-  // Every Bell Ringer resolver tests its radius PLUS the victim's radius, so a
-  // model built from the bare constants is a player's width too small.
-  var ONLINE_BOT_BELL_TELEGRAPH_PAD = 1.1;
+  // Boss resolvers test their radius PLUS the victim's radius, so a model built
+  // from the bare constants is a player's width too small.
+  var ONLINE_BOT_TELEGRAPH_PAD = 1.1;
   // How far outside a boss's own killing radius a bot tries to stand. Bell
   // Ringer picks his sweep whenever anyone is within 6.35, so a coach-gun bot
   // holding its 5.2 ideal range was choosing to be swept on every cooldown.
@@ -99872,31 +99872,55 @@
 
   function getOnlineBackfillBotThreatAt(player, entity, atX, atZ, outDodge) {
     var threat = 0;
-    for (var i = 0; i < state.bullets.length; i++) {
-      var bullet = state.bullets[i];
-      if (!bullet || (!bullet.ownerPlayerId && !bullet.faction)) continue;
-      if (bullet.ownerPlayerId === player.id) continue;
-      var vx = (bullet.dirX || 0) * (bullet.speed || 0);
-      var vz = (bullet.dirZ || 0) * (bullet.speed || 0);
+    var danger = (entity.radius || 0.72) + 1.3;
+
+    function scoreProjectile(projectile, requireOwner) {
+      if (!projectile) return;
+      // Ghost Train shells belong to nobody; player bullets have to belong to
+      // somebody other than this bot.
+      if (requireOwner) {
+        if (!projectile.ownerPlayerId && !projectile.faction) return;
+        if (projectile.ownerPlayerId === player.id) return;
+      } else if (projectile.cosmeticOnly) return;
+      var vx = (projectile.dirX || 0) * (projectile.speed || 0);
+      var vz = (projectile.dirZ || 0) * (projectile.speed || 0);
       var speedSq = vx * vx + vz * vz;
-      if (speedSq < 1) continue;
-      var relX = atX - bullet.x;
-      var relZ = atZ - bullet.z;
-      var t = clamp((relX * vx + relZ * vz) / speedSq, 0, Math.min(0.6, Math.max(0, bullet.life || 0)));
+      if (speedSq < 1) return;
+      var relX = atX - projectile.x;
+      var relZ = atZ - projectile.z;
+      var t = clamp((relX * vx + relZ * vz) / speedSq, 0, Math.min(0.6, Math.max(0, projectile.life || 0)));
       var missX = relX - vx * t;
       var missZ = relZ - vz * t;
       var miss = Math.hypot(missX, missZ);
-      var danger = (entity.radius || 0.72) + 1.3;
-      if (miss < danger) {
-        threat += (danger - miss) * 95;
-        if (outDodge && (outDodge.weight || 0) < (danger - miss)) {
-          outDodge.weight = danger - miss;
-          // dodge perpendicular to the incoming shot
+      var reach = danger + (Number(projectile.radius) || 0);
+      if (miss >= reach) return;
+      threat += (reach - miss) * 95;
+      if (outDodge && (outDodge.weight || 0) < (reach - miss)) {
+        outDodge.weight = reach - miss;
+        // Step OFF the shot's line, along the miss vector — the shortest way
+        // out of its path. The old code picked a perpendicular by the sign of
+        // the cross product, which points back through the line: a bullet
+        // travelling +Z past a bot standing at x=+1 produced a dodge of
+        // (-1, 0), straight into it.
+        if (miss > 0.001) {
+          outDodge.x = missX / miss;
+          outDodge.z = missZ / miss;
+        } else {
           var length = Math.sqrt(speedSq);
-          var side = (relX * vz - relZ * vx) >= 0 ? 1 : -1;
-          outDodge.x = (-vz / length) * side;
-          outDodge.z = (vx / length) * side;
+          outDodge.x = -vz / length;
+          outDodge.z = vx / length;
         }
+      }
+    }
+
+    for (var i = 0; i < state.bullets.length; i++) scoreProjectile(state.bullets[i], true);
+    // The Ghost Train's shells live in their own array, so the bullet sweep
+    // above never saw them — during that whole encounter a bot had no
+    // projectile awareness at all.
+    var cannonballs = state.ghostTrainCannonballs;
+    if (Array.isArray(cannonballs)) {
+      for (var ballIndex = 0; ballIndex < cannonballs.length; ballIndex++) {
+        scoreProjectile(cannonballs[ballIndex], false);
       }
     }
     return threat;
@@ -100159,7 +100183,7 @@
     // The resolvers all test against radius + entity.radius, so the model has
     // to be a player's width wider than the constant or the bot clears the
     // telegraph and still gets hit.
-    var pad = ONLINE_BOT_BELL_TELEGRAPH_PAD;
+    var pad = ONLINE_BOT_TELEGRAPH_PAD;
     var facing = Number(boss.facingAngle) || 0;
     var forwardX = Math.sin(facing);
     var forwardZ = Math.cos(facing);
@@ -100228,62 +100252,212 @@
     return penalty;
   }
 
+  // Most boss attacks that are not discs run from one point to another — a cane
+  // swing, a cannon shot, a burrow. Expressed in the shape scorer's own terms so
+  // they inherit the sideways gradient for free.
+  function emitOnlineBackfillLaneTelegraph(callback, fromX, fromZ, toX, toZ, halfWidth) {
+    var dx = toX - fromX;
+    var dz = toZ - fromZ;
+    var length = Math.hypot(dx, dz);
+    var width = Math.max(0.5, halfWidth);
+    if (length < 0.001) {
+      callback(fromX, fromZ, width, width, 0);
+      return;
+    }
+    callback(fromX + dx * 0.5, fromZ + dz * 0.5, length / 2, width, Math.atan2(dx, dz));
+  }
+
+  // The Ghost Train had no model at all — not the cannon warnings, not the
+  // shells. Its cannonballs live in their own array rather than state.bullets,
+  // so even the generic bullet dodge could not see them, which left bots holding
+  // firing distance against a broadside with nothing pulling them off it.
+  function forEachOnlineBackfillGhostTrainTelegraph(callback) {
+    var encounter = state.ghostTrain;
+    if (!encounter || !encounter.active || encounter.defeated || encounter.replica) return;
+    var telegraphs = Array.isArray(encounter.cannonTelegraphs) ? encounter.cannonTelegraphs : [];
+    for (var i = 0; i < telegraphs.length; i++) {
+      var pending = telegraphs[i];
+      var shot = pending && pending.shot;
+      if (!shot) continue;
+      // The warning draws the whole flight path, muzzle to fade-out.
+      emitOnlineBackfillLaneTelegraph(
+        callback,
+        shot.originX,
+        shot.originZ,
+        shot.endX,
+        shot.endZ,
+        GHOST_TRAIN_CANNON_RADIUS + ONLINE_BOT_TELEGRAPH_PAD
+      );
+    }
+    // Steam rings are deliberately not modelled: they expand at 12.5 u/s from
+    // the stack against a player's 8.3, so there is no direction that escapes
+    // one. Pricing them would only make bots jitter at a wall they cannot beat.
+  }
+
+  // The Baron's readable attacks. Only the oil star was modelled before, and
+  // even that penalised all eight landing points for the whole action, which
+  // could leave a bot with no clean direction anywhere on the ring.
+  function forEachOnlineBackfillOilBaronTelegraph(callback) {
+    var encounter = state.oilBaron;
+    if (!encounter || !encounter.active || encounter.defeated || encounter.replica) return;
+    var boss = encounter.boss;
+    if (!boss || boss.active === false) return;
+    var action = String(boss.action || "");
+    var pad = ONLINE_BOT_TELEGRAPH_PAD;
+    if (action === "caneWindup") {
+      var caneRange = encounter.isOilDouble ? OIL_BARON_DOUBLE_CANE_RANGE : OIL_BARON_CANE_RANGE;
+      var caneDirX = Number(boss.caneDirX) || Math.sin(Number(boss.facingAngle) || 0);
+      var caneDirZ = Number(boss.caneDirZ) || Math.cos(Number(boss.facingAngle) || 0);
+      emitOnlineBackfillLaneTelegraph(
+        callback,
+        boss.x,
+        boss.z,
+        boss.x + caneDirX * caneRange,
+        boss.z + caneDirZ * caneRange,
+        OIL_BARON_CANE_HALF_WIDTH + pad
+      );
+    } else if (action === "groundSlam") {
+      var slamRadius = OIL_BARON_GROUND_SLAM_RADIUS + pad;
+      callback(boss.x, boss.z, slamRadius, slamRadius, 0);
+    } else if (action === "monocleWindup") {
+      // A sniper line: thin, very long, and aimed where he is facing.
+      var aimX = Math.sin(Number(boss.facingAngle) || 0);
+      var aimZ = Math.cos(Number(boss.facingAngle) || 0);
+      emitOnlineBackfillLaneTelegraph(
+        callback,
+        boss.x,
+        boss.z,
+        boss.x + aimX * OIL_BARON_MONOCLE_PROJECTILE_RANGE,
+        boss.z + aimZ * OIL_BARON_MONOCLE_PROJECTILE_RANGE,
+        OIL_BARON_MONOCLE_PROJECTILE_RADIUS + pad
+      );
+    } else if (action === "oilStar" && Array.isArray(boss.starLandingPoints)) {
+      // Only where he is about to land. He visits eight points over the whole
+      // action; seven of them are not a threat at any given moment.
+      var jumpIndex = Math.max(0, Math.floor(Number(boss.starJumpIndex) || 0));
+      var landing = boss.starLandingPoints[jumpIndex] || boss.starLandingPoints[0];
+      if (landing) {
+        var starRadius = OIL_BARON_STAR_LANDING_RADIUS + pad;
+        callback(landing.x, landing.z, starRadius, starRadius, 0);
+      }
+    }
+    // Burning oil is not an attack but it damages all the same, and it is the
+    // one Baron hazard that persists long enough for a bot to walk into it
+    // while thinking about something else.
+    var derricks = Array.isArray(encounter.derricks) ? encounter.derricks : [];
+    for (var derrickIndex = 0; derrickIndex < derricks.length; derrickIndex++) {
+      var derrick = derricks[derrickIndex];
+      if (!derrick || derrick.destroyed) continue;
+      var oilRadius = Number(derrick.oilRadius) || 0;
+      if (oilRadius <= 0) continue;
+      var padded = oilRadius + pad;
+      callback(derrick.x, derrick.z, padded, padded, 0);
+    }
+  }
+
+  // The Land Eater's burrow was modelled as a circle on its END point, so
+  // standing anywhere along the trench it ploughs scored zero, and the zigzag
+  // route — which is the same thing with more corners — had no branch at all.
+  function forEachOnlineBackfillLandEaterTelegraph(callback) {
+    var encounter = state.landEater;
+    if (!encounter || !encounter.active || encounter.defeated || encounter.replica) return;
+    var action = String(encounter.action || "");
+    if (action === "burrow" && Number.isFinite(Number(encounter.burrowEndX))) {
+      var startX = Number.isFinite(Number(encounter.burrowStartX))
+        ? Number(encounter.burrowStartX)
+        : Number(encounter.burrowEndX);
+      var startZ = Number.isFinite(Number(encounter.burrowStartZ))
+        ? Number(encounter.burrowStartZ)
+        : Number(encounter.burrowEndZ);
+      emitOnlineBackfillLaneTelegraph(
+        callback,
+        startX,
+        startZ,
+        Number(encounter.burrowEndX),
+        Number(encounter.burrowEndZ),
+        LAND_EATER_BURROW_STRIKE_RADIUS + ONLINE_BOT_TELEGRAPH_PAD
+      );
+    } else if (action === "zigzag" && Array.isArray(encounter.route) && encounter.route.length >= 2) {
+      for (var i = 1; i < encounter.route.length; i++) {
+        var from = encounter.route[i - 1];
+        var to = encounter.route[i];
+        if (!from || !to) continue;
+        emitOnlineBackfillLaneTelegraph(
+          callback,
+          from.x,
+          from.z,
+          to.x,
+          to.z,
+          LAND_EATER_ZIGZAG_HIT_RADIUS + ONLINE_BOT_TELEGRAPH_PAD
+        );
+      }
+    }
+  }
+
+  // Hordeheart's flesh trails are capsules from the source to the target — the
+  // authority's own hit test says so — but the bot scored a circle at the far
+  // end, so the entire body of a trail was invisible.
+  function forEachOnlineBackfillHordeheartTelegraph(callback) {
+    var encounter = state.hordeheart;
+    if (!encounter || !Array.isArray(encounter.attackHazards)) return;
+    for (var i = 0; i < encounter.attackHazards.length; i++) {
+      var hazard = encounter.attackHazards[i];
+      if (!hazard || (hazard.life || 0) <= 0) continue;
+      var radius = Math.max(1.5, Number(hazard.radius) || 2.5) + ONLINE_BOT_TELEGRAPH_PAD;
+      if (hazard.kind === "fleshTrail" && Number.isFinite(Number(hazard.sourceX))) {
+        emitOnlineBackfillLaneTelegraph(
+          callback,
+          Number(hazard.sourceX),
+          Number(hazard.sourceZ),
+          Number(hazard.targetX) || 0,
+          Number(hazard.targetZ) || 0,
+          radius
+        );
+      } else {
+        callback(Number(hazard.targetX) || 0, Number(hazard.targetZ) || 0, radius, radius, 0);
+      }
+    }
+  }
+
+  function getOnlineBackfillEncounterTelegraphPenalty(atX, atZ) {
+    var penalty = 0;
+    function score(cx, cz, halfLength, halfWidth, angle) {
+      penalty += scoreOnlineBackfillTelegraphShape(atX, atZ, cx, cz, halfLength, halfWidth, angle);
+    }
+    forEachOnlineBackfillGhostTrainTelegraph(score);
+    forEachOnlineBackfillOilBaronTelegraph(score);
+    forEachOnlineBackfillLandEaterTelegraph(score);
+    forEachOnlineBackfillHordeheartTelegraph(score);
+    return penalty;
+  }
+
   function isOnlineBackfillPointUnderBossAttack(atX, atZ) {
     return getOnlineBackfillSlothTelegraphPenalty(atX, atZ) > 0 ||
       getOnlineBackfillDoomedCellPenalty(atX, atZ) > 0;
   }
 
-  // Boss telegraphs the ordinary bullet sweep cannot see: falling bells, oil
-  // star landings, the Archbishop's snapshotted slam points, Hordeheart's
-  // lingering fields and the Land Eater's burrow strike.
+  // Everything a bot has to walk out of. Every boss now contributes its real
+  // telegraph shapes; the hand-written circles that used to stand in for them
+  // are gone, because a circle over a lane has no sideways gradient and a
+  // circle on a lane's far end has no gradient at all where the lane actually
+  // is. The falling bell keeps its own branch: it is a genuine circle, and it
+  // is the one Bell Ringer attack that is not attached to the boss.
   function getOnlineBackfillBossHazardPenalty(atX, atZ) {
     var penalty = 0;
-    var i;
     var bell = state.bellRinger;
     if (bell && Array.isArray(bell.bellDrops)) {
-      for (i = 0; i < bell.bellDrops.length; i++) {
+      for (var i = 0; i < bell.bellDrops.length; i++) {
         var drop = bell.bellDrops[i];
         if (!drop || drop.impacted) continue;
-        var dropRadius = 4.6 + 1.2;
+        var dropRadius = BELL_RINGER_BELL_DROP_RADIUS + ONLINE_BOT_TELEGRAPH_PAD;
         var dropDistance = Math.hypot(atX - (drop.x || 0), atZ - (drop.z || 0));
         if (dropDistance < dropRadius) penalty += (dropRadius - dropDistance) * 420;
       }
     }
-    var baron = state.oilBaron;
-    if (baron && baron.boss && baron.boss.action === "oilStar" && Array.isArray(baron.boss.starLandingPoints)) {
-      for (i = 0; i < baron.boss.starLandingPoints.length; i++) {
-        var star = baron.boss.starLandingPoints[i];
-        if (!star) continue;
-        var starRadius = 4.3 + 1.4;
-        var starDistance = Math.hypot(atX - (star.x || 0), atZ - (star.z || 0));
-        if (starDistance < starRadius) penalty += (starRadius - starDistance) * 380;
-      }
-    }
-    // The Archbishop is scored by his real telegraph shapes at the bottom of
-    // this function. He used to be scored HERE as well, as a flat 5.6 circle on
-    // every slam target — which put a fat round blob over a cross-sweep arm
-    // that is 9.2 long and 1.42 wide, and a blob has no sideways gradient. The
-    // circle was quietly cancelling out the one model that knows which way is
-    // out.
-    var heart = state.hordeheart;
-    if (heart && Array.isArray(heart.attackHazards)) {
-      for (i = 0; i < heart.attackHazards.length; i++) {
-        var hazard = heart.attackHazards[i];
-        if (!hazard || (hazard.life || 0) <= 0) continue;
-        var hazardRadius = Math.max(1.5, Number(hazard.radius) || 2.5);
-        var hazardDistance = Math.hypot(atX - (hazard.targetX || 0), atZ - (hazard.targetZ || 0));
-        if (hazardDistance < hazardRadius) penalty += (hazardRadius - hazardDistance) * 260;
-      }
-    }
-    var eater = state.landEater;
-    if (eater && eater.action === "burrow" && Number.isFinite(Number(eater.burrowEndX))) {
-      var burrowRadius = 6.2 + 1.2;
-      var burrowDistance = Math.hypot(atX - Number(eater.burrowEndX), atZ - Number(eater.burrowEndZ));
-      if (burrowDistance < burrowRadius) penalty += (burrowRadius - burrowDistance) * 620;
-    }
     return penalty + getOnlineBackfillDoomedCellPenalty(atX, atZ) +
       getOnlineBackfillSlothTelegraphPenalty(atX, atZ) +
-      getOnlineBackfillBellTelegraphPenalty(atX, atZ);
+      getOnlineBackfillBellTelegraphPenalty(atX, atZ) +
+      getOnlineBackfillEncounterTelegraphPenalty(atX, atZ);
   }
 
   // Something is landing on this spot. Escaping it is not a term in a steering
@@ -130160,6 +130334,13 @@
     },
     isPointUnderBossAttackForTest: function (x, z) {
       return isOnlineBackfillPointUnderBossAttack(Number(x) || 0, Number(z) || 0);
+    },
+    // What a bot's steering actually reads at a point. A spec can stage a boss
+    // attack and check both that the model sees it AND which way out it
+    // prices cheapest, which is the part that cannot be inferred from a
+    // yes/no predicate.
+    getBossHazardPenaltyForTest: function (x, z) {
+      return getOnlineBackfillBossHazardPenalty(Number(x) || 0, Number(z) || 0);
     },
     setOilBaronAllyForTest: function (playerId, allied) {
       var player = getMultiplayerPlayer(playerId);
