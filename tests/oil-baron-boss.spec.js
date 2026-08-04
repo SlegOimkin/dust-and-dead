@@ -445,6 +445,44 @@ test("multiplayer derrick priority considers every hostile player", async ({ pag
   )).toBeGreaterThanOrEqual(17.98);
 });
 
+test("a bigger party gets more derricks, not tougher ones", async ({ page }) => {
+  await startHunt(page);
+  const result = await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    const multi = window.__dustMultiplayerTest;
+
+    const measure = () => {
+      game.startWaveNow(10, "oilBaron");
+      game.clearEnemies();
+      game.setOilBaronAiEnabled(false);
+      game.spawnOilDerrick(undefined, undefined, { instant: true, silent: true });
+      const diagnostics = game.getOilBaronDiagnostics();
+      return {
+        maxHp: diagnostics.derricks[diagnostics.derricks.length - 1].maxHp,
+        intervalScale: diagnostics.combatConfig.derrickIntervalPlayerScale,
+        ratePerExtraPlayer: diagnostics.combatConfig.derrickRatePerExtraPlayer,
+        hpPerExtraPlayer: diagnostics.combatConfig.derrickHpPerExtraPlayer,
+      };
+    };
+
+    const solo = measure();
+    multi.startMockHost(["Host", "Guest", "Third", "Fourth"]);
+    const fullParty = measure();
+    return { solo, fullParty };
+  });
+
+  // Health is flat: a four-player derrick dies to the same magazine as a solo one.
+  expect(result.solo.maxHp).toBeCloseTo(58.5, 3);
+  expect(result.fullParty.maxHp).toBeCloseTo(58.5, 3);
+  expect(result.solo.hpPerExtraPlayer).toBe(0);
+
+  // The pressure arrives as cadence instead: +7% spawn rate per extra player,
+  // so four players see them 21% faster.
+  expect(result.solo.ratePerExtraPlayer).toBeCloseTo(0.07, 5);
+  expect(result.solo.intervalScale).toBeCloseTo(1, 3);
+  expect(result.fullParty.intervalScale).toBeCloseTo(1 / 1.21, 3);
+});
+
 test("the Baron plants substantially faster than he ignites", async ({ page }) => {
   await startHunt(page);
   await startBaron(page);

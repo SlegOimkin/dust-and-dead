@@ -965,7 +965,7 @@
   var OIL_BARON_SURRENDER_REWARD = 5000;
   var OIL_BARON_DEFEAT_REWARD = 4000;
   var OIL_BARON_DERRICK_BASE_HP = 58.5;
-  var OIL_BARON_DERRICK_HP_PER_EXTRA_PLAYER = 29.25;
+  var OIL_BARON_DERRICK_RATE_PER_EXTRA_PLAYER = 0.07;
   var OIL_BARON_DERRICK_BUILD_TIME = 1.55;
   var OIL_BARON_DERRICK_FIRST_DELAY = 3;
   var OIL_BARON_DERRICK_INTERVALS = [7, 5.8, 4.6];
@@ -63769,9 +63769,17 @@
     return ratio <= 0.3 ? 2 : ratio <= OIL_BARON_BRIBE_HP_RATIO ? 1 : 0;
   }
 
+  // Each extra player makes derricks appear OIL_BARON_DERRICK_RATE_PER_EXTRA_PLAYER
+  // faster, which is how a bigger party gets a bigger chore. Rate scales, so the
+  // interval is divided.
+  function getOilBaronDerrickPlayerRateScale() {
+    var extraPlayers = Math.max(0, Math.max(1, getMultiplayerWaveParticipantCount()) - 1);
+    return 1 / (1 + OIL_BARON_DERRICK_RATE_PER_EXTRA_PLAYER * extraPlayers);
+  }
+
   function getOilBaronDerrickInterval(encounter) {
     var phase = clamp(Math.floor(encounter && encounter.phase || 0), 0, OIL_BARON_DERRICK_INTERVALS.length - 1);
-    return OIL_BARON_DERRICK_INTERVALS[phase] + rand(-0.65, 0.85);
+    return (OIL_BARON_DERRICK_INTERVALS[phase] + rand(-0.65, 0.85)) * getOilBaronDerrickPlayerRateScale();
   }
 
   function getOilBaronIgniteInterval(encounter) {
@@ -63886,8 +63894,10 @@
       : findOilDerrickPlacement(encounter);
     if (!point) return null;
     encounter.derrickSequence += 1;
-    var playerCount = Math.max(1, getMultiplayerWaveParticipantCount());
-    var maxHp = OIL_BARON_DERRICK_BASE_HP + Math.max(0, playerCount - 1) * OIL_BARON_DERRICK_HP_PER_EXTRA_PLAYER;
+    // Derricks are a chore to clear, not a health check: a bigger party gets
+    // MORE of them (see getOilBaronDerrickInterval) rather than tougher ones,
+    // so each is still worth the few seconds it costs to drop.
+    var maxHp = OIL_BARON_DERRICK_BASE_HP;
     if (Number.isFinite(Number(options.maxHp))) maxHp = Math.max(1, Number(options.maxHp));
     // Network stress tests can create logical derricks without allocating
     // hundreds of detailed WebGL rigs; real encounters and replicas always
@@ -71719,7 +71729,9 @@
           OIL_BARON_HEALTH_MULTIPLIER_FROM_WAVE_10
         ).toFixed(3)),
         derrickBaseHp: OIL_BARON_DERRICK_BASE_HP,
-        derrickHpPerExtraPlayer: OIL_BARON_DERRICK_HP_PER_EXTRA_PLAYER,
+        derrickHpPerExtraPlayer: 0,
+        derrickRatePerExtraPlayer: OIL_BARON_DERRICK_RATE_PER_EXTRA_PLAYER,
+        derrickIntervalPlayerScale: Number(getOilBaronDerrickPlayerRateScale().toFixed(4)),
         derrickFirstDelay: OIL_BARON_DERRICK_FIRST_DELAY,
         derrickIntervals: OIL_BARON_DERRICK_INTERVALS.slice(),
         derrickMinSpacing: OIL_BARON_DERRICK_MIN_SPACING,
@@ -78654,8 +78666,12 @@
         }
         if (collector) {
           var collectedByPlayer = false;
+          // A bot walks to a crate far less efficiently than a player does, so
+          // each trip has to be worth making; otherwise they spend the wave
+          // commuting instead of fighting.
+          var collectorScale = collector.backfillBot ? ONLINE_BOT_AMMO_CRATE_MULTIPLIER : 1;
           withMultiplayerPlayerContext(collector, function () {
-            collectedByPlayer = collectAmmoCrate(i);
+            collectedByPlayer = collectAmmoCrate(i, collectorScale);
           });
           if (collectedByPlayer) {
             collector.progressionRevision =
@@ -79086,10 +79102,11 @@
     return crate;
   }
 
-  function collectAmmoCrate(index) {
+  function collectAmmoCrate(index, resourceScale) {
     var crate = state.ammoCrates[index];
     if (!crate) return false;
-    grantAmmoCrateResources(crate.pickupScale || 1);
+    var scale = Number(resourceScale);
+    grantAmmoCrateResources((crate.pickupScale || 1) * (scale > 0 ? scale : 1));
     removeCollectedAmmoCrate(index);
     recordCareerPickup("ammoCrate");
     updateHud();
@@ -98896,6 +98913,7 @@
   // behind stops being a credible opponent, so the gap to the human is capped.
   var ONLINE_BOT_MAX_LEVEL_GAP = 3;
   var ONLINE_BOT_LEVEL_CATCHUP_INTERVAL = 4;
+  var ONLINE_BOT_AMMO_CRATE_MULTIPLIER = 3;
 
   var onlineBotBackfillState = {
     aloneSince: 0,
@@ -99509,6 +99527,8 @@
         decisionAt: 0,
         stuckTimer: 0,
         stuckStrikes: 0,
+        noProgressTimer: 0,
+        lastGoalDistance: -1,
         forcedTimer: 0,
         forcedX: 0,
         forcedZ: 0,
@@ -99661,20 +99681,28 @@
       if (!canOnlineBackfillBotDamageBossTarget(target, entity)) return;
       targets.push(target);
     });
-    // Derricks and doubles are not in the generic sweep, but they are the
-    // Oil Baron fight's real objectives while he is untouchable.
+    // Derricks and doubles are not in the generic sweep. They matter, but the
+    // Baron himself is the fight: a bot that wanders the map popping derricks
+    // never contributes to the kill. So a derrick is only worth considering
+    // while it is closer to the bot than the Baron is — and once he is
+    // untouchable (bribe, oil star) they are all that is left to shoot.
     var baronEncounter = state.oilBaron;
     if (baronEncounter && getActiveOilBaronBoss()) {
-      if (Array.isArray(baronEncounter.oilDoubles)) {
-        baronEncounter.oilDoubles.forEach(function (oilDouble) {
-          if (canOnlineBackfillBotDamageBossTarget(oilDouble, entity)) targets.push(oilDouble);
-        });
+      var baronTarget = null;
+      for (var i = 0; i < targets.length; i++) {
+        if (targets[i] && targets[i].isOilBaron) baronTarget = targets[i];
       }
-      if (Array.isArray(baronEncounter.derricks)) {
-        baronEncounter.derricks.forEach(function (derrick) {
-          if (canOnlineBackfillBotDamageBossTarget(derrick, entity)) targets.push(derrick);
-        });
-      }
+      var baronRange = baronTarget
+        ? Math.hypot((baronTarget.x || 0) - entity.x, (baronTarget.z || 0) - entity.z)
+        : Infinity;
+      var considerSecondary = function (candidate) {
+        if (!canOnlineBackfillBotDamageBossTarget(candidate, entity)) return;
+        var range = Math.hypot((candidate.x || 0) - entity.x, (candidate.z || 0) - entity.z);
+        if (range >= baronRange) return;
+        targets.push(candidate);
+      };
+      if (Array.isArray(baronEncounter.oilDoubles)) baronEncounter.oilDoubles.forEach(considerSecondary);
+      if (Array.isArray(baronEncounter.derricks)) baronEncounter.derricks.forEach(considerSecondary);
     }
     targets.sort(function (a, b) {
       var da = Math.hypot((a.x || 0) - entity.x, (a.z || 0) - entity.z);
@@ -99855,7 +99883,17 @@
     runtime.targetPlayerId = "";
     if (bossTruce) {
       var bossTargets = collectOnlineBackfillBossTargets(entity);
-      if (bossTargets.length) return { kind: "boss", ref: bossTargets[0] };
+      if (bossTargets.length) {
+        // Where to walk and what to shoot are different questions. Derricks
+        // spawn on top of the party, so a bot that walks to whatever it is
+        // shooting never leaves the derrick field and never reaches the Baron.
+        // It advances on the Baron and pops the derricks it passes.
+        var approach = null;
+        for (var bossIndex = 0; bossIndex < bossTargets.length; bossIndex++) {
+          if (bossTargets[bossIndex] && bossTargets[bossIndex].isOilBaron) approach = bossTargets[bossIndex];
+        }
+        return { kind: "boss", ref: bossTargets[0], approach: approach || bossTargets[0] };
+      }
       // Nothing on the boss can be hurt right now — clear the shield, or at
       // least stop standing still and shoot the trash it summoned.
       if (nearestEnemy && nearestEnemyDistance < 30) return { kind: "enemy", ref: nearestEnemy };
@@ -99899,6 +99937,36 @@
     }
     runtime.lastX = entity.x;
     runtime.lastZ = entity.z;
+    // Sliding along an obstacle looks like healthy movement to the check above
+    // but gets the bot nowhere: scenery such as a line of oil derricks can hold
+    // a greedy steerer in a local minimum for the whole wave. Watch the
+    // distance to whatever the bot is heading for, and if it stops shrinking
+    // while the bot is clearly trying, commit to a detour around the blockage.
+    var progressGoal = churchGoal || (target && (target.approach || target.ref)) || null;
+    if (progressGoal && desiredMove > 0.3) {
+      var goalDistance = Math.hypot((progressGoal.x || 0) - entity.x, (progressGoal.z || 0) - entity.z);
+      if (runtime.lastGoalDistance >= 0 && goalDistance > runtime.lastGoalDistance - 0.05 && goalDistance > 12) {
+        runtime.noProgressTimer += dt;
+      } else if (goalDistance < runtime.lastGoalDistance - 0.05) {
+        runtime.noProgressTimer = 0;
+      }
+      runtime.lastGoalDistance = goalDistance;
+      if (runtime.noProgressTimer > 2.2) {
+        runtime.noProgressTimer = 0;
+        var detourSide = nextBackfillBotRandom(runtime) < 0.5 ? 1 : -1;
+        var goalAngle = Math.atan2((progressGoal.x || 0) - entity.x, (progressGoal.z || 0) - entity.z);
+        var detourAngle = goalAngle + detourSide * (Math.PI / 2);
+        runtime.forcedX = Math.sin(detourAngle);
+        runtime.forcedZ = Math.cos(detourAngle);
+        runtime.forcedTimer = 0.9 + nextBackfillBotRandom(runtime) * 0.6;
+        runtime.moveX = runtime.forcedX;
+        runtime.moveZ = runtime.forcedZ;
+        return;
+      }
+    } else {
+      runtime.lastGoalDistance = -1;
+      runtime.noProgressTimer = 0;
+    }
     if (runtime.stuckTimer > 0.35) {
       runtime.stuckTimer = 0;
       runtime.stuckStrikes = (runtime.stuckStrikes || 0) + 1;
@@ -100000,16 +100068,34 @@
     }
     var orbitTangentX = 0;
     var orbitTangentZ = 0;
+    // Movement follows the approach entity when the target set names one (the
+    // Oil Baron behind his derricks); everything else walks to what it shoots.
+    var approachRef = (target && (target.approach || target.ref)) || null;
     var orbitActive = false;
-    if (target && target.ref && !outOfAmmo && !churchGoal) {
-      var toTargetX = (target.ref.x || 0) - entity.x;
-      var toTargetZ = (target.ref.z || 0) - entity.z;
+    if (approachRef && !outOfAmmo && !churchGoal) {
+      var toTargetX = (approachRef.x || 0) - entity.x;
+      var toTargetZ = (approachRef.z || 0) - entity.z;
       var toTargetLength = Math.hypot(toTargetX, toTargetZ);
       if (toTargetLength > 0.001 && Math.abs(toTargetLength - idealRange) < 3.5) {
         orbitActive = true;
         orbitTangentX = (-toTargetZ / toTargetLength) * (runtime.orbitDirection || 1);
         orbitTangentZ = (toTargetX / toTargetLength) * (runtime.orbitDirection || 1);
       }
+    }
+
+    // Zombies standing on a crate used to make it untouchable: the avoidance
+    // penalty around them dwarfed the pull toward the crate, so a dry bot
+    // circled at a respectful distance until the wave ended. A player low on
+    // ammo just pushes in and grabs it, so the keep-away shrinks the emptier
+    // the bot is.
+    var enemyAvoidWeight = 14;
+    var enemyAvoidRadius = 7;
+    if (outOfAmmo && nearestCrate) {
+      enemyAvoidWeight = 2.5;
+      enemyAvoidRadius = 2.6;
+    } else if (lowAmmo && nearestCrate) {
+      enemyAvoidWeight = 6;
+      enemyAvoidRadius = 4.5;
     }
 
     var bestScore = -Infinity;
@@ -100034,14 +100120,14 @@
         if (pointHitsObstacle(probeX, probeZ, entity.radius * 0.85)) continue;
       }
       var score = nextBackfillBotRandom(runtime) * 6;
-      if (target && target.ref && !outOfAmmo && !churchGoal) {
-        var targetDistance = Math.hypot((target.ref.x || 0) - probeX, (target.ref.z || 0) - probeZ);
+      if (approachRef && !outOfAmmo && !churchGoal) {
+        var targetDistance = Math.hypot((approachRef.x || 0) - probeX, (approachRef.z || 0) - probeZ);
         score -= Math.abs(targetDistance - idealRange) * 6;
       }
       for (var nearIndex = 0; nearIndex < nearbyEnemies.length; nearIndex++) {
         var nearEnemy = nearbyEnemies[nearIndex];
         var nearDistance = Math.hypot(nearEnemy.x - probeX, nearEnemy.z - probeZ);
-        if (nearDistance < 7) score -= (7 - nearDistance) * 14;
+        if (nearDistance < enemyAvoidRadius) score -= (enemyAvoidRadius - nearDistance) * enemyAvoidWeight;
       }
       score -= getOnlineBackfillHazardPenalty(probeX, probeZ);
       score -= getOnlineBackfillBossHazardPenalty(probeX, probeZ);

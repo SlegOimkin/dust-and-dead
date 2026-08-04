@@ -554,6 +554,41 @@ test("bots hold fire while the Bell Ringer is shielded and go take the churches"
   expect(moved.length).toBeGreaterThan(0);
 });
 
+test("derricks do not hold the bots back from the Baron himself", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+
+  // Derricks plant on top of the party, so they are always the nearest thing
+  // to shoot. They must not become the thing the bots walk to.
+  await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    game.startWaveNow(10, "oilBaron");
+    game.clearEnemies();
+    game.setOilBaronAiEnabled(false);
+    for (let i = 0; i < 6; i++) game.spawnOilDerrick(undefined, undefined, { instant: true, silent: true });
+  });
+  await advanceMs(page, 1000);
+
+  const distanceToBaron = () => page.evaluate(() => {
+    const boss = window.__dustAndDeadTest.getOilBaronDiagnostics().boss;
+    return window.__dustMultiplayerTest.getBackfillBotDiagnostics()
+      .map((bot) => Math.hypot(bot.x - boss.x, bot.z - boss.z));
+  });
+
+  const before = await distanceToBaron();
+  await advanceMs(page, 10000);
+  const after = await distanceToBaron();
+
+  // Every bot is meaningfully closer to the Baron than it started, with the
+  // derrick field still standing between them.
+  after.forEach((distance, index) => expect(distance).toBeLessThan(before[index] - 10));
+  const derricksAlive = await page.evaluate(() =>
+    window.__dustAndDeadTest.getOilBaronDiagnostics().derricks.filter((d) => d.active && !d.destroyed).length);
+  expect(derricksAlive).toBeGreaterThan(0);
+});
+
 test("bots do not shoot a boss that cannot be damaged", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);
