@@ -198,6 +198,9 @@
   var MULTIPLAYER_PLAYER_KILL_POINTS = 5;
   var MULTIPLAYER_ZOMBIE_KILL_POINTS = 1;
   var MULTIPLAYER_PVP_DAMAGE = 24;
+  // Players keep shooting each other during a boss encounter, but at a fifth of
+  // the damage: the boss is supposed to be the threat that wave.
+  var MULTIPLAYER_BOSS_PVP_DAMAGE_SCALE = 0.2;
   var MULTIPLAYER_RESPAWN_INVULN = 1.6;
   var MULTIPLAYER_RESPAWN_RADIUS = 4.2;
   // A revive can move the local camera across the whole arena in one snapshot.
@@ -337,6 +340,10 @@
   var MAX_XP_ORBS = 140;
   var XP_ORB_VISUAL_PREWARM = MAX_XP_ORBS;
   var MULTIPLAYER_XP_ORB_MERGE_RADIUS = 3.2;
+  // Auto-fire target acquisition: ordinary reach, and the longer reach it uses
+  // for a boss.
+  var AUTO_AIM_RANGE = 18;
+  var AUTO_AIM_BOSS_RANGE_SCALE = 2.5;
   var AMMO_CRATE_PICKUP_RADIUS = 1.35;
   // Crates arrive 20% more often than the original cadence, so running dry is a
   // short detour rather than a stalled wave.
@@ -79207,9 +79214,29 @@
   }
 
   function updateMobileAimTarget(player) {
-    var target = touchFire.active ? findNearestEnemy(player.x, player.z, 18) : null;
+    // A boss is the reason the wave exists, so auto-fire locks onto it ahead of
+    // anything else and reaches much further than it does for ordinary targets:
+    // bosses are large, they are engaged from a distance, and having the aim
+    // snap to a nearby zombie mid-fight is the opposite of helpful.
+    var boss = touchFire.active ? getActiveBossDamageTarget() : null;
+    if (boss && boss.active !== false) {
+      var bossRange = AUTO_AIM_RANGE * AUTO_AIM_BOSS_RANGE_SCALE;
+      if (Math.hypot(boss.x - player.x, boss.z - player.z) <= bossRange) {
+        state.pointerWorld.x = boss.x;
+        state.pointerWorld.z = boss.z;
+        var bossDx = boss.x - player.x;
+        var bossDz = boss.z - player.z;
+        var bossLen = Math.hypot(bossDx, bossDz);
+        if (bossLen > 0.001) {
+          lastMobileAim.x = bossDx / bossLen;
+          lastMobileAim.z = bossDz / bossLen;
+        }
+        return;
+      }
+    }
+    var target = touchFire.active ? findNearestEnemy(player.x, player.z, AUTO_AIM_RANGE) : null;
     if (touchFire.active && multiplayerState.active && multiplayerState.phase === "match") {
-      var opponent = findNearestMultiplayerOpponent(player.x, player.z, 18);
+      var opponent = findNearestMultiplayerOpponent(player.x, player.z, AUTO_AIM_RANGE);
       if (opponent && (!target || Math.hypot(opponent.x - player.x, opponent.z - player.z) < Math.hypot(target.x - player.x, target.z - player.z))) target = opponent;
     }
     if (target) {
@@ -96246,6 +96273,32 @@
     };
   }
 
+  // Player-versus-player damage is scaled down while any boss encounter is
+  // live, so a boss wave stays a co-op problem rather than a chance to farm
+  // teammates while they are busy.
+  //
+  // The Baron's bought player is the deliberate exception. Once someone takes
+  // the gold they are fighting FOR the boss, so that duel is the encounter, not
+  // a distraction from it: full damage both ways, exactly as on a normal wave.
+  function getMultiplayerPvpDamageScale(victim, attackerId) {
+    if (!isBossEncounterActiveForPvp()) return 1;
+    if (victim && victim.oilBaronAlly) return 1;
+    var attacker = attackerId ? getMultiplayerPlayer(attackerId) : null;
+    if (attacker && attacker.oilBaronAlly) return 1;
+    return MULTIPLAYER_BOSS_PVP_DAMAGE_SCALE;
+  }
+
+  function isBossEncounterActiveForPvp() {
+    if (state.bellRinger && state.bellRinger.active && !state.bellRinger.defeated) return true;
+    if (state.ghostTrain && state.ghostTrain.active && !state.ghostTrain.defeated) return true;
+    if (state.oilBaron && state.oilBaron.active && !state.oilBaron.defeated) return true;
+    if (state.slothArchbishop && state.slothArchbishop.active && !state.slothArchbishop.defeated) return true;
+    if (state.hordeheart && state.hordeheart.active && !state.hordeheart.defeated) return true;
+    if (state.landEater && state.landEater.active && !state.landEater.defeated) return true;
+    if (state.doppelganger && state.doppelganger.active && !state.doppelganger.defeated) return true;
+    return false;
+  }
+
   function getMultiplayerPvpDamageForBullet(bullet) {
     if (!bullet) return MULTIPLAYER_PVP_DAMAGE;
     var baseByType = {
@@ -98885,6 +98938,9 @@
   var ONLINE_BOT_BACKFILL_AUTO_START_MS = 40000;
   var ONLINE_BOT_BACKFILL_POST_MATCH_RETURN_MS = 90000;
   var ONLINE_BOT_BACKFILL_GRUDGE_TIME = 9;
+  // Chance that a bot killed by a player outside a boss wave takes it
+  // personally and spends its next life hunting them.
+  var ONLINE_BOT_VENDETTA_CHANCE = 0.3;
   var ONLINE_BOT_NAME_POOL = [
     "DustyPete", "Maverick", "El_Paso_Kid", "SilverSpur", "Hondo",
     "GraveDigger77", "Cactus Jack", "LoneStar", "Buckshot_Billy", "RattlerJake",
@@ -98924,19 +98980,31 @@
     var progression = player && player.progression || {};
     var weaponId = String(progression.weapon || "revolver");
     var weapon = WEAPONS[weaponId] || WEAPONS.revolver;
-    var magazineSize = Math.max(1, Number(weapon && weapon.magazine) || 6);
+    // "Two magazines" has to mean two of the gun the bot is actually holding,
+    // upgrades included — a Lever Barrage rifle holds several times a
+    // revolver's six, and judging it by the revolver sent bots shopping while
+    // they were still comfortably loaded. Mirrors getWeaponMagazine, but reads
+    // the bot's own progression instead of whatever is in global state.
+    var effectiveMagazine = Math.max(1, Number(weapon && weapon.magazine) || 6);
+    if (weapon.id === "revolver") effectiveMagazine += Number(progression.revolverMagazineBonus) || 0;
+    else if (weapon.id === "rifle") {
+      effectiveMagazine = Math.round(effectiveMagazine * Math.max(1, Number(progression.rifleMagazineMultiplier) || 1));
+    } else if (weapon.id === "launcher") {
+      effectiveMagazine = Math.round(effectiveMagazine * Math.max(1, Number(progression.launcherMagazineMultiplier) || 1));
+    }
+    effectiveMagazine = Math.max(1, effectiveMagazine);
     var magazine = Number((progression.ammo || {})[weaponId]) || 0;
     var reserve = Number((progression.ammoReserve || {})[weaponId]) || 0;
     var reloading = Number((progression.reloadTimers || {})[weaponId]) > 0;
     var total = magazine + reserve;
     return {
       weaponId: weaponId,
-      magazineSize: magazineSize,
+      magazineSize: effectiveMagazine,
       magazine: magazine,
       reserve: reserve,
       reloading: reloading,
       total: total,
-      low: total <= magazineSize * ONLINE_BOT_RESUPPLY_MAGAZINES,
+      low: total <= effectiveMagazine * ONLINE_BOT_RESUPPLY_MAGAZINES,
       // Nothing to load and nothing in the chamber: the gun is scenery until a
       // crate is found, so the bot must stop pretending to fight.
       dry: total <= 0 && !reloading,
@@ -99017,25 +99085,11 @@
     return ["steadyHand", "hairTrigger", "quickReload", "grit", "swiftBoots"];
   }
 
-  function createOnlineBackfillBotUnlocks(classId, branchId) {
-    var classes = [classId];
-    Object.keys(PLAYER_CLASSES).forEach(function (id) {
-      if (id !== classId && nextOnlineBackfillRandom() < 0.4) classes.push(id);
-    });
-    var branches = [branchId];
-    var branchMap = getOnlineBackfillBranchMapForClass(classId);
-    Object.keys(branchMap || {}).forEach(function (id) {
-      if (id !== branchId && nextOnlineBackfillRandom() < 0.3) branches.push(id);
-    });
-    var lockedCards = careerUnlockCatalog && Array.isArray(careerUnlockCatalog.cards)
-      ? careerUnlockCatalog.cards.filter(function (entry) { return entry && !entry.core; }).map(function (entry) { return entry.id; })
-      : [];
-    var purchased = [];
-    var cardCount = Math.min(lockedCards.length, 4 + Math.floor(nextOnlineBackfillRandom() * 9));
-    while (purchased.length < cardCount && lockedCards.length) {
-      purchased.push(lockedCards.splice(Math.floor(nextOnlineBackfillRandom() * lockedCards.length), 1)[0]);
-    }
-    return { version: 1, classes: classes, branches: branches, purchasedCards: purchased, markedCards: [] };
+  // Bots carry no career locks at all. Their loadout should not depend on what
+  // this particular account happens to have bought, and a class the player has
+  // never seen is exactly as likely to turn up on a bot as any other.
+  function createOnlineBackfillBotUnlocks() {
+    return serializeCareerUnlockProfile(createFullCareerUnlockProfile());
   }
 
   function createOnlineBackfillBotPersona(usedNames) {
@@ -99061,7 +99115,7 @@
         cowboyId: ONLINE_BOT_COMMON_COWBOYS[Math.floor(nextOnlineBackfillRandom() * ONLINE_BOT_COMMON_COWBOYS.length)],
         hatId: ONLINE_BOT_COMMON_HATS[Math.floor(nextOnlineBackfillRandom() * ONLINE_BOT_COMMON_HATS.length)],
       }),
-      unlocks: createOnlineBackfillBotUnlocks(classId, branchId),
+      unlocks: createOnlineBackfillBotUnlocks(),
       skill: {
         reactionTime: 0.3 + nextOnlineBackfillRandom() * 0.08,
         aimJitter: 0.035 + nextOnlineBackfillRandom() * 0.025,
@@ -99795,6 +99849,96 @@
     return 0;
   }
 
+  // The Archbishop's red zones are ellipses, and their SHAPE is the whole
+  // point: running along a cross-sweep arm keeps a bot inside it for nine
+  // units, while stepping sideways clears it in under one and a half. Scoring
+  // the real ellipse instead of a circle around its centre is what makes a bot
+  // step out of the lane rather than sprint down it. Mirrors the telegraph
+  // geometry the player sees (updateSlothArchbishopTelegraphs) and the hit test
+  // behind it (isSlothEntityInsideEllipse).
+  function forEachOnlineBackfillSlothTelegraph(callback) {
+    var encounter = state.slothArchbishop;
+    if (!encounter || !encounter.active || encounter.defeated || encounter.replica) return;
+    var boss = encounter.boss;
+    if (!boss || boss.active === false) return;
+    var action = String(boss.action || "");
+    var targets = Array.isArray(encounter.slamTargets) ? encounter.slamTargets : [];
+    for (var i = 0; i < targets.length; i++) {
+      var target = targets[i];
+      if (!target || target.resolved) continue;
+      var patternAngle = Math.hypot(target.x - boss.x, target.z - boss.z) > 0.01
+        ? Math.atan2(target.x - boss.x, target.z - boss.z)
+        : (boss.facingAngle || 0);
+      var side;
+      if (action === "skySlam") {
+        var slamRadius = encounter.phase >= 2
+          ? SLOTH_ARCHBISHOP_PHASE_THREE_SKY_SLAM_RADIUS || SLOTH_ARCHBISHOP_SKY_SLAM_RADIUS
+          : SLOTH_ARCHBISHOP_SKY_SLAM_RADIUS;
+        callback(target.x, target.z, slamRadius, slamRadius, 0);
+      } else if (action === "sweep") {
+        callback(target.x, target.z, SLOTH_ARCHBISHOP_SWEEP_TARGET_RADIUS, SLOTH_ARCHBISHOP_SWEEP_TARGET_RADIUS, 0);
+      } else if (action === "prayerClap") {
+        var clapAxis = patternAngle + Math.PI * 0.5;
+        var clapOffset = SLOTH_ARCHBISHOP_PRAYER_CLAP_HALF_LENGTH * 0.5;
+        for (side = -1; side <= 1; side += 2) {
+          callback(
+            target.x + Math.sin(clapAxis) * clapOffset * side,
+            target.z + Math.cos(clapAxis) * clapOffset * side,
+            SLOTH_ARCHBISHOP_PRAYER_CLAP_HALF_LENGTH * 0.54,
+            SLOTH_ARCHBISHOP_PRAYER_CLAP_HALF_WIDTH,
+            clapAxis
+          );
+        }
+      } else if (action === "fourSides") {
+        var fourOffset = SLOTH_ARCHBISHOP_FOUR_SIDES_SPAN * 0.5;
+        for (var fourIndex = 0; fourIndex < 4; fourIndex++) {
+          var fourAngle = (boss.facingAngle || 0) + fourIndex * Math.PI * 0.5;
+          callback(
+            target.x + Math.sin(fourAngle) * fourOffset,
+            target.z + Math.cos(fourAngle) * fourOffset,
+            SLOTH_ARCHBISHOP_FOUR_SIDES_SPAN * 0.54,
+            SLOTH_ARCHBISHOP_FOUR_SIDES_HALF_WIDTH,
+            fourAngle
+          );
+        }
+      } else if (action === "crossSweep") {
+        for (side = -1; side <= 1; side += 2) {
+          callback(
+            target.x,
+            target.z,
+            SLOTH_ARCHBISHOP_CROSS_SWEEP_RADIUS,
+            SLOTH_ARCHBISHOP_CROSS_SWEEP_HALF_WIDTH,
+            patternAngle + side * Math.PI * 0.25
+          );
+        }
+      } else if (action === "grab" || action === "lazyGrip") {
+        var gripRadius = SLOTH_ARCHBISHOP_LAZY_GRIP_TELEGRAPH_RADIUS * (action === "grab" ? 1.12 : 1);
+        callback(target.x, target.z, gripRadius, gripRadius, 0);
+      }
+    }
+  }
+
+  function getOnlineBackfillSlothTelegraphPenalty(atX, atZ) {
+    var penalty = 0;
+    forEachOnlineBackfillSlothTelegraph(function (cx, cz, halfLength, halfWidth, angle) {
+      var dx = atX - cx;
+      var dz = atZ - cz;
+      var along = (dx * Math.sin(angle) + dz * Math.cos(angle)) / Math.max(0.01, halfLength);
+      var across = (dx * Math.cos(angle) - dz * Math.sin(angle)) / Math.max(0.01, halfWidth);
+      var normalized = along * along + across * across;
+      // Standing in it is close to fatal, so it outweighs anything else a bot
+      // might want — including a crate it is starving for.
+      if (normalized <= 1) penalty += (1.2 - normalized) * 2600;
+      else if (normalized < 2.4) penalty += (2.4 - normalized) * 260;
+    });
+    return penalty;
+  }
+
+  function isOnlineBackfillPointUnderBossAttack(atX, atZ) {
+    return getOnlineBackfillSlothTelegraphPenalty(atX, atZ) > 0 ||
+      getOnlineBackfillDoomedCellPenalty(atX, atZ) > 0;
+  }
+
   // Boss telegraphs the ordinary bullet sweep cannot see: falling bells, oil
   // star landings, the Archbishop's snapshotted slam points, Hordeheart's
   // lingering fields and the Land Eater's burrow strike.
@@ -99847,7 +99991,8 @@
       var burrowDistance = Math.hypot(atX - Number(eater.burrowEndX), atZ - Number(eater.burrowEndZ));
       if (burrowDistance < burrowRadius) penalty += (burrowRadius - burrowDistance) * 620;
     }
-    return penalty + getOnlineBackfillDoomedCellPenalty(atX, atZ);
+    return penalty + getOnlineBackfillDoomedCellPenalty(atX, atZ) +
+      getOnlineBackfillSlothTelegraphPenalty(atX, atZ);
   }
 
   function findOnlineBackfillBaronTraitor(player, entity) {
@@ -99868,6 +100013,34 @@
       best = other;
     }
     return best;
+  }
+
+  // Runs on every elimination, for both sides of it.
+  //
+  // A grudge is settled by taking the shot: once the bot kills the player it
+  // was hunting, it goes back to the wave. Dying settles it too — but only
+  // usually: a bot that dies still holding a grudge has the same 30% chance of
+  // carrying it into the next life, so a feud can outlast one death without
+  // becoming permanent.
+  function noteOnlineBackfillBotVendetta(victim, reason, attackerId) {
+    if (!victim) return;
+    var killer = reason === "player" && attackerId ? getMultiplayerPlayer(attackerId) : null;
+    if (killer && killer.backfillBot && killer.backfillVendettaPlayerId === victim.id) {
+      killer.backfillVendettaPlayerId = "";
+    }
+    if (!victim.backfillBot || !victim.backfillRuntime) return;
+    var carries = nextBackfillBotRandom(victim.backfillRuntime) < ONLINE_BOT_VENDETTA_CHANCE;
+    if (victim.backfillVendettaPlayerId) {
+      if (carries) victim.backfillVendettaLife = Math.max(0, victim.deaths || 0);
+      else victim.backfillVendettaPlayerId = "";
+      return;
+    }
+    if (reason !== "player" || !attackerId || attackerId === victim.id) return;
+    // Boss waves are a truce; a death during one is the boss fight's business.
+    if (isBossWave(state.wave)) return;
+    if (!getMultiplayerPlayer(attackerId) || !carries) return;
+    victim.backfillVendettaPlayerId = String(attackerId);
+    victim.backfillVendettaLife = Math.max(0, victim.deaths || 0);
   }
 
   function pickOnlineBackfillBotTarget(player, entity, endgame, bossTruce) {
@@ -99919,6 +100092,16 @@
           }
         });
         if (best) pvpTargetId = best.id;
+      } else if (
+        // A grudge carried across a death: whoever put this bot down gets
+        // hunted for the whole of its next life, not just for the usual few
+        // seconds after a hit. Rolled once per death, so most killers are
+        // forgiven and the one who is not stays remembered.
+        player.backfillVendettaPlayerId &&
+        player.backfillVendettaLife === Math.max(0, player.deaths || 0)
+      ) {
+        var avenged = getMultiplayerPlayer(player.backfillVendettaPlayerId);
+        if (avenged && avenged.alive && !avenged.surrendered && avenged.entity) pvpTargetId = avenged.id;
       } else if (
         player.lastAttackerPlayerId &&
         state.time - (player.lastAttackerAt || -Infinity) < ONLINE_BOT_BACKFILL_GRUDGE_TIME
@@ -100092,6 +100275,9 @@
       for (var crateIndex = 0; crateIndex < state.ammoCrates.length; crateIndex++) {
         var crate = state.ammoCrates[crateIndex];
         if (!crate) continue;
+        // Ammo is worth a detour, never a death: a crate sitting inside a live
+        // boss telegraph is not a destination until the attack has resolved.
+        if (isOnlineBackfillPointUnderBossAttack(crate.x, crate.z)) continue;
         var crateDistance = Math.hypot(crate.x - entity.x, crate.z - entity.z);
         if (crateDistance < nearestCrateDistance) {
           nearestCrateDistance = crateDistance;
@@ -100211,9 +100397,13 @@
         bestZ = moveZ;
       }
     }
-    if (!target && !nearestCrate && !churchGoal && !endgame && nextBackfillBotRandom(runtime) < 0.22) {
+    if (
+      !target && !nearestCrate && !churchGoal && !endgame &&
+      !isOnlineBackfillPointUnderBossAttack(entity.x, entity.z) &&
+      nextBackfillBotRandom(runtime) < 0.22
+    ) {
       // Players do just stand still sometimes — but not while they are on their
-      // way to an objective.
+      // way to an objective, and never inside a boss attack.
       runtime.moveX = 0;
       runtime.moveZ = 0;
       runtime.replanTimer = 0.55 + nextBackfillBotRandom(runtime) * 0.9;
@@ -100283,6 +100473,9 @@
   function shouldOnlineBackfillBotHoldFire(player, entity, runtime, target) {
     var ref = target && target.ref;
     if (!ref) return true;
+    // Standing in a telegraph and squeezing the trigger is how a bot dies
+    // looking stupid. Getting out comes first; the shot can wait a beat.
+    if (isOnlineBackfillPointUnderBossAttack(entity.x, entity.z)) return true;
     var targetDistance = Math.hypot((ref.x || 0) - entity.x, (ref.z || 0) - entity.z);
     var progression = player.progression || {};
     var weaponId = String(progression.weapon || "revolver");
@@ -104853,7 +105046,12 @@
     if (!isMultiplayerHostMatch() || !player || !player.entity || !player.alive || player.surrendered) return false;
     var entity = player.entity;
     if (entity.invuln > 0) return false;
-    entity.hp = Math.max(0, entity.hp - Math.max(0, Number(amount) || 0));
+    // A boss fight is a fight against the boss. Players still shoot each other
+    // — the shots land, the kill still counts — but at a fifth of the damage,
+    // so a duel cannot decide an encounter everyone is supposed to survive
+    // together.
+    var incoming = Math.max(0, Number(amount) || 0) * getMultiplayerPvpDamageScale(player, attackerId);
+    entity.hp = Math.max(0, entity.hp - incoming);
     entity.invuln = 0.2;
     player.hp = entity.hp;
     player.invuln = entity.invuln;
@@ -104918,6 +105116,7 @@
       }
     }
     if (reason === "player" && attackerId && attackerId !== player.id) awardMultiplayerPoints(attackerId, MULTIPLAYER_PLAYER_KILL_POINTS, "player");
+    noteOnlineBackfillBotVendetta(player, reason, attackerId);
     queueMultiplayerPlayerHistoryEvent("playerDied", player);
     addShockwave(player.x, player.z, 2.1, 0.36, 0xd83a2e);
     updateMultiplayerDeathUi();
@@ -129218,6 +129417,8 @@
           pendingUpgradeLevels: (player.pendingUpgradeLevels || []).length,
           hasUpgradeOffer: !!player.currentUpgradeOffer,
           grudgeAttackerId: player.lastAttackerPlayerId || "",
+          vendettaPlayerId: player.backfillVendettaPlayerId || "",
+          vendettaLife: Number(player.backfillVendettaLife || 0),
           targetKind: runtime.targetKind || "",
           targetPlayerId: runtime.targetPlayerId || "",
           churchGoal: (function () {
@@ -129251,6 +129452,9 @@
         });
       });
       return audit;
+    },
+    isPointUnderBossAttackForTest: function (x, z) {
+      return isOnlineBackfillPointUnderBossAttack(Number(x) || 0, Number(z) || 0);
     },
     setOilBaronAllyForTest: function (playerId, allied) {
       var player = getMultiplayerPlayer(playerId);

@@ -330,23 +330,30 @@ test("bots fight zombies and never shoot an innocent player, but do retaliate", 
   expect(localState.alive).toBe(true);
   expect(localState.hp).toBe(120);
 
-  // Hurting a bot flips only that bot into revenge mode.
+  // Hurting a bot flips only that bot into revenge mode. Top it up first: a hit
+  // that happens to KILL grants the separate lifelong vendetta, which is a
+  // different mechanism and would mask the timed grudge this asserts.
   await page.evaluate((args) => {
+    window.__dustMultiplayerTest.setHealth(args.botId, 120);
     window.__dustMultiplayerTest.damagePlayer(args.botId, 30, args.localId);
   }, { botId: bots[1].id, localId });
   await advanceMs(page, 1500);
   diagnostics = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
   const avenger = diagnostics.find((entry) => entry.id === bots[1].id);
   expect(avenger.grudgeAttackerId).toBe(localId);
+  expect(avenger.vendettaPlayerId).toBe("");
   expect(avenger.targetPlayerId).toBe(localId);
   for (const bot of diagnostics) {
     if (bot.id !== bots[1].id) expect(bot.targetPlayerId).toBe("");
   }
 
-  // The grudge cools off instead of becoming a permanent vendetta.
+  // Being shot and surviving buys a grudge that expires, not a vendetta.
   await advanceMs(page, 11000);
   diagnostics = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
-  for (const bot of diagnostics) expect(bot.targetPlayerId).toBe("");
+  for (const bot of diagnostics) {
+    if (bot.vendettaPlayerId) continue;
+    expect(bot.targetPlayerId).toBe("");
+  }
 });
 
 test("bots draft real builds and revive when they can afford it", async ({ page }) => {
@@ -689,6 +696,95 @@ test("derricks do not hold the bots back from the Baron himself", async ({ page 
   const derricksAlive = await page.evaluate(() =>
     window.__dustAndDeadTest.getOilBaronDiagnostics().derricks.filter((d) => d.active && !d.destroyed).length);
   expect(derricksAlive).toBeGreaterThan(0);
+});
+
+test("player damage is muted during a boss fight, except against the Baron's ally", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+
+  const hitFor = async (amount) => page.evaluate((args) => {
+    const multi = window.__dustMultiplayerTest;
+    multi.setHealth(args.botId, 120);
+    multi.damagePlayer(args.botId, args.amount, args.localId);
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === args.botId);
+    return 120 - (multi.getState().players.find((p) => p.id === args.botId).hp ?? bot.hp);
+  }, { botId: bots[0].id, amount, localId });
+
+  // No boss: full damage.
+  expect(await hitFor(50)).toBeCloseTo(50, 1);
+
+  // Boss on the field: a fifth of it, so a duel cannot decide the encounter.
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.startWaveNow(10, "bellRinger");
+    window.__dustAndDeadTest.clearEnemies();
+  });
+  await advanceMs(page, 500);
+  expect(await hitFor(50)).toBeCloseTo(10, 1);
+
+  // Unless the target took the Baron's gold: that duel IS the encounter.
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.startWaveNow(10, "oilBaron");
+    window.__dustAndDeadTest.clearEnemies();
+  });
+  await advanceMs(page, 500);
+  expect(await hitFor(50)).toBeCloseTo(10, 1);
+  await page.evaluate((botId) => window.__dustMultiplayerTest.setOilBaronAllyForTest(botId, true), bots[0].id);
+  expect(await hitFor(50)).toBeCloseTo(50, 1);
+});
+
+test("a bot killed outside a boss wave sometimes carries the grudge into its next life", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+  const localId = await page.evaluate(() => window.__dustOnlineTest.getState().playerId);
+
+  // Killed during a boss wave: the truce holds, no vendetta is even rolled.
+  await page.evaluate(() => {
+    window.__dustAndDeadTest.startWaveNow(10, "bellRinger");
+    window.__dustAndDeadTest.clearEnemies();
+  });
+  await page.evaluate((args) => {
+    window.__dustMultiplayerTest.setPoints(args.botId, 9999);
+    window.__dustMultiplayerTest.damagePlayer(args.botId, 9999, args.localId);
+  }, { botId: bots[0].id, localId });
+  let state = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), bots[0].id);
+  expect(state.vendettaPlayerId).toBe("");
+
+  // On a regular wave the roll happens; over many deaths at least one bot ends
+  // up holding a grudge, and it is always aimed at the killer.
+  await page.evaluate(() => window.__dustAndDeadTest.startWaveNow(11));
+  let sworn = null;
+  for (let attempt = 0; attempt < 25 && !sworn; attempt += 1) {
+    for (const bot of bots) {
+      await page.evaluate((args) => {
+        const multi = window.__dustMultiplayerTest;
+        multi.setPoints(args.botId, 9999);
+        multi.setHealth(args.botId, 120);
+        multi.damagePlayer(args.botId, 9999, args.localId);
+        multi.revive(args.botId);
+      }, { botId: bot.id, localId });
+    }
+    const all = await page.evaluate(() => window.__dustMultiplayerTest.getBackfillBotDiagnostics());
+    sworn = all.find((entry) => entry.vendettaPlayerId) || null;
+  }
+  expect(sworn).not.toBe(null);
+  expect(sworn.vendettaPlayerId).toBe(localId);
+  expect(sworn.vendettaLife).toBe(sworn.deaths);
+
+  // Taking the shot settles it: once the bot kills the player it was hunting,
+  // the grudge is spent.
+  await page.evaluate((args) => {
+    window.__dustMultiplayerTest.setHealth(args.localId, 120);
+    window.__dustMultiplayerTest.damagePlayer(args.localId, 9999, args.botId);
+  }, { botId: sworn.id, localId });
+  const settled = await page.evaluate((botId) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === botId), sworn.id);
+  expect(settled.vendettaPlayerId).toBe("");
 });
 
 test("bots do not shoot a boss that cannot be damaged", async ({ page }) => {
