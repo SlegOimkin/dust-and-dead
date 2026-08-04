@@ -99069,6 +99069,16 @@
   // forth over the same ten units — measured at under six units of net travel
   // in five seconds, which reads exactly like the standing still it replaced.
   var ONLINE_BOT_ROAM_WEIGHT = 26;
+  // A church run is a long walk across the map, not a charge. At the old weight
+  // of 160 the keep-away from zombies was noise against it and the bot went
+  // straight through the horde, arriving chewed up or not at all. Sixty still
+  // beats a lone walker standing in the way; a clump of them bends the path.
+  var ONLINE_BOT_CHURCH_TRAVEL_WEIGHT = 60;
+  var ONLINE_BOT_CHURCH_NEAR_WEIGHT = 26;
+  // And the walker itself is given a wider berth while travelling, so the
+  // detour starts before the bot is already in claw range.
+  var ONLINE_BOT_CHURCH_TRAVEL_AVOID_WEIGHT = 26;
+  var ONLINE_BOT_CHURCH_TRAVEL_AVOID_RADIUS = 8;
 
   // One reading of a bot's ammo, shared by targeting, steering and firing so
   // they cannot disagree about whether the gun is worth pointing at anything.
@@ -100691,6 +100701,12 @@
       // crate in sight to be worth running straight through them for.
       enemyAvoidWeight = 5;
       enemyAvoidRadius = 4;
+    } else if (churchTravel) {
+      // Walking to a church, gun loaded: go round the horde and shoot it on the
+      // way rather than through it. The shooting needs no help here — combat
+      // runs off the target, not off the steering — but the path does.
+      enemyAvoidWeight = ONLINE_BOT_CHURCH_TRAVEL_AVOID_WEIGHT;
+      enemyAvoidRadius = ONLINE_BOT_CHURCH_TRAVEL_AVOID_RADIUS;
     }
 
     runtime.progressGoal = crateGoal || roamGoal || churchGoal || approachRef || null;
@@ -100733,7 +100749,10 @@
         // Inside the capture radius is what counts, so the pull stops once the
         // bot is standing in the churchyard.
         var churchDistance = Math.hypot((churchGoal.x || 0) - probeX, (churchGoal.z || 0) - probeZ);
-        if (churchDistance > 11) score -= (churchDistance - 11) * (churchTravel ? 160 : 26);
+        if (churchDistance > 11) {
+          score -= (churchDistance - 11) *
+            (churchTravel ? ONLINE_BOT_CHURCH_TRAVEL_WEIGHT : ONLINE_BOT_CHURCH_NEAR_WEIGHT);
+        }
       }
       multiplayerState.playerOrder.forEach(function (otherId) {
         if (otherId === player.id) return;
