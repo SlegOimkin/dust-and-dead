@@ -898,6 +898,105 @@ test("derricks do not hold the bots back from the Baron himself", async ({ page 
   expect(derricksAlive).toBeGreaterThan(0);
 });
 
+test("the horde around a bot comes before the Baron's derricks", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+  const botId = bots[0].id;
+
+  await page.evaluate(() => {
+    const game = window.__dustAndDeadTest;
+    game.startWaveNow(10, "oilBaron");
+    game.clearEnemies();
+    game.setOilBaronAiEnabled(false);
+    for (let i = 0; i < 6; i++) game.spawnOilDerrick(undefined, undefined, { instant: true, silent: true });
+  });
+  await advanceMs(page, 1000);
+
+  // Zombies are kept alive and on top of the bot, which is the situation the
+  // old priority handled worst: a derrick plants within a couple of units of
+  // the party, so it was always the nearest thing to shoot and the horde was
+  // ignored until it was literally inside claw range. Sampled over four
+  // seconds, sixteen of twenty samples went to the boss and only the four
+  // taken at under 4.5 units went to the zombies.
+  const samples = [];
+  for (let round = 0; round < 12; round++) {
+    await page.evaluate((id) => {
+      const multi = window.__dustMultiplayerTest;
+      const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === id);
+      if (!bot || !bot.alive) return;
+      if (multi.getAuthoritativeEnemies().length >= 4) return;
+      for (let k = 0; k < 4; k++) {
+        const angle = (Math.PI * 2 * k) / 4;
+        multi.spawnEnemyAt(bot.x + Math.sin(angle) * 7, bot.z + Math.cos(angle) * 7, "walker", 5000);
+      }
+    }, botId);
+    await advanceMs(page, 250);
+    const bot = await page.evaluate((id) =>
+      window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id), botId);
+    if (bot && bot.alive) samples.push(bot.targetKind);
+  }
+  expect(samples.length).toBeGreaterThan(8);
+  expect(samples.every((kind) => kind === "enemy")).toBe(true);
+
+  // And the boss is not forgotten: with its own patch of arena clear the bot
+  // goes straight back to the fight. Without this half the fix would read as
+  // "bots stopped fighting bosses" and still pass the assertion above.
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+  await advanceMs(page, 1500);
+  const clear = await page.evaluate((id) =>
+    window.__dustMultiplayerTest.getBackfillBotDiagnostics().find((entry) => entry.id === id), botId);
+  expect(clear.targetKind).toBe("boss");
+});
+
+test("picking the next zombie out of a crowd costs a bot no rate of fire", async ({ page }) => {
+  await bootLobby(page);
+  await findPublicMatch(page);
+  const bots = await startBackfillMatch(page);
+  await page.evaluate(() => window.__dustAndDeadTest.clearEnemies());
+  await page.evaluate(() => window.__dustAndDeadTest.forceWaveState(4, 0, 0));
+  const botId = bots[0].id;
+
+  // A ring of zombies nothing can kill: they are the target set, and because
+  // none of them dies the only thing that can move the shot count is the bot's
+  // own trigger discipline. Eight of them at the same radius is deliberately
+  // the worst case — "nearest enemy" changes several times a second.
+  await page.evaluate((id) => {
+    const multi = window.__dustMultiplayerTest;
+    multi.setProgression(id, { weapon: "revolver", ammo: { revolver: 999 }, ammoReserve: { revolver: 99999 } });
+    const bot = multi.getBackfillBotDiagnostics().find((entry) => entry.id === id);
+    for (let k = 0; k < 8; k++) {
+      const angle = (Math.PI * 2 * k) / 8;
+      multi.spawnEnemyAt(bot.x + Math.sin(angle) * 8, bot.z + Math.cos(angle) * 8, "walker", 900000);
+    }
+  }, botId);
+  await advanceMs(page, 1000);
+
+  const fireCount = () => page.evaluate((id) => {
+    const multi = window.__dustMultiplayerTest;
+    // Topped up every sample so a reload can never enter the measurement.
+    multi.setProgression(id, { ammo: { revolver: 999 }, ammoReserve: { revolver: 99999 } });
+    return multi.getBackfillBotDiagnostics().find((entry) => entry.id === id).lastFireActionSequence;
+  }, botId);
+
+  const before = await fireCount();
+  const seconds = 10;
+  for (let slice = 0; slice < seconds * 2; slice++) {
+    await advanceMs(page, 500);
+    await fireCount();
+  }
+  const shotsPerSecond = ((await fireCount()) - before) / seconds;
+
+  // A revolver's 0.22 s cooldown caps this at 4.55 shots a second. Measured
+  // 2.10/s (46%) while every target switch armed an acquire hold, and 3.90/s
+  // (86%) once it did not — against 4.13/s for the same bot with a single
+  // zombie in front of it, so a crowd now costs essentially nothing. The floor
+  // sits between the two: it fails the old behaviour and passes the new one
+  // with room for the burst pause landing badly in a short sample.
+  expect(shotsPerSecond).toBeGreaterThan(3.2);
+});
+
 test("player damage is muted during a boss fight, except against the Baron's ally", async ({ page }) => {
   await bootLobby(page);
   await findPublicMatch(page);

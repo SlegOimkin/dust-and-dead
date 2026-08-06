@@ -99079,14 +99079,34 @@
   // seconds, so it is a rhythm at any fire rate instead of a rate cap on the
   // fast guns. Measured before: a bot got 72% of a revolver's rate and 57% of a
   // rifle's out of it; roughly one skipped beat now leaves both near 86%.
-  var ONLINE_BOT_BURST_PAUSE_CHANCE = 0.22;
+  var ONLINE_BOT_BURST_PAUSE_CHANCE = 0.12;
   var ONLINE_BOT_BURST_PAUSE_MIN_SHOTS = 1.1;
   var ONLINE_BOT_BURST_PAUSE_MAX_SHOTS = 1.8;
+  // There is deliberately no acquire hold. A human does not pay for a target
+  // switch either: auto-fire snaps the aim onto the new target the same frame,
+  // so charging a bot a beat for it made bots strictly worse than the player
+  // rather than merely weaker at the things they are supposed to be weaker at.
+  // It was also the single biggest drag on their damage — measured against a
+  // ring of eight zombies, a flat 0.25-0.60 s hold per switch left a bot firing
+  // 2.10 shots a second against a revolver's 4.55 (46%), while the same bot
+  // alone with one zombie managed 91%: in a crowd the nearest enemy changes
+  // several times a second and every change re-armed the hold. What still
+  // separates a bot from a good player is aim, not reaction time: the flick
+  // error below is applied on every switch and has to be settled out.
   // How much closer a new enemy must be before a bot switches to it. Without
   // this the "nearest enemy" flips constantly in a horde, and every flip re-arms
-  // the 0.25-0.60 s acquire hold — a bot in a crowd could spend most of the
-  // wave holding its trigger for a target it had already swapped away from.
-  var ONLINE_BOT_TARGET_SWITCH_RATIO = 0.75;
+  // the aim, and re-aiming mid-burst is what made a crowd read as a stutter.
+  // Tightened from 0.75: a bot that finishes the zombie it started on also
+  // wastes fewer rounds spreading damage across a row of wounded ones.
+  var ONLINE_BOT_TARGET_SWITCH_RATIO = 0.6;
+  // How near a zombie has to be, during a boss encounter, to be worth dealing
+  // with before the boss. Bots used to walk past a horde to plink at a derrick,
+  // which killed them and helped nobody: measured over twenty samples in the
+  // Baron fight with zombies deliberately kept on top of a bot, sixteen went to
+  // the boss and only the four inside claw range went to the horde. Wide enough
+  // to mean "the ones around me", deliberately not the weapon's max range, so
+  // the boss still gets shot once the bot's own patch of arena is clear.
+  var ONLINE_BOT_BOSS_ADD_CLEAR_RANGE = 18;
   // Bots stop being purely cooperative once the run is properly under way: from
   // this wave on, each one that gets a clear look at the human rolls once per
   // wave to spend that wave hunting them instead. Five percent to start, three
@@ -99285,7 +99305,11 @@
         dodgeThreshold: 105 + nextOnlineBackfillRandom() * 30,
         dodgeChance: 0.5 + nextOnlineBackfillRandom() * 0.25,
         dodgeCooldown: 1.2 + nextOnlineBackfillRandom() * 0.7,
-        triggerHesitation: 0.1 + nextOnlineBackfillRandom() * 0.12,
+        // Rolled every frame the gun is otherwise ready, so it is a stutter on
+        // top of the weapon's own cadence rather than a one-off delay. Halved
+        // from 0.10-0.22, where it was the visible "thinking about it" pause
+        // between shots and stacked on top of the burst pause below.
+        triggerHesitation: 0.04 + nextOnlineBackfillRandom() * 0.07,
       },
       readyAt: null,
     };
@@ -99811,7 +99835,6 @@
         targetKind: "",
         targetPlayerId: "",
         lastTargetKey: "",
-        acquireHoldUntil: 0,
         fireHoldUntil: 0,
         flickError: 0,
         orbitDirection: index % 2 ? -1 : 1,
@@ -100761,6 +100784,13 @@
     }
     runtime.targetPlayerId = "";
     if (bossTruce) {
+      // The horde around the bot comes before the boss. A derrick is a stationary
+      // target that will still be there in five seconds; the zombies closing on
+      // the bot will not be, and a bot that ignores them dies with a full
+      // magazine. Clear your own patch of arena, then go back to the fight.
+      if (nearestEnemy && nearestEnemyDistance < ONLINE_BOT_BOSS_ADD_CLEAR_RANGE) {
+        return { kind: "enemy", ref: nearestEnemy };
+      }
       var bossTargets = collectOnlineBackfillBossTargets(entity);
       if (bossTargets.length) {
         // Where to walk and what to shoot are different questions. Derricks
@@ -101114,7 +101144,12 @@
     // firing distance and an orbit bonus turning the retreat into a strafe:
     // both are switched off so the plain hazard gradient decides the heading.
     var standingInHazard = getOnlineBackfillBossHazardPenalty(entity.x, entity.z) > 0;
-    var holdFiringDistance = approachRef && !outOfAmmo && !churchTravel && !standingInHazard;
+    // A resupply run is a trip, not a firing position. Leaving the range spring
+    // on meant a bot heading for a crate was also being pulled to its ideal
+    // distance from the boss, and the two cancelled just enough that it drifted
+    // around the derrick field with an empty gun instead of arriving. It keeps
+    // shooting on the way — combat runs off the target, not off the steering.
+    var holdFiringDistance = approachRef && !outOfAmmo && !resupplyRun && !churchTravel && !standingInHazard;
     // Only the RUN to a church switches combat positioning off. Standing in the
     // yard it does not: the capture is a radius, not a spot, so there is room to
     // hold a firing distance and orbit inside it, and a bot that stops fighting
@@ -101439,9 +101474,10 @@
     if (!target || botAmmo.magazine <= 0 || botAmmo.reloading) return;
     if ((player.pendingFireActions || []).length) return;
     if ((entity.cooldown || 0) > 0.02) return;
-    // Human trigger rhythm: a beat after acquiring a target, and occasional
-    // pauses between bursts instead of metronome fire.
-    if (state.time < (runtime.acquireHoldUntil || 0) || state.time < (runtime.fireHoldUntil || 0)) return;
+    // Human trigger rhythm: occasional pauses between bursts instead of
+    // metronome fire. Switching targets costs nothing here — see the flick
+    // error at the call site.
+    if (state.time < (runtime.fireHoldUntil || 0)) return;
     if (shouldOnlineBackfillBotHoldFire(player, entity, runtime, target)) return;
     if (nextBackfillBotRandom(runtime) < persona.skill.triggerHesitation) return;
     var queued = queueRemoteMultiplayerFireAction(player, {
@@ -101562,13 +101598,19 @@
       var targetKey = target
         ? target.kind + ":" + String(target.playerId || (target.ref && (target.ref.networkId || target.ref.id)) || "x")
         : "";
+      var previousKind = runtime.targetKind || "";
       runtime.targetKind = target ? target.kind : "";
       if (targetKey !== runtime.lastTargetKey) {
         runtime.lastTargetKey = targetKey;
         if (target) {
-          runtime.acquireHoldUntil = state.time + 0.25 + nextBackfillBotRandom(runtime) * 0.35;
+          // No trigger hold on a switch — the gun is free the moment the aim
+          // moves, exactly as it is for a player on auto-fire. Only the aim
+          // pays: swapping one zombie for the next inside the same crowd is a
+          // small correction, while turning from the horde to the boss is a
+          // proper flick, so the error scales with how far the attention moved.
+          var sameKind = previousKind === target.kind;
           runtime.flickError = (nextBackfillBotRandom(runtime) < 0.5 ? -1 : 1) *
-            (0.05 + nextBackfillBotRandom(runtime) * 0.07);
+            (0.05 + nextBackfillBotRandom(runtime) * 0.07) * (sameKind ? 0.5 : 1);
         }
       }
       updateOnlineBackfillBotSteering(player, entity, runtime, persona, target, endgame, dt);
