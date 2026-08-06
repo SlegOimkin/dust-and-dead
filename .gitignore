@@ -1,19 +1,40 @@
 node_modules/
-android/
 www/
 .tools/
 output/
 publish/
+artifacts/
+.tmp/
+.tmp-*
+.codex-remote-attachments/
+test-results/
+playwright-report/
+blob-report/
+coverage/
+debug.log
+
+# Local deployment configuration and secrets.
+.env
+.env.*
+!.env.example
 
 *.apk
 *.aab
 *.keystore
 *.jks
 
-package-lock.json
-capacitor.config.json
+# Desktop build output. The installer and the portable exe are ~80 MB each and
+# are rebuilt from desktop/ with `npx electron-builder --win`.
+/dist-desktop/
+
 test-actions*.json
 progress.md
+
+# Local reference media and scratch test output; none is required to rebuild.
+/Fire-GPU-Preview.png
+/music_sample/
+/oilBaron
+/svg-all-right.txt
 
 .DS_Store
 Thumbs.db

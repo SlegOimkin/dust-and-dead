@@ -1,0 +1,72 @@
+name: dust-and-dead-online
+
+services:
+  game:
+    image: dust-and-dead-server:local
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    init: true
+    shm_size: "1gb"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8787"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS in .env}"
+      TRUST_PROXY: "1"
+      RESUME_TOKEN_SECRET: "${RESUME_TOKEN_SECRET:?Generate RESUME_TOKEN_SECRET in .env}"
+      AUTO_START_DELAY_MS: "${AUTO_START_DELAY_MS:-40000}"
+      START_ACK_TIMEOUT_MS: "${START_ACK_TIMEOUT_MS:-12000}"
+      RECONNECT_GRACE_MS: "${RECONNECT_GRACE_MS:-20000}"
+      HEARTBEAT_INTERVAL_MS: "${HEARTBEAT_INTERVAL_MS:-15000}"
+      CONNECTION_RATE_PER_SECOND: "${CONNECTION_RATE_PER_SECOND:-90}"
+      CONNECTION_RATE_BURST: "${CONNECTION_RATE_BURST:-180}"
+      MAX_CONNECTIONS: "${MAX_CONNECTIONS:-256}"
+      MAX_CONNECTIONS_PER_IP: "${MAX_CONNECTIONS_PER_IP:-32}"
+      MAX_SESSIONS: "${MAX_SESSIONS:-512}"
+      IDLE_LOBBY_TTL_MS: "${IDLE_LOBBY_TTL_MS:-600000}"
+      POST_MATCH_AUTO_RETURN_MS: "${POST_MATCH_AUTO_RETURN_MS:-90000}"
+      MATCH_RUNTIME: "${MATCH_RUNTIME:-node}"
+      MAX_MATCHES: "${MAX_MATCHES:-4}"
+      MATCHES_PER_WORKER: "${MATCHES_PER_WORKER:-2}"
+      WORKER_MAX_OLD_HEAP_MB: "${WORKER_MAX_OLD_HEAP_MB:-512}"
+      WARM_SPARE_THREADS: "${WARM_SPARE_THREADS:-1}"
+      WORKER_LAUNCH_ARGS: "${WORKER_LAUNCH_ARGS:-}"
+      WORKER_STARTUP_TIMEOUT_MS: "${WORKER_STARTUP_TIMEOUT_MS:-45000}"
+      WORKER_SHUTDOWN_TIMEOUT_MS: "${WORKER_SHUTDOWN_TIMEOUT_MS:-5000}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      # Region identity reported to the director. Leaving DIRECTOR_URL empty
+      # keeps this a standalone single-region deployment.
+      REGION_ID: "${REGION_ID:-}"
+      REGION_LABEL: "${REGION_LABEL:-}"
+      REGION_PUBLIC_URL: "${REGION_PUBLIC_URL:-}"
+      REGION_PRIORITY: "${REGION_PRIORITY:-0}"
+      DIRECTOR_URL: "${DIRECTOR_URL:-}"
+      DIRECTOR_TOKEN: "${DIRECTOR_TOKEN:-}"
+      REGION_HEARTBEAT_INTERVAL_MS: "${REGION_HEARTBEAT_INTERVAL_MS:-10000}"
+    expose:
+      - "8787"
+    stop_grace_period: 30s
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      game:
+        condition: service_healthy
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS:?Set SITE_ADDRESS in .env}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    stop_grace_period: 15s
+
+volumes:
+  caddy_data:
+  caddy_config:

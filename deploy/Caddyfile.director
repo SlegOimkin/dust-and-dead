@@ -1,0 +1,25 @@
+{$DIRECTOR_SITE_ADDRESS} {
+  encode zstd gzip
+
+  # Region and claim lookups are public, non-credentialed reads. The director
+  # sets its own permissive CORS headers, so Caddy must not add a second,
+  # conflicting Access-Control-Allow-Origin.
+  @private_metrics path /metrics
+  respond @private_metrics 404
+
+  reverse_proxy director:8686 {
+    health_uri /healthz
+    health_interval 10s
+    health_timeout 3s
+  }
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+  }
+
+  log {
+    output stdout
+    format console
+  }
+}

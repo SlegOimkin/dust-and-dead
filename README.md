@@ -1,38 +1,48 @@
 # Dust and Dead
 
-A small top-down western shooter with blocky 3D graphics. You play as a cowboy holding off zombie waves across a large procedural desert.
+Dust and Dead — top-down western shooter с блочной 3D-графикой, процедурной пустыней, волнами нежити, развитием персонажа и поддержкой одиночной и совместной игры.
 
-## Features
+## Что хранится в репозитории
 
-- Revolver, Winchester, and grenade launcher with separate ammo pools.
-- Grenade launcher shots land on the aimed point, clamped by launcher range.
-- Finite ammo with reloads and arcade-style cartridge HUD animations.
-- Ammo crates spawn during combat and refill only weapons you already own.
-- Zombies drop visible XP orbs and the player now has level/progression state for future upgrades.
-- Distant zombies catch up by teleporting closer from outside the camera view, with safe obstacle-aware placement.
-- Rare acid spitters appear after wave 4, using animated slime projectiles and damaging acid puddles.
-- Large seeded procedural desert map with 2-5 spread-out towns, detached micro-settlements, wasteland, roads, fences, POIs, and varied western buildings.
-- Rotated ruins and other blockers use matching collision so visuals and navigation stay aligned.
-- Minimap with player direction, camera view, towns, settlements, POIs, and nearby ammo crates.
-- Touch controls and forced landscape-friendly layout for mobile.
+- исходный код браузерной игры и интерфейса;
+- каталоги локализации и игровая прогрессия;
+- процедурные модели боссов;
+- vendored-сборка Three.js для автономного запуска через `file://`;
+- Playwright- и Node-тесты;
+- исходники выделенного онлайн-сервера, матчмейкинга, регионального директора и deployment-конфигурация;
+- нативный Android-проект Capacitor, включая собственный Nearby Connections plugin;
+- PowerShell-скрипты синхронизации, сборки и проверки APK.
 
-## Run
+Сгенерированные каталоги `www`, Android build output, APK, локальные toolchain-каталоги, отчёты тестов и тяжёлые рабочие материалы в Git не входят: всё это восстанавливается из исходников.
 
-Open `index.html` in a browser. The game is fully static and does not need a local server.
+## Быстрый запуск
 
-For Android debug APK packaging notes, see `APK_BUILD.md`.
+Одиночный режим и локальный Nearby-мультиплеер остаются доступными из статической сборки. Для обычного запуска откройте `index.html` в современном браузере. Онлайн-матчи используют отдельный авторитетный сервер.
 
-## Controls
+Для установки зависимостей и запуска проверок:
 
-- `WASD` or arrow keys: move
-- Mouse: aim
-- Left mouse button: shoot
-- `1`, `2`, `3`: switch weapons
-- `F`: fullscreen
-- `R`: restart after death
+```powershell
+npm ci
+npx playwright install chromium
+npm run sync:android
+npm test
+```
 
-Touch controls are enabled on mobile devices. The game is designed for landscape orientation.
+Перед `sync:android` необходимы JDK 21 и Android SDK. Полная инструкция по подготовке нового устройства и сборке двух вариантов APK находится в [APK_BUILD.md](APK_BUILD.md).
 
-## Notes
+Локальный запуск онлайн-сервера выполняется командой `npm run server:start`. Настройка домена, TLS/WSS, Docker Compose, Android origins и обновление сервера описаны в [docs/ONLINE_SERVER.md](docs/ONLINE_SERVER.md).
 
-The repository contains only the browser game source and the vendored Three.js build needed for offline-friendly `file://` launch. APK files, Android build output, local toolchains, screenshots, and other generated artifacts are intentionally excluded.
+Один такой сервер обслуживает один регион. Сервер-агрегатор (`npm run director:start`) собирает регионы и раздаёт их клиентам, которые сами замеряют задержку и подключаются к самому быстрому; общий код поиска при этом всегда приводит друзей в один регион. См. [docs/REGION_DIRECTOR.md](docs/REGION_DIRECTOR.md).
+
+Практическое руководство у терминала — [docs/RUNBOOK.md](docs/RUNBOOK.md): как устроен онлайн, что развёрнуто в продакшене сейчас, пошаговый подъём нового игрового сервера и директора, и ловушки, которые стоили времени (панель хостера, переустанавливающая себя; лимиты Let's Encrypt на технических доменах).
+
+## Управление
+
+- `WASD` или стрелки — движение;
+- мышь — прицеливание;
+- левая кнопка мыши — выстрел;
+- `1`, `2`, `3` — смена оружия;
+- `F` — полноэкранный режим;
+- `R` — начать заново после смерти.
+
+На мобильных устройствах автоматически включается сенсорное управление; основной режим экрана — альбомный.
