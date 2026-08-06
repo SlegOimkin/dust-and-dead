@@ -23,6 +23,10 @@ debug.log
 *.keystore
 *.jks
 
+# Desktop build output. The installer and the portable exe are ~80 MB each and
+# are rebuilt from desktop/ with `npx electron-builder --win`.
+/dist-desktop/
+
 test-actions*.json
 progress.md
 
